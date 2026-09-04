@@ -115,7 +115,9 @@ MetalNodesKit/
 **Interfaces:**
 - Produces: an Xcode project that builds for macOS only with the settings in Global Constraints; the initial git commit.
 
-- [ ] **Step 1: Write `.gitignore`**
+- [ ] **Step 1: Verify `.gitignore`**
+
+`.gitignore` already exists from the initial commit and must **not** be rewritten (it also ignores `.superpowers/`, the executor's scratch directory). Verify it contains at least these entries and add any that are missing:
 
 ```gitignore
 # macOS
@@ -167,7 +169,7 @@ io.open(p, 'w', encoding='utf-8').write(s)
 PY
 ```
 
-Expected output: six lines, each starting with `2x` (both Debug and Release).
+Expected output: six lines — five starting with `2x` (Debug and Release) and `productName` with `1x`.
 
 - [ ] **Step 3: Rename the app file and strip the playground**
 
@@ -204,11 +206,11 @@ Expected: `** BUILD SUCCEEDED **`
 
 If `xcodebuild` reports the scheme is not found, run `xcodebuild -project MetalNodes.xcodeproj -list` and use the target form instead: `xcodebuild -project MetalNodes.xcodeproj -target MetalNodes -sdk macosx build`.
 
-- [ ] **Step 5: Initial commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add .gitignore MetalNodes.xcodeproj/project.pbxproj MetalNodes docs
-git commit -m "chore: retarget template to macOS + iPadOS, Swift 6, add design spec and plan
+git add .gitignore MetalNodes.xcodeproj/project.pbxproj MetalNodes
+git commit -m "chore: retarget template to macOS + iPadOS, Swift 6
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01RPcmDZb2TAGiC8ZmdZtCEF"
@@ -249,12 +251,6 @@ import Foundation
         let data = try JSONEncoder().encode(id)
         #expect(String(data: data, encoding: .utf8) == "\"00000000-0000-0000-0000-000000000042\"")
         #expect(try JSONDecoder().decode(NodeID.self, from: data) == id)
-    }
-
-    @Test func distinctIDTypesDoNotMix() {
-        // Compile-time check: this must not compile if uncommented.
-        // let _: NodeID = GroupID()
-        #expect(true)
     }
 }
 ```
@@ -361,7 +357,7 @@ Create empty test files so the other two test targets have at least one source: 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `swift test --package-path MetalNodesKit 2>&1 | tail -5`
-Expected: `Test run with 3 tests … passed` (exact wording varies by toolchain; all tests pass, zero failures).
+Expected: `Test run with 2 tests … passed` (exact wording varies by toolchain; all tests pass, zero failures).
 
 - [ ] **Step 5: Link the package into the Xcode project**
 
