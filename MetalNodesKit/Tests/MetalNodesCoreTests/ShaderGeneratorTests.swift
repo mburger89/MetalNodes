@@ -125,6 +125,15 @@ import Foundation
         #expect(!ShaderGenerator.diagnostics(doc, target: .fragment, registry: .builtin).isEmpty)
     }
 
+    @Test func unknownEnumCaseThrowsRatherThanCrashing() {
+        var doc = ShaderDocument()
+        let m = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("bogus")])
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        doc.root.nodes[m.id] = m; doc.root.nodes[out.id] = out
+        doc.root.connect(SocketRef(m.id, "out"), to: SocketRef(out.id, "color"))
+        #expect(throws: GenerationError.self) { try ShaderGenerator.generate(doc) }
+    }
+
     @Test func generationIsDeterministic() throws {
         let a = try ShaderGenerator.generate(ShaderDocument.sample())
         let b = try ShaderGenerator.generate(ShaderDocument.sample())

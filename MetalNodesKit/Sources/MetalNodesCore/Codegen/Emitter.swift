@@ -105,7 +105,12 @@ enum Emitter {
             let lines: [String]
             switch def.body {
             case .template(let t): lines = substitute(t, ctx)
-            case .variants(let param, let table): lines = substitute(table[enums[param]!]!, ctx)
+            case .variants(let param, let table):
+                // The instance-provided case may be stale/invalid (hand-edited or renamed
+                // since save); never force-unwrap it. Fall back to the def's default case.
+                let defaultCase: String? = { if case .enumCase(let c) = def.param(named: param)!.defaultValue { return c } else { return nil } }()
+                let chosen = enums[param].flatMap { table[$0] != nil ? $0 : nil } ?? defaultCase
+                lines = substitute(chosen.flatMap { table[$0] } ?? "", ctx)
             case .custom(let f): lines = f(ctx)
             }
             for l in lines { out.bodyLines.append(l); out.lineOwners.append(id) }

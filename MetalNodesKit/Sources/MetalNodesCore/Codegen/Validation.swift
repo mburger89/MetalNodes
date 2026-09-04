@@ -93,6 +93,17 @@ public enum GraphValidator {
                 out.append(Diagnostic(.error, "“\(decl.label)” must be connected", node: id, socket: decl.name))
             }
         }
+
+        // Enum param values must be a valid case of the declared enumeration.
+        for (id, def) in defs.sorted(by: { $0.key.raw.uuidString < $1.key.raw.uuidString }) {
+            guard let inst = graph.nodes[id] else { continue }
+            for p in def.params {
+                guard case .enumeration(let cases) = p.kind,
+                      case .enumCase(let c)? = inst.params[p.name],
+                      !cases.contains(c) else { continue }
+                out.append(Diagnostic(.error, "“\(c)” is not a valid option for \(p.label)", node: id, socket: p.name))
+            }
+        }
         return out
     }
 }

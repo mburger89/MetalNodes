@@ -81,4 +81,14 @@ import Testing
     @Test func stitchableTargetIsRejectedUntilM3() {
         #expect(errors(ShaderDocument.sample().root, target: .stitchable(.colorEffect)).contains { $0.contains("not yet supported") })
     }
+
+    @Test func unknownEnumCaseIsRejected() {
+        var g = Graph()
+        let m = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("bogus")])
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        g.nodes[m.id] = m; g.nodes[out.id] = out
+        g.connect(SocketRef(m.id, "out"), to: SocketRef(out.id, "color"))
+        let d = GraphValidator.validate(g, registry: reg, target: .fragment)
+        #expect(d.contains { $0.severity == .error && $0.node == m.id && $0.socket == "op" })
+    }
 }
