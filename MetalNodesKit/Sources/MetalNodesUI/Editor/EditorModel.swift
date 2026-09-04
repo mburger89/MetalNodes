@@ -8,6 +8,8 @@ import MetalNodesRender
 public final class EditorModel {
     public private(set) var document: ShaderDocument
     public var viewState = EditorViewState()
+    /// The one selected wire, by its input socket. Transient (not view state, not undo).
+    public var selectedWire: SocketRef?
     public let preview: PreviewState
     public let registry: NodeRegistry
     public private(set) var diagnostics: [Diagnostic] = []

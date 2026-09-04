@@ -23,4 +23,12 @@ import MetalNodesCore
         SocketAnchorKey.reduce(value: &v) { [SocketRef(b, "y"): CGPoint(x: 1, y: 1)] }
         #expect(v.count == 2)
     }
+
+    @Test func distanceIsZeroOnTheCurveAndGrowsAway() {
+        let a = CGPoint(x: 0, y: 0), b = CGPoint(x: 300, y: 100)
+        let mid = WireGeometry.point(t: 0.5, from: a, to: b)
+        #expect(WireGeometry.distance(from: mid, wireFrom: a, to: b) < 1.0)
+        #expect(WireGeometry.distance(from: CGPoint(x: 150, y: -200), wireFrom: a, to: b) > 100)
+        #expect(WireGeometry.distance(from: a, wireFrom: a, to: b) == 0)
+    }
 }

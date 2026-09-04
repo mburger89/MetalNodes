@@ -41,4 +41,15 @@ public struct CanvasTransform: Equatable, Sendable {
         let origin = toCanvas(.zero)
         return CGRect(x: origin.x, y: origin.y, width: viewport.width / zoom, height: viewport.height / zoom)
     }
+
+    /// The transform that shows `rect` centred in `viewport` with `padding` on every side (spec §18.6).
+    public static func fitting(_ rect: CGRect, in viewport: CGSize, padding: CGFloat = 40) -> CanvasTransform {
+        let availW = max(1, viewport.width - 2 * padding)
+        let availH = max(1, viewport.height - 2 * padding)
+        let z = min(availW / max(rect.width, 1), availH / max(rect.height, 1))
+        var t = CanvasTransform(pan: .zero, zoom: z)          // init clamps zoom
+        t.pan = CGSize(width: (viewport.width - rect.width * t.zoom) / 2 - rect.minX * t.zoom,
+                       height: (viewport.height - rect.height * t.zoom) / 2 - rect.minY * t.zoom)
+        return t
+    }
 }

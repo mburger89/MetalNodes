@@ -14,6 +14,26 @@ enum WireGeometry {
         p.addCurve(to: b, control1: CGPoint(x: a.x + d, y: a.y), control2: CGPoint(x: b.x - d, y: b.y))
         return p
     }
+
+    /// Point on the cubic at parameter `t`, using the same control points as `path`.
+    static func point(t: CGFloat, from a: CGPoint, to b: CGPoint) -> CGPoint {
+        let d = controlOffset(from: a, to: b)
+        let c1 = CGPoint(x: a.x + d, y: a.y), c2 = CGPoint(x: b.x - d, y: b.y)
+        let u = 1 - t
+        let x = u*u*u*a.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*b.x
+        let y = u*u*u*a.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*b.y
+        return CGPoint(x: x, y: y)
+    }
+
+    /// Distance from `p` to the wire, sampled at 24 points (spec §18.5).
+    static func distance(from p: CGPoint, wireFrom a: CGPoint, to b: CGPoint) -> CGFloat {
+        var best = CGFloat.infinity
+        for i in 0...24 {
+            let q = point(t: CGFloat(i) / 24, from: a, to: b)
+            best = min(best, hypot(q.x - p.x, q.y - p.y))
+        }
+        return best
+    }
 }
 
 /// All wires in one `Canvas`, drawn beneath the nodes.
