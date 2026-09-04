@@ -6,6 +6,10 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AA00000000000000000000A1 /* MetalNodesUI in Frameworks */ = {isa = PBXBuildFile; productRef = AA00000000000000000000B1 /* MetalNodesUI */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* MetalNodes.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MetalNodes.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -22,6 +26,7 @@
 		000000000000000130000000 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				AA00000000000000000000A1 /* MetalNodesUI in Frameworks */,
 			);
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -59,6 +64,9 @@
 			fileSystemSynchronizedGroups = (
 				000000000000000000000010 /* MetalNodes */,
 			);
+			packageProductDependencies = (
+				AA00000000000000000000B1 /* MetalNodesUI */,
+			);
 			name = MetalNodes;
 			productName = MetalNodes;
 			productReference = 000000000000000000000120 /* MetalNodes.app */;
@@ -88,6 +96,9 @@
 			);
 			mainGroup = 000000000000000000000001;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AA00000000000000000000C1 /* XCLocalSwiftPackageReference "MetalNodesKit" */,
+			);
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
@@ -345,6 +356,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AA00000000000000000000C1 /* XCLocalSwiftPackageReference "MetalNodesKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MetalNodesKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA00000000000000000000B1 /* MetalNodesUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MetalNodesUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000000 /* Project object */;
 }
