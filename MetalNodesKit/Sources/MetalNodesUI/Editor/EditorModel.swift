@@ -86,12 +86,12 @@ public final class EditorModel {
         let shader: GeneratedShader
         do {
             shader = try ShaderGenerator.generate(doc, target: .fragment, registry: registry)
-        } catch GenerationError.invalid(let diags) {
-            diagnostics = diags
-            return                                   // keep last-good pipeline
         } catch {
-            diagnostics = [Diagnostic(.error, "\(error)")]
-            return
+            switch error {
+            case .invalid(let diags):
+                diagnostics = diags
+            }
+            return                                   // keep last-good pipeline
         }
         diagnostics = []
         generatedSource = shader.source
