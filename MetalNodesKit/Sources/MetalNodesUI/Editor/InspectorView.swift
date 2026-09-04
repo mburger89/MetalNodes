@@ -5,6 +5,8 @@ import MetalNodesCore
 public struct InspectorView: View {
     let model: EditorModel
     @State private var titleDraft = ""
+    @State private var widthDraft = ""
+    @State private var heightDraft = ""
 
     public init(model: EditorModel) { self.model = model }
 
@@ -43,6 +45,7 @@ public struct InspectorView: View {
                 .textFieldStyle(.roundedBorder)
                 .onAppear { titleDraft = node.customTitle ?? "" }
                 .onChange(of: id) { _, _ in titleDraft = node.customTitle ?? "" }
+                .onChange(of: node.customTitle) { _, t in titleDraft = t ?? "" }
                 .onSubmit { model.apply(.setTitle(id, titleDraft)) }
 
             Divider()
@@ -95,13 +98,17 @@ public struct InspectorView: View {
             Text("Document").font(.headline)
             HStack {
                 Text("Preview size").font(.caption)
-                TextField("W", value: Binding(get: { Int(s.previewSize.width) }, set: { w in
-                    var n = s; n.previewSize.width = CGFloat(max(16, w)); model.apply(.setSettings(n)) }), format: .number)
+                TextField("W", text: $widthDraft)
                     .frame(width: 60)
+                    .onAppear { widthDraft = "\(clampedDimension(s.previewSize.width))" }
+                    .onChange(of: model.document.settings.previewSize) { _, size in widthDraft = "\(clampedDimension(size.width))" }
+                    .onSubmit { commitPreviewSize() }
                 Text("×")
-                TextField("H", value: Binding(get: { Int(s.previewSize.height) }, set: { h in
-                    var n = s; n.previewSize.height = CGFloat(max(16, h)); model.apply(.setSettings(n)) }), format: .number)
+                TextField("H", text: $heightDraft)
                     .frame(width: 60)
+                    .onAppear { heightDraft = "\(clampedDimension(s.previewSize.height))" }
+                    .onChange(of: model.document.settings.previewSize) { _, size in heightDraft = "\(clampedDimension(size.height))" }
+                    .onSubmit { commitPreviewSize() }
             }
             Picker("Time", selection: Binding(get: { s.timeMode }, set: { m in var n = s; n.timeMode = m; model.apply(.setSettings(n)) })) {
                 Text("Wall clock").tag(TimeMode.wallClock)
@@ -114,6 +121,27 @@ public struct InspectorView: View {
                 .font(.caption2).foregroundStyle(DraculaToken.muted.color)
         }
         .textFieldStyle(.roundedBorder)
+    }
+
+    private func clampedDimension(_ v: CGFloat) -> Int {
+        v.isFinite ? Int(min(max(v, 16), 8192)) : 512
+    }
+
+    private func commitPreviewSize() {
+        let s = model.document.settings
+        guard let w = Int(widthDraft), let h = Int(heightDraft) else {
+            widthDraft = "\(clampedDimension(s.previewSize.width))"
+            heightDraft = "\(clampedDimension(s.previewSize.height))"
+            return
+        }
+        let cw = min(max(w, 16), 8192)
+        let ch = min(max(h, 16), 8192)
+        widthDraft = "\(cw)"
+        heightDraft = "\(ch)"
+        guard CGFloat(cw) != s.previewSize.width || CGFloat(ch) != s.previewSize.height else { return }
+        var n = s
+        n.previewSize = CGSize(width: CGFloat(cw), height: CGFloat(ch))
+        model.apply(.setSettings(n))
     }
 }
 
