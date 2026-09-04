@@ -3094,7 +3094,7 @@ Claude-Session: https://claude.ai/code/session_01RPcmDZb2TAGiC8ZmdZtCEF"
 - On `EditorModel`: `var canCopy: Bool`; `var canPaste: Bool`; `func copySelection()`; `func cutSelection()`; `@discardableResult func paste(at point: CGPoint? = nil) -> Set<NodeID>` (nil → `sourceOrigin + (24, 24)`); `@discardableResult func duplicateSelection(offset: CGSize = CGSize(width: 24, height: 24)) -> Set<NodeID>` (never touches the system pasteboard; one `Duplicate` undo step).
 - `InputModifiers.optionHeld: Bool`.
 - ⌥-drag on a node header duplicates the selection in place and drags the copies (one `Duplicate` undo step, spec §11.2).
-- Edit menu: Cut ⌘X, Copy ⌘C, Paste ⌘V, Duplicate ⌘D (enabled per `canCopy`/`canPaste`).
+- Edit menu: the standard Cut ⌘X / Copy ⌘C / Paste ⌘V items route to the canvas via `onCutCommand`/`onCopyCommand`/`onPasteCommand`; Duplicate ⌘D is a custom item gated on `canvasHasFocus` and `canCopy`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3360,23 +3360,23 @@ extension EditorModel {
 
 (`endNodeDrag` still calls `endTransaction()` once, which now closes the outer transaction and registers a single `Duplicate` or `Move` step.)
 
-`EditorCommands.swift` — inside `CommandGroup(replacing: .pasteboard)`, before `Delete`:
+`EditorCommands.swift` — the standard Cut/Copy/Paste/Select All items stay (controller ruling in Task 9: replacing the `.pasteboard` group breaks text-field editing). Add only Duplicate to the `CommandGroup(after: .pasteboard)` block, before `Delete`:
 
 ```swift
-            Button("Cut") { model?.cutSelection() }
-                .keyboardShortcut("x", modifiers: .command)
-                .disabled(!(model?.canCopy ?? false))
-            Button("Copy") { model?.copySelection() }
-                .keyboardShortcut("c", modifiers: .command)
-                .disabled(!(model?.canCopy ?? false))
-            Button("Paste") { model?.paste() }
-                .keyboardShortcut("v", modifiers: .command)
-                .disabled(!(model?.canPaste ?? false))
             Button("Duplicate") { model?.duplicateSelection() }
                 .keyboardShortcut("d", modifiers: .command)
-                .disabled(!(model?.canCopy ?? false))
-            Divider()
+                .disabled(!(model?.canvasHasFocus ?? false) || !(model?.canCopy ?? false))
 ```
+
+`GraphCanvasView.swift` — route the standard responder-chain commands to the model, next to the existing `.onDeleteCommand` / `.onCommand(#selector(NSResponder.selectAll(_:)))` modifiers (inside the same `#if os(macOS)` block):
+
+```swift
+            .onCutCommand { model.cutSelection(); return [] }
+            .onCopyCommand { model.copySelection(); return [] }
+            .onPasteCommand(of: [UTType(EditorModel.pasteboardType) ?? .data]) { _ in model.paste() }
+```
+
+(`import UniformTypeIdentifiers` at the top of the file.) `onCutCommand`/`onCopyCommand` return `[NSItemProvider]`; returning `[]` is correct because `copySelection()` already wrote the pasteboard through `Pasteboarding`. `onPasteCommand(of:)` enables the standard Paste item only when the pasteboard holds our type — `canPaste` is thereby honoured by AppKit.
 
 - [ ] **Step 8: Run the tests, the suite, and the app build**
 
