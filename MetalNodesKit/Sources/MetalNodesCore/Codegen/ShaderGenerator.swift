@@ -7,6 +7,16 @@ public struct GeneratedShader: Sendable, Hashable {
     public let resolved: [NodeID: ResolvedNode]
     public let fragmentFunctionName: String
     public let target: OutputTarget
+
+    public init(source: String, layout: UniformLayout, lineMap: LineMap, resolved: [NodeID: ResolvedNode],
+                fragmentFunctionName: String, target: OutputTarget) {
+        self.source = source
+        self.layout = layout
+        self.lineMap = lineMap
+        self.resolved = resolved
+        self.fragmentFunctionName = fragmentFunctionName
+        self.target = target
+    }
 }
 
 public enum ShaderGenerator {
