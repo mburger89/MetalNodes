@@ -765,3 +765,176 @@ The current Xcode project is an untouched multiplatform template and needs:
 4. **Time** — wall-clock time, or a scrubable fixed-rate timeline with a frame
    counter (better for recording)?
 5. ~~SwiftUI `[[stitchable]]` target~~ — **answered: in v1, at M3.** See §9.5.
+
+---
+
+## 18. M2 addendum — canvas interaction (added 2026-09-04)
+
+M2 implements §5, §6, §11.1–11.4 and the inspector. This section pins down
+the mechanics those sections leave implicit. Nothing here changes a locked
+decision.
+
+### 18.1 Scope and order
+
+One plan, in this order, so the branch is usable at every point:
+
+1. **Carry-overs from the M1 review** — LRU cap on the pipeline cache;
+   `.failure` results supersession-checked like `.success`; `CompileLine`
+   carries severity and warnings render as warnings; `mathMode` becomes
+   `DocumentSettings.fastMath` (default on) and is part of the cache key.
+2. **Selection** — click, ⇧-add, ⌘-toggle, marquee, ⌘A, ⌫ delete, arrow
+   nudge, selection outline + glow, wire selection by click.
+3. **Wiring** — socket drag with rubber band, compatibility highlight,
+   drop-on-socket / drop-on-body / drop-on-empty-canvas (search popover
+   that auto-wires), input re-drag to detach.
+4. **Input model** — scroll-wheel pan, ⌘-scroll zoom, space-drag pan,
+   zoom-to-fit (Home / F), keyboard focus on the canvas.
+5. **Palette** — left sidebar with search, drag-out, ⇧A / double-click
+   popover at the cursor.
+6. **Undo** — snapshot transactions (§5) with gesture coalescing; Edit menu.
+7. **Copy / paste / cut / duplicate** — pasteboard payload (§6), ID
+   remapping, paste at cursor; ⌥-drag duplicate.
+8. **Inspector** — right sidebar.
+9. **Culling and LOD** — visible-rect culling, header-only nodes below
+   zoom 0.4.
+
+Deferred to M3+: viewer flag, error mapping onto nodes (the plumbing exists;
+the inspector shows diagnostics text in M2), texture sample, groups, comments.
+
+### 18.2 Editor state model
+
+`EditorViewState` (persisted, not undoable) gains nothing; it already holds
+`selection`, `cameras`, `viewer`, `editingStack`. Transient interaction state
+lives in the canvas view: `pendingWire`, `marquee`, `spaceHeld`, `dragOrigin`.
+
+`DocumentChange` grows to cover every M2 edit. Each case still classifies as
+cosmetic / parameter / topology:
+
+| Case | Class |
+|---|---|
+| `moveNodes([NodeID: CGPoint])` (replaces `moveNode`) | cosmetic |
+| `setParam`, `setTitle(NodeID, String?)` | parameter / cosmetic |
+| `connect`, `disconnect`, `addNode`, `removeNodes(Set<NodeID>)` | topology |
+| `insert(nodes:, edges:)` — paste / duplicate in one change | topology |
+| `setSettings(DocumentSettings)` | topology if `fastMath` changed, else cosmetic |
+| `restore(ShaderDocument)` — undo/redo only | topology |
+
+`removeNodes` drops the nodes and every wire touching them in one change so
+undo restores both.
+
+### 18.3 Undo — transactions over snapshots
+
+`EditorModel` owns its `UndoManager`. Every `apply` is wrapped in a
+transaction; nested calls join the open one:
+
+```
+beginTransaction(name)   snapshot = document (only if none open)
+  apply(change) …        mutate
+endTransaction()         if document != snapshot:
+                             undoManager.registerUndo { restore(snapshot) }
+                             undoManager.setActionName(name)
+```
+
+Continuous gestures call `beginTransaction("Move")` on the first change and
+`endTransaction()` on gesture end — one undo step per drag or slider scrub.
+A single `apply` outside a transaction opens and closes its own. `restore`
+sets `document`, schedules a compile, and leaves `viewState.selection`
+intersected with the surviving node IDs. Redo is symmetric via the manager.
+
+Snapshots are the whole `ShaderDocument` (§5); `Graph` is copy-on-write, so
+an unchanged graph costs a pointer copy.
+
+### 18.4 Pasteboard payload
+
+```swift
+struct GraphClipboard: Codable {
+    static let formatVersion = 1
+    var nodes: [NodeInstance]           // positions relative to their bounding-box origin
+    var edges: [Edge]                   // internal edges only (both ends in `nodes`)
+    var stickies: [StickyNote], frames: [CommentFrame]   // M5 fills these
+    var definitions: [GroupDefinition]  // M4 fills this (§6 dedup rules)
+}
+```
+
+Written as JSON under the UTType `com.maxburger.metalnodes.graph`
+(`NSPasteboard` on macOS, `UIPasteboard` on iPad, behind a `Pasteboarding`
+protocol so the model is testable with an in-memory implementation).
+Paste allocates fresh `NodeID`s, rewrites edges through the ID map, positions
+the bounding box at the cursor (or +24,+24 from the original when triggered
+from the menu), inserts everything as one `insert(nodes:edges:)` change, and
+selects the pasted nodes. Duplicate is copy + paste without touching the
+system pasteboard. Cut is copy + `removeNodes`.
+
+### 18.5 Wiring mechanics
+
+- A drag starting on an **output** socket carries `pendingWire = (from,
+  currentPoint)`; the wire layer draws it as a rubber band in the source
+  type's color.
+- A drag starting on a **wired input** detaches the wire (`disconnect`) and
+  continues the drag from its original source — Blender's re-drag.
+- Drop resolution, in order: nearest socket anchor within 14 canvas points
+  that accepts the type (`ConversionRules.convert != nil`) → connect; else a
+  node body under the cursor → its first compatible input; else empty canvas
+  → open the palette popover filtered to nodes with a compatible input; on
+  pick, add the node at the drop point and connect. Escape cancels.
+- While a drag is live every socket renders compatibility: compatible sockets
+  at full opacity, incompatible at 30 %.
+- Wire hit-testing samples the Bézier at 24 points; a click within 6 canvas
+  points selects the wire; ⌫ deletes it.
+
+### 18.6 Input model
+
+- **Scroll wheel** — SwiftUI has no scroll-wheel modifier, so the canvas hosts
+  a transparent `NSViewRepresentable` overlay (`ScrollWheelCatcher`) that
+  forwards `scrollWheel(with:)` deltas: plain → pan, ⌘ → zoom around the
+  cursor, and passes every other event through. iPad (M6) uses a two-finger
+  pan gesture instead; the overlay is `#if os(macOS)`.
+- **Space-drag pan** — the canvas is `.focusable()`; `onKeyPress(.space,
+  phases: [.down, .up])` toggles `spaceHeld`, which turns the marquee drag
+  into a pan.
+- **Marquee** — a plain drag on empty canvas draws a rectangle in canvas
+  coordinates; nodes whose frames intersect it are selected on end (⇧ adds).
+- **Keyboard** — `onKeyPress` handles ⌫, arrows (1 pt, ⇧ 10 pt), Escape.
+  Menu items (Undo/Redo/Cut/Copy/Paste/Duplicate/Select All/Delete/Zoom to
+  Fit) live in `EditorCommands` (a `Commands` scene) and reach the model
+  through a `@FocusedValue`.
+- **Zoom to fit** fits all nodes (Home) or the selection (F) with 40 pt
+  padding, clamped to the zoom range.
+
+### 18.7 Palette
+
+Left sidebar, 220 pt: a search field and a `List` grouped by
+`NodeCategory`, plus **My Functions** (empty until M4). Search is
+case-insensitive substring over title and definition ID; results are ordered
+by prefix match first. Rows are `.draggable` with a `NodeDefTransfer`
+(`Transferable`, carrying the def ID); the canvas is a `.dropDestination`
+that converts the drop point through the transform and applies `addNode`.
+The same list, in a popover anchored at the cursor, serves ⇧A and
+double-click on empty canvas; Return adds the highlighted row.
+
+### 18.8 Inspector
+
+Right sidebar, 260 pt. One node selected: header (title field bound to
+`setTitle`, definition ID, category chip), then every parameter and unwired
+input as a full-width `ParamControl`, wired inputs listed as "← Node.socket",
+then that node's diagnostics. Nothing selected: `DocumentSettings` —
+preview size, time mode, fast math. Multiple selected: "N nodes selected".
+The inspector reuses `ParamControl`; the node body keeps its compact controls.
+
+### 18.9 Culling and LOD
+
+`GraphCanvasView` computes each node's frame from `position` and an
+estimated size (`NodeView.estimatedSize(for: def)` — header + 22 pt per
+row) and skips nodes whose frame misses `visibleRect(viewport:)` expanded
+by 200 pt. Below zoom 0.4 `NodeView` renders in `compact` mode: header
+only, sockets as anchors without controls. Wires always draw.
+
+### 18.10 Testing
+
+Model-level, no UI harness: transactions (`op → undo → equals original`,
+gesture coalescing yields one step, redo), `removeNodes` drops both-end wires,
+paste ID remapping and relative positioning, in-memory pasteboard
+round-trip, `fastMath` in the cache key, LRU eviction, `CompileLine`
+severity parsing, marquee/frame intersection math, zoom-to-fit math, wire
+hit-testing distance, drop resolution order (pure function over anchors).
+Views verified by build plus the manual checklist in the plan's last task.
