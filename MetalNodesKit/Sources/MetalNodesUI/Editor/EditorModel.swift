@@ -111,13 +111,14 @@ public final class EditorModel {
             case .invalid(let diags):
                 diagnostics = diags
             }
+            preview.lastError = nil
             return                                   // keep last-good pipeline
         }
         diagnostics = []
         generatedSource = shader.source
         resolvedTypes = shader.resolved
 
-        switch await compiler.compile(shader, generation: gen) {
+        switch await compiler.compile(shader, generation: gen, fastMath: doc.settings.fastMath) {
         case .success(let pipeline):
             guard pipeline.generation == generation else { return }
             preview.pipeline = pipeline
@@ -128,9 +129,8 @@ public final class EditorModel {
             preview.lastError = message
             var mapped: [Diagnostic] = []
             for l in lines {
-                if let node = shader.lineMap.node(forLine: l.line) {
-                    mapped.append(Diagnostic(.error, l.message, node: node))
-                }
+                let sev: Diagnostic.Severity = l.severity == .error ? .error : .warning
+                mapped.append(Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line)))
             }
             diagnostics = mapped.isEmpty ? [Diagnostic(.error, message)] : mapped
         case .superseded:

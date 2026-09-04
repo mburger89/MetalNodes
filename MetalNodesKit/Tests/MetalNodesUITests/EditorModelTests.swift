@@ -8,9 +8,21 @@ import MetalNodesRender
 /// Records generations and never publishes, so tests can count compiles deterministically.
 actor RecordingCompiler: ShaderCompiling {
     private(set) var generations: [UInt64] = []
-    func compile(_ shader: GeneratedShader, generation: UInt64) async -> CompileResult {
+    private(set) var fastMathFlags: [Bool] = []
+    func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool) async -> CompileResult {
         generations.append(generation)
+        fastMathFlags.append(fastMath)
         return .superseded(generation: generation)
+    }
+}
+
+/// Always fails with one warning and one error line so severity mapping can be observed.
+actor WarningCompiler: ShaderCompiling {
+    func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool) async -> CompileResult {
+        .failure(message: "synthetic", lines: [
+            CompileLine(line: 1, severity: .warning, message: "header warning"),      // line 1 has no node owner
+            CompileLine(line: 999, severity: .error, message: "nowhere"),
+        ], generation: generation)
     }
 }
 
@@ -128,5 +140,24 @@ actor RecordingCompiler: ShaderCompiling {
         #expect(m2.preview.pipeline != nil)
         #expect(m2.diagnostics.contains { $0.node == b.id })
         _ = good
+    }
+
+    @Test func compilerSeverityMapsToDiagnosticsAndUnmappedLinesSurvive() async {
+        let m = EditorModel(document: .sample(), compiler: WarningCompiler())
+        m.debounceInterval = .milliseconds(5)
+        m.start(); await m.awaitIdle()
+        #expect(m.diagnostics.contains { $0.severity == .warning && $0.message == "header warning" && $0.node == nil })
+        #expect(m.diagnostics.contains { $0.severity == .error && $0.message == "nowhere" })
+        #expect(m.preview.pipeline == nil)
+        #expect(m.preview.lastError == "synthetic")
+    }
+
+    @Test func fastMathSettingReachesTheCompiler() async {
+        let c = RecordingCompiler()
+        var doc = ShaderDocument.sample()
+        doc.settings.fastMath = false
+        let m = EditorModel(document: doc, compiler: c)
+        m.start(); await m.awaitIdle()
+        #expect(await c.fastMathFlags == [false])
     }
 }
