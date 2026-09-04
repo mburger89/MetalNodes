@@ -23,12 +23,19 @@ public final class EditorModel {
     /// new edit landed while it was suspended (`Task` is a struct — no identity to compare).
     private var scheduleCount = 0
 
+    // MARK: Undo (spec §18.3) — see EditorModel+Undo.swift
+    public let undoManager = UndoManager()
+    var transactionSnapshot: ShaderDocument?
+    var transactionName = ""
+    var transactionDepth = 0
+
     public init(document: ShaderDocument, compiler: any ShaderCompiling,
                 registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState()) {
         self.document = document
         self.compiler = compiler
         self.registry = registry
         self.preview = preview
+        undoManager.groupsByEvent = false
     }
 
     /// First compile, undebounced.
@@ -51,6 +58,20 @@ public final class EditorModel {
     }
 
     public func apply(_ change: DocumentChange) {
+        if case .restore = change {             // undo/redo path: no transaction, no registration
+            perform(change)
+            return
+        }
+        if transactionSnapshot != nil {
+            perform(change)
+        } else {
+            let before = document
+            perform(change)
+            commitUndo(before: before, name: change.undoName)
+        }
+    }
+
+    private func perform(_ change: DocumentChange) {
         switch change {
         case .moveNodes(let positions):
             for (id, p) in positions { document.root.nodes[id]?.position = p }
