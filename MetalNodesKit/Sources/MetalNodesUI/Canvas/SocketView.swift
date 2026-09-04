@@ -41,6 +41,7 @@ struct SocketView: View {
         .opacity(dimmed ? 0.3 : 1)
         .frame(width: Self.hitSize, height: Self.hitSize)
         .contentShape(Rectangle())
+        .frame(width: Self.size, height: Self.size)   // report 10 pt to the row
     }
 }
 

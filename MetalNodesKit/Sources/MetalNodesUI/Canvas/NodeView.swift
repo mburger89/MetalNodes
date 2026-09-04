@@ -42,8 +42,7 @@ struct NodeView: View {
             }
         }
         .frame(width: Self.width)
-        .background(DraculaToken.surface.color)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(RoundedRectangle(cornerRadius: 8).fill(DraculaToken.surface.color))
         .overlay(RoundedRectangle(cornerRadius: 8)
             .stroke(isSelected ? DraculaTheme.selection.color : DraculaToken.background.color, lineWidth: isSelected ? 2 : 1))
         .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 6, y: isSelected ? 0 : 3)
@@ -59,7 +58,7 @@ struct NodeView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .foregroundStyle(DraculaToken.background.color)
-        .background(DraculaTheme.token(for: def.category).color)
+        .background(DraculaTheme.token(for: def.category).color, in: UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
         .contentShape(Rectangle())
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
@@ -102,7 +101,7 @@ struct NodeView: View {
         return HStack(spacing: 6) {
             SocketView(type: type, dimmed: dim)
                 .socketAnchor(ref)
-                .offset(x: -8 - SocketView.hitSize / 2)
+                .offset(x: -8 - SocketView.size / 2)
                 .gesture(socketDrag(ref, isInput: true))
             if !wired, case .value(let dflt) = decl.default {
                 ParamControl(label: decl.label, kind: .value(type, range: decl.range),
@@ -123,7 +122,7 @@ struct NodeView: View {
             Text(decl.label).font(.caption)
             SocketView(type: type, dimmed: dragType != nil)
                 .socketAnchor(ref)
-                .offset(x: 8 + SocketView.hitSize / 2)
+                .offset(x: 8 + SocketView.size / 2)
                 .gesture(socketDrag(ref, isInput: false))
         }
     }

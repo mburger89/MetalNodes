@@ -188,14 +188,14 @@ public struct GraphCanvasView: View {
         if isInput {
             // Re-drag: detach the existing wire and continue from its source, as one undo step.
             guard let source = g.source(feeding: ref) else { return }
+            guard let t = DropResolver.outputType(of: source, graph: model.document.root, registry: model.registry, resolved: model.resolvedTypes) else { return }
+            if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Rewire")
             model.apply(.disconnect(ref))
-            guard let t = DropResolver.outputType(of: source, graph: g, registry: model.registry, resolved: model.resolvedTypes) else {
-                model.endTransaction(); return
-            }
             pendingWire = PendingWire(source: source, type: t, point: anchors[ref] ?? .zero)
         } else {
             guard let t = DropResolver.outputType(of: ref, graph: g, registry: model.registry, resolved: model.resolvedTypes) else { return }
+            if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Connect")
             pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero)
         }
