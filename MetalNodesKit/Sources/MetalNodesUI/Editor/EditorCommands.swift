@@ -18,26 +18,31 @@ public struct EditorCommands: Commands {
     public init() {}
 
     public var body: some Commands {
+        // Undo/Redo, Delete, and the View menu's bare-key shortcuts are gated on `canvasHasFocus`
+        // (rather than always enabled) so that, while a node parameter `TextField` is focused
+        // (canvas is not), these menu key equivalents go disabled and let the field editor's own
+        // Delete/⌘Z handling see the keystroke instead of the menu intercepting it first.
         CommandGroup(replacing: .undoRedo) {
             Button("Undo") { model?.undo() }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(!(model?.canUndo ?? false))
+                .disabled(!((model?.canUndo ?? false) && (model?.canvasHasFocus ?? false)))
             Button("Redo") { model?.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(!(model?.canRedo ?? false))
+                .disabled(!((model?.canRedo ?? false) && (model?.canvasHasFocus ?? false)))
         }
-        CommandGroup(replacing: .pasteboard) {
+        CommandGroup(after: .pasteboard) {
+            Divider()
             Button("Delete") { model?.deleteSelection() }
                 .keyboardShortcut(.delete, modifiers: [])
-                .disabled((model?.selection.isEmpty ?? true) && model?.selectedWire == nil)
-            Button("Select All") { model?.selectAll() }
-                .keyboardShortcut("a", modifiers: .command)
+                .disabled(!(model?.canvasHasFocus ?? false) || ((model?.selection.isEmpty ?? true) && model?.selectedWire == nil))
         }
         CommandMenu("View") {
             Button("Zoom to Fit") { model?.requestCanvas(.fitAll) }
                 .keyboardShortcut(.home, modifiers: [])
+                .disabled(!(model?.canvasHasFocus ?? false))
             Button("Zoom to Selection") { model?.requestCanvas(.fitSelection) }
                 .keyboardShortcut("f", modifiers: [])
+                .disabled(!(model?.canvasHasFocus ?? false))
         }
     }
 }

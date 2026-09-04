@@ -108,13 +108,25 @@ import MetalNodesRender
     @Test func undoIsIgnoredWhileATransactionIsOpen() {
         let m = model()
         let uv = node(m, "input.uv")
+        let p0 = uv.position
+        m.apply(.moveNodes([uv.id: CGPoint(x: 50, y: 50)]))     // commits a step
         m.beginTransaction("Move")
-        m.apply(.moveNodes([uv.id: CGPoint(x: 42, y: 42)]))
+        m.apply(.moveNodes([uv.id: CGPoint(x: 99, y: 99)]))
         m.undo()
-        #expect(m.document.root.nodes[uv.id]?.position == CGPoint(x: 42, y: 42))
+        #expect(m.document.root.nodes[uv.id]?.position == CGPoint(x: 99, y: 99))
+        #expect(m.isInTransaction)
         m.endTransaction()
         m.undo()
-        #expect(m.document.root.nodes[uv.id]?.position != CGPoint(x: 42, y: 42))
+        #expect(m.document.root.nodes[uv.id]?.position == CGPoint(x: 50, y: 50))
+        m.undo()
+        #expect(m.document.root.nodes[uv.id]?.position == p0)
+    }
+
+    @Test func menuEnablementFollowsCanvasFocus() {
+        let m = model()
+        #expect(m.canvasHasFocus == false)
+        m.canvasHasFocus = true
+        #expect(m.canvasHasFocus)
     }
 
     @Test func restoreNeverRegistersAnUndoStep() {

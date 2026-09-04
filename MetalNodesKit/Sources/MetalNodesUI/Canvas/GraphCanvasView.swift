@@ -1,5 +1,8 @@
 import SwiftUI
 import MetalNodesCore
+#if os(macOS)
+import AppKit
+#endif
 
 /// A wire being dragged: from `source` (always an output socket) to the cursor.
 struct PendingWire: Equatable {
@@ -55,6 +58,7 @@ public struct GraphCanvasView: View {
                     }
                     model.viewState.cameras[.root] = transform.camera
                 }
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 #endif
             }
             .onAppear { viewport = geo.size }
@@ -89,12 +93,19 @@ public struct GraphCanvasView: View {
                 return .handled
             }
             .onChange(of: canvasFocused) { _, focused in
+                model.canvasHasFocus = focused
                 if !focused { spaceHeld = false }
             }
+            #if os(macOS)
+            // Responder-chain commands (rather than menu key equivalents) so a focused node
+            // parameter `TextField` gets first crack at Delete/Select All — see EditorCommands.
+            .onDeleteCommand { model.deleteSelection() }
+            .onCommand(#selector(NSResponder.selectAll(_:))) { model.selectAll() }
+            #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
         .onAppear { if let cam = model.viewState.cameras[.root] { transform = CanvasTransform(camera: cam) } }
-        .onAppear { canvasFocused = true }
+        .onAppear { canvasFocused = true; model.canvasHasFocus = true }
         .onChange(of: model.canvasRequest) { _, req in
             guard let req else { return }
             defer { model.canvasRequest = nil }

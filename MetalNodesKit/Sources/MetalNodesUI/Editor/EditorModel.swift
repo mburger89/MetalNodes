@@ -18,6 +18,9 @@ public final class EditorModel {
     /// Bumped whenever the undo stack changes, so `canUndo`/`canRedo` (which forward to the
     /// non-`@Observable` `UndoManager`) trigger SwiftUI updates (menu `.disabled(...)`).
     public var undoStackVersion = 0
+    /// Whether the canvas (as opposed to a node's parameter field) is the focused responder.
+    /// Gates menu-command keyboard shortcuts so they don't steal keystrokes from text fields.
+    public var canvasHasFocus = false
     public let preview: PreviewState
     public let registry: NodeRegistry
     public private(set) var diagnostics: [Diagnostic] = []
