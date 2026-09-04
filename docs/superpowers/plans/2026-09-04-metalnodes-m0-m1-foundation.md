@@ -2919,7 +2919,7 @@ public enum ShaderGenerator {
 
         var src = ""
         src += "#include <metal_stdlib>\nusing namespace metal;\n\n"
-        src += emitted.layout.mslStruct + "\n"
+        src += emitted.layout.mslStruct + "\n\n"   // mslStruct ends with "};" (no newline)
         src += "struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n\n"
         for f in MSLStdlib.resolve(emitted.requiredStdlib) { src += f.source + "\n\n" }
         src += "fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n"
