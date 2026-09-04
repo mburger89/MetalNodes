@@ -14,9 +14,14 @@ struct NodeView: View {
     let onDrag: (CGSize) -> Void
     let onDragEnded: () -> Void
     let onEditing: (Bool) -> Void
+    var dragType: SocketType? = nil
+    var onSocketDragBegan: (SocketRef, Bool) -> Void = { _, _ in }
+    var onSocketDrag: (CGPoint) -> Void = { _ in }
+    var onSocketDragEnded: (CGPoint) -> Void = { _ in }
 
     @State private var dragging = false
     @State private var wasSelectedAtStart = false
+    @State private var socketDragging = false
     static let width: CGFloat = NodeGeometry.width
 
     var body: some View {
@@ -93,8 +98,12 @@ struct NodeView: View {
         let ref = SocketRef(node.id, decl.name)
         let type = resolved?.inputTypes[decl.name] ?? concrete(decl.type)
         let wired = graph.inputs[ref] != nil
+        let dim = dragType.map { !DropResolver.compatible($0, type) } ?? false
         return HStack(spacing: 6) {
-            SocketView(type: type).socketAnchor(ref).offset(x: -8 - SocketView.size / 2)
+            SocketView(type: type, dimmed: dim)
+                .socketAnchor(ref)
+                .offset(x: -8 - SocketView.hitSize / 2)
+                .gesture(socketDrag(ref, isInput: true))
             if !wired, case .value(let dflt) = decl.default {
                 ParamControl(label: decl.label, kind: .value(type, range: decl.range),
                              value: coerced(node.params[decl.name] ?? dflt, to: type),
@@ -112,8 +121,26 @@ struct NodeView: View {
         return HStack(spacing: 6) {
             Spacer()
             Text(decl.label).font(.caption)
-            SocketView(type: type).socketAnchor(ref).offset(x: 8 + SocketView.size / 2)
+            SocketView(type: type, dimmed: dragType != nil)
+                .socketAnchor(ref)
+                .offset(x: 8 + SocketView.hitSize / 2)
+                .gesture(socketDrag(ref, isInput: false))
         }
+    }
+
+    private func socketDrag(_ ref: SocketRef, isInput: Bool) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .named("canvas"))
+            .onChanged { g in
+                if !socketDragging {
+                    socketDragging = true
+                    onSocketDragBegan(ref, isInput)
+                }
+                onSocketDrag(g.location)
+            }
+            .onEnded { g in
+                socketDragging = false
+                onSocketDragEnded(g.location)
+            }
     }
 
     private func concrete(_ t: TypeRef) -> SocketType {

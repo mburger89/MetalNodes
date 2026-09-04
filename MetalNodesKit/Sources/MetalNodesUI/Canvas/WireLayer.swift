@@ -41,6 +41,7 @@ struct WireLayer: View {
     let graph: Graph
     let anchors: [SocketRef: CGPoint]
     var selected: SocketRef? = nil
+    var pending: PendingWire? = nil
     let color: (SocketRef) -> Color
 
     var body: some View {
@@ -51,6 +52,10 @@ struct WireLayer: View {
             }
             if let to = selected, let from = graph.inputs[to], let a = anchors[from], let b = anchors[to] {
                 ctx.stroke(WireGeometry.path(from: a, to: b), with: .color(DraculaTheme.selection.color), lineWidth: 3.5)
+            }
+            if let p = pending, let a = anchors[p.source] {
+                ctx.stroke(WireGeometry.path(from: a, to: p.point),
+                           with: .color(DraculaTheme.token(for: p.type).color.opacity(0.85)), lineWidth: 2)
             }
         }
         .allowsHitTesting(false)

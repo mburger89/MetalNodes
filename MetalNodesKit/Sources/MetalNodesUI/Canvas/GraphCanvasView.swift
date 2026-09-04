@@ -1,6 +1,13 @@
 import SwiftUI
 import MetalNodesCore
 
+/// A wire being dragged: from `source` (always an output socket) to the cursor.
+struct PendingWire: Equatable {
+    var source: SocketRef
+    var type: SocketType
+    var point: CGPoint
+}
+
 public struct GraphCanvasView: View {
     let model: EditorModel
     @State private var transform = CanvasTransform()
@@ -11,7 +18,10 @@ public struct GraphCanvasView: View {
     @State private var marquee: CGRect?                // canvas coords
     @State private var spaceHeld = false
     @State private var dragOrigins: [NodeID: CGPoint] = [:]
+    @State private var pendingWire: PendingWire?
     @FocusState private var canvasFocused: Bool
+    /// Task 11 sets this to open the search popover with an auto-wire; `nil` just cancels.
+    var onWireDroppedOnEmpty: ((SocketRef, SocketType, CGPoint) -> Void)? = nil
 
     static let contentSize: CGFloat = 4000
     static let wireHitDistance: CGFloat = 6
@@ -50,7 +60,10 @@ public struct GraphCanvasView: View {
             }
             .onKeyPress(.delete) { model.deleteSelection(); return .handled }
             .onKeyPress(.deleteForward) { model.deleteSelection(); return .handled }
-            .onKeyPress(.escape) { model.clearSelection(); return .handled }
+            .onKeyPress(.escape) {
+                if pendingWire != nil { pendingWire = nil; model.endTransaction() } else { model.clearSelection() }
+                return .handled
+            }
             .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
                 let step: CGFloat = press.modifiers.contains(.shift) ? 10 : 1
                 let d: CGSize = switch press.key {
@@ -75,7 +88,7 @@ public struct GraphCanvasView: View {
 
     private var content: some View {
         ZStack(alignment: .topLeading) {
-            WireLayer(graph: model.document.root, anchors: anchors, selected: model.selectedWire) { from in
+            WireLayer(graph: model.document.root, anchors: anchors, selected: model.selectedWire, pending: pendingWire) { from in
                 if let t = model.resolvedTypes[from.node]?.outputTypes[from.socket] {
                     return DraculaTheme.token(for: t).color
                 }
@@ -98,7 +111,11 @@ public struct GraphCanvasView: View {
                                  } else {
                                      model.endTransaction()
                                  }
-                             })
+                             },
+                             dragType: pendingWire?.type,
+                             onSocketDragBegan: { ref, isInput in beginWire(from: ref, isInput: isInput) },
+                             onSocketDrag: { p in pendingWire?.point = p },
+                             onSocketDragEnded: { p in endWire(at: p) })
                         .offset(x: node.position.x, y: node.position.y)
                 }
             }
@@ -161,6 +178,45 @@ public struct GraphCanvasView: View {
     private func endNodeDrag() {
         model.endTransaction()
         dragOrigins = [:]
+    }
+
+    // MARK: Wiring (spec §18.5)
+
+    private func beginWire(from ref: SocketRef, isInput: Bool) {
+        canvasFocused = true
+        let g = model.document.root
+        if isInput {
+            // Re-drag: detach the existing wire and continue from its source, as one undo step.
+            guard let source = g.source(feeding: ref) else { return }
+            model.beginTransaction("Rewire")
+            model.apply(.disconnect(ref))
+            guard let t = DropResolver.outputType(of: source, graph: g, registry: model.registry, resolved: model.resolvedTypes) else {
+                model.endTransaction(); return
+            }
+            pendingWire = PendingWire(source: source, type: t, point: anchors[ref] ?? .zero)
+        } else {
+            guard let t = DropResolver.outputType(of: ref, graph: g, registry: model.registry, resolved: model.resolvedTypes) else { return }
+            model.beginTransaction("Connect")
+            pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero)
+        }
+    }
+
+    private func endWire(at p: CGPoint) {
+        guard let w = pendingWire else { return }
+        pendingWire = nil
+        defer { model.endTransaction() }
+        switch DropResolver.resolve(point: p, source: w.source, dragType: w.type, anchors: anchors,
+                                    graph: model.document.root, registry: model.registry, resolved: model.resolvedTypes) {
+        case .socket(let input):
+            model.connectIfCompatible(w.source, to: input)
+        case .node(let id):
+            if let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
+                                                             registry: model.registry, resolved: model.resolvedTypes) {
+                model.connectIfCompatible(w.source, to: input)
+            }
+        case .empty:
+            onWireDroppedOnEmpty?(w.source, w.type, p)
+        }
     }
 
     // MARK: Background: marquee / pan / click
