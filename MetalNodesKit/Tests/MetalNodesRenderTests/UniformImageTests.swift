@@ -47,6 +47,15 @@ import MetalNodesCore
         #expect(readInt(img, layout.field(for: path("b"))!.offset) == 0)
     }
 
+    @Test func intFieldToleratesNaNAndHugeValues() {
+        let layout = UniformLayoutBuilder.build([(path("i"), .int)])
+        var img = UniformImage(layout: layout)
+        img.set(.float(.nan), for: path("i"))
+        #expect(readInt(img, layout.field(for: path("i"))!.offset) == 0)
+        img.set(.float(1e20), for: path("i"))
+        #expect(readInt(img, layout.field(for: path("i"))!.offset) == Int32.max)
+    }
+
     @Test func unknownPathReturnsFalse() {
         var img = UniformImage(layout: UniformLayoutBuilder.build([]))
         let ok = img.set(.float(1), for: path("nope"))

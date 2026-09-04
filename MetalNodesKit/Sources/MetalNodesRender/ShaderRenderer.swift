@@ -36,11 +36,18 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
             ring = UniformRing(device: device, size: image.layout.totalSize)
         }
 
-        // Time: wall clock while playing; frozen while paused.
+        // Time: wall clock while playing; frozen while paused. On resume, fold the
+        // paused span into timeOffset so playback continues from the frozen value
+        // with no jump.
         let now = Float(CACurrentMediaTime() - startTime)
         let t: Float
-        if state.isPlaying { pausedAt = nil; t = now - state.timeOffset }
-        else { if pausedAt == nil { pausedAt = now - state.timeOffset }; t = pausedAt! }
+        if state.isPlaying {
+            if let p = pausedAt { state.timeOffset = now - p; pausedAt = nil }
+            t = now - state.timeOffset
+        } else {
+            if pausedAt == nil { pausedAt = now - state.timeOffset }
+            t = pausedAt!
+        }
 
         image.setReserved(time: t,
                           resolution: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)),
