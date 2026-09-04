@@ -5,8 +5,10 @@ import MetalNodesCore
 /// `endTransaction` registers a single undo step that restores that snapshot.
 extension EditorModel {
     public var isInTransaction: Bool { transactionSnapshot != nil }
-    public var canUndo: Bool { undoManager.canUndo }
-    public var canRedo: Bool { undoManager.canRedo }
+    /// Reads `undoStackVersion` before forwarding so SwiftUI observes a change whenever the
+    /// (non-`@Observable`) `UndoManager`'s stack changes.
+    public var canUndo: Bool { _ = undoStackVersion; return undoManager.canUndo }
+    public var canRedo: Bool { _ = undoStackVersion; return undoManager.canRedo }
 
     /// Opens a transaction; a nested call joins the open one, keeps its name, and must be
     /// balanced by its own `endTransaction()`.
@@ -26,8 +28,19 @@ extension EditorModel {
         commitUndo(before: before, name: transactionName)
     }
 
-    public func undo() { undoManager.undo() }
-    public func redo() { undoManager.redo() }
+    /// No-op while a gesture transaction is open (spec §18.3): undoing mid-gesture would race
+    /// the transaction's eventual `commitUndo`.
+    public func undo() {
+        guard !isInTransaction else { return }
+        undoManager.undo()
+        undoStackVersion += 1
+    }
+
+    public func redo() {
+        guard !isInTransaction else { return }
+        undoManager.redo()
+        undoStackVersion += 1
+    }
 
     /// Registers "go back to `before`". Registering again inside the undo handler is what
     /// gives `UndoManager` its redo step.
@@ -43,5 +56,6 @@ extension EditorModel {
         }
         undoManager.setActionName(name)
         undoManager.endUndoGrouping()
+        undoStackVersion += 1
     }
 }

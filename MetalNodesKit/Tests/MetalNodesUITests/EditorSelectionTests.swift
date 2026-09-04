@@ -97,6 +97,15 @@ import MetalNodesRender
         #expect(m.document == original)
     }
 
+    @Test func canvasRequestsAreObservableAndOneShot() {
+        let m = model()
+        #expect(m.canvasRequest == nil)
+        m.requestCanvas(.fitSelection)
+        #expect(m.canvasRequest == .fitSelection)
+        m.canvasRequest = nil
+        #expect(m.canvasRequest == nil)
+    }
+
     @Test func connectIfCompatibleChecksTypesAndNodes() {
         let m = model()
         let uv = node(m, "input.uv"), comb = node(m, "vector.combine")

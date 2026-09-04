@@ -19,6 +19,7 @@ public struct GraphCanvasView: View {
     @State private var spaceHeld = false
     @State private var dragOrigins: [NodeID: CGPoint] = [:]
     @State private var pendingWire: PendingWire?
+    @State private var viewport: CGSize = .zero
     @FocusState private var canvasFocused: Bool
     /// Task 11 sets this to open the search popover with an auto-wire; `nil` just cancels.
     var onWireDroppedOnEmpty: ((SocketRef, SocketType, CGPoint) -> Void)? = nil
@@ -45,7 +46,19 @@ public struct GraphCanvasView: View {
                     .scaleEffect(transform.zoom, anchor: .topLeading)
                     .offset(transform.pan)
                 marqueeOverlay
+                #if os(macOS)
+                ScrollWheelCatcher { delta, location, cmd, precise in
+                    if cmd {
+                        transform.zoom(by: zoomFactor(for: delta, precise: precise), around: location)
+                    } else {
+                        transform.pan(by: delta)
+                    }
+                    model.viewState.cameras[.root] = transform.camera
+                }
+                #endif
             }
+            .onAppear { viewport = geo.size }
+            .onChange(of: geo.size) { _, s in viewport = s }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
             .contentShape(Rectangle())
@@ -82,6 +95,17 @@ public struct GraphCanvasView: View {
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
         .onAppear { if let cam = model.viewState.cameras[.root] { transform = CanvasTransform(camera: cam) } }
         .onAppear { canvasFocused = true }
+        .onChange(of: model.canvasRequest) { _, req in
+            guard let req else { return }
+            defer { model.canvasRequest = nil }
+            let rect: CGRect? = switch req {
+            case .fitAll: model.contentBounds
+            case .fitSelection: model.selectionBounds ?? model.contentBounds
+            }
+            guard let r = rect, viewport != .zero else { return }
+            transform = CanvasTransform.fitting(r, in: viewport, padding: 40)
+            model.viewState.cameras[.root] = transform.camera
+        }
     }
 
     // MARK: Content
@@ -261,6 +285,10 @@ public struct GraphCanvasView: View {
         } else {
             model.clearSelection()
         }
+    }
+
+    private func zoomFactor(for delta: CGSize, precise: Bool) -> CGFloat {
+        exp(delta.height * (precise ? 0.01 : 0.1))
     }
 
     private var magnifyGesture: some Gesture {

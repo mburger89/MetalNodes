@@ -105,6 +105,18 @@ import MetalNodesRender
         #expect(await c.generations.count == 3)   // start, addNode, undo
     }
 
+    @Test func undoIsIgnoredWhileATransactionIsOpen() {
+        let m = model()
+        let uv = node(m, "input.uv")
+        m.beginTransaction("Move")
+        m.apply(.moveNodes([uv.id: CGPoint(x: 42, y: 42)]))
+        m.undo()
+        #expect(m.document.root.nodes[uv.id]?.position == CGPoint(x: 42, y: 42))
+        m.endTransaction()
+        m.undo()
+        #expect(m.document.root.nodes[uv.id]?.position != CGPoint(x: 42, y: 42))
+    }
+
     @Test func restoreNeverRegistersAnUndoStep() {
         let m = model()
         var doc = m.document

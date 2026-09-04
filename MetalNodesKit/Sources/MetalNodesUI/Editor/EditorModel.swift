@@ -3,6 +3,8 @@ import Observation
 import MetalNodesCore
 import MetalNodesRender
 
+public enum CanvasRequest: Equatable, Sendable { case fitAll, fitSelection }
+
 @MainActor
 @Observable
 public final class EditorModel {
@@ -10,6 +12,12 @@ public final class EditorModel {
     public var viewState = EditorViewState()
     /// The one selected wire, by its input socket. Transient (not view state, not undo).
     public var selectedWire: SocketRef?
+    /// One-shot requests from menus/commands to the canvas view, which consumes and clears them.
+    public var canvasRequest: CanvasRequest?
+    public func requestCanvas(_ r: CanvasRequest) { canvasRequest = r }
+    /// Bumped whenever the undo stack changes, so `canUndo`/`canRedo` (which forward to the
+    /// non-`@Observable` `UndoManager`) trigger SwiftUI updates (menu `.disabled(...)`).
+    public var undoStackVersion = 0
     public let preview: PreviewState
     public let registry: NodeRegistry
     public private(set) var diagnostics: [Diagnostic] = []

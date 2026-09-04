@@ -17,6 +17,7 @@ public struct EditorView: View {
             .background(DraculaToken.background.color)
             .preferredColorScheme(.dark)
             .tint(DraculaToken.purple.color)
+            .focusedSceneValue(\.editorModel, model)
     }
 
     @ViewBuilder
