@@ -31,8 +31,13 @@ The checklist stands at:
 8. User reviews written spec ................... DONE ("looks good lets continue")
 9. Invoke writing-plans skill .................. DONE — M0+M1 plan (18 tasks) at
    docs/superpowers/plans/2026-09-04-metalnodes-m0-m1-foundation.md
-10. Execute plan ................................ NOT STARTED — user must choose
-    subagent-driven vs inline execution. M2–M6 need their own plans after M1 lands.
+10. Execute plan ................................ DONE — 18 tasks via subagent-driven
+    development on branch m0-m1-foundation; 112 tests green; app renders.
+    PR #1: https://github.com/mburger89/MetalNodes/pull/1 (awaiting merge).
+11. Next ........................................ M2 plan (palette, wiring UX, selection,
+    copy/paste, undo, inspector). First M2 tasks per final review: cap ShaderCompiler
+    pipeline cache; make .failure supersession-symmetric; carry severity in CompileLine;
+    document/expose mathMode .fast; verify pinch-zoom by hand.
 ```
 
 **Terminal state is path-bound.** After the user approves, the *only* skill to
