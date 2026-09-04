@@ -5,22 +5,21 @@ public struct GraphCanvasView: View {
     let model: EditorModel
     @State private var transform = CanvasTransform()
     @State private var anchors: [SocketRef: CGPoint] = [:]
-    @State private var panOrigin: CGSize?
     @State private var zoomOrigin: CGFloat?
+    @State private var panOrigin: CGSize?
+    @State private var marqueeStart: CGPoint?          // canvas coords
+    @State private var marquee: CGRect?                // canvas coords
+    @State private var spaceHeld = false
+    @State private var dragOrigins: [NodeID: CGPoint] = [:]
+    @FocusState private var canvasFocused: Bool
 
     static let contentSize: CGFloat = 4000
+    static let wireHitDistance: CGFloat = 6
 
     public init(model: EditorModel) { self.model = model }
 
     public var body: some View {
-        // GeometryReader decouples the viewport's reported size from `content`'s explicit
-        // 4000×4000 frame: without it, the ZStack's ideal size bubbles up as 4000×4000 (a
-        // plain `.frame(maxWidth: .infinity)` on the ZStack does not fix this — SwiftUI still
-        // answers unconstrained ideal-size queries, which is what HSplitView's initial pane
-        // sizing uses, with the child's natural size), so the HSplitView pane — and the whole
-        // window — grow to fit the canvas and the visible slice lands far from its origin.
-        // Pinning the ZStack to the reader's proposed size keeps the viewport at the pane's
-        // actual bounds; `.clipped()` then clips the offset/scaled canvas to that viewport.
+        // See the M1 note: the GeometryReader keeps the 4000×4000 content from dictating the pane size.
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 DraculaToken.background.color
@@ -29,20 +28,44 @@ public struct GraphCanvasView: View {
                     .frame(width: Self.contentSize, height: Self.contentSize, alignment: .topLeading)
                     .scaleEffect(transform.zoom, anchor: .topLeading)
                     .offset(transform.pan)
+                marqueeOverlay
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
             .contentShape(Rectangle())
-            .gesture(panGesture)
+            .gesture(backgroundDrag)
             .simultaneousGesture(magnifyGesture)
+            .focusable()
+            .focusEffectDisabled()
+            .focused($canvasFocused)
+            .onKeyPress(.space, phases: [.down, .up]) { press in
+                spaceHeld = press.phase == .down
+                return .handled
+            }
+            .onKeyPress(.delete) { model.deleteSelection(); return .handled }
+            .onKeyPress(.deleteForward) { model.deleteSelection(); return .handled }
+            .onKeyPress(.escape) { model.clearSelection(); return .handled }
+            .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
+                let step: CGFloat = press.modifiers.contains(.shift) ? 10 : 1
+                let d: CGSize = switch press.key {
+                case .upArrow: CGSize(width: 0, height: -step)
+                case .downArrow: CGSize(width: 0, height: step)
+                case .leftArrow: CGSize(width: -step, height: 0)
+                default: CGSize(width: step, height: 0)
+                }
+                model.nudgeSelection(by: d)
+                return .handled
+            }
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
         .onAppear { if let cam = model.viewState.cameras[.root] { transform = CanvasTransform(camera: cam) } }
     }
 
+    // MARK: Content
+
     private var content: some View {
         ZStack(alignment: .topLeading) {
-            WireLayer(graph: model.document.root, anchors: anchors) { from in
+            WireLayer(graph: model.document.root, anchors: anchors, selected: model.selectedWire) { from in
                 if let t = model.resolvedTypes[from.node]?.outputTypes[from.socket] {
                     return DraculaTheme.token(for: t).color
                 }
@@ -51,12 +74,33 @@ public struct GraphCanvasView: View {
             ForEach(Array(model.document.root.nodes.values), id: \.id) { node in
                 if case .builtin(let defID) = node.kind, let def = model.registry[defID] {
                     NodeView(node: node, def: def, resolved: model.resolvedTypes[node.id],
-                             graph: model.document.root) { model.apply($0) }
+                             graph: model.document.root,
+                             isSelected: model.selection.contains(node.id),
+                             onChange: { model.apply($0) },
+                             onSelect: { mode in canvasFocused = true; model.select(node.id, mode: mode) },
+                             onDragBegan: { beginNodeDrag() },
+                             onDrag: { moveSelection(by: $0) },
+                             onDragEnded: { endNodeDrag() },
+                             onEditing: { editing in editing ? model.beginTransaction("Change Value") : model.endTransaction() })
                         .offset(x: node.position.x, y: node.position.y)
                 }
             }
         }
         .coordinateSpace(.named("canvas"))
+    }
+
+    private var marqueeOverlay: some View {
+        Group {
+            if let m = marquee {
+                let o = transform.toScreen(m.origin)
+                Rectangle()
+                    .fill(DraculaTheme.selection.color.opacity(0.08))
+                    .overlay(Rectangle().stroke(DraculaTheme.selection.color.opacity(0.8), lineWidth: 1))
+                    .frame(width: m.width * transform.zoom, height: m.height * transform.zoom)
+                    .offset(x: o.x, y: o.y)
+            }
+        }
+        .allowsHitTesting(false)
     }
 
     private var gridDots: some View {
@@ -78,13 +122,70 @@ public struct GraphCanvasView: View {
         .allowsHitTesting(false)
     }
 
-    private var panGesture: some Gesture {
-        DragGesture(minimumDistance: 2)
+    // MARK: Node drag (whole selection, one transaction)
+
+    private func beginNodeDrag() {
+        dragOrigins = [:]
+        for id in model.selection {
+            if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
+        }
+        model.beginTransaction("Move")
+    }
+
+    private func moveSelection(by t: CGSize) {
+        guard !dragOrigins.isEmpty else { return }
+        var moves: [NodeID: CGPoint] = [:]
+        for (id, o) in dragOrigins { moves[id] = CGPoint(x: o.x + t.width, y: o.y + t.height) }
+        model.apply(.moveNodes(moves))
+    }
+
+    private func endNodeDrag() {
+        model.endTransaction()
+        dragOrigins = [:]
+    }
+
+    // MARK: Background: marquee / pan / click
+
+    private var backgroundDrag: some Gesture {
+        DragGesture(minimumDistance: 0)
             .onChanged { g in
-                if panOrigin == nil { panOrigin = transform.pan }
-                transform.pan = CGSize(width: panOrigin!.width + g.translation.width, height: panOrigin!.height + g.translation.height)
+                canvasFocused = true
+                if spaceHeld {
+                    if panOrigin == nil { panOrigin = transform.pan }
+                    transform.pan = CGSize(width: panOrigin!.width + g.translation.width, height: panOrigin!.height + g.translation.height)
+                    return
+                }
+                let p = transform.toCanvas(g.location)
+                if marqueeStart == nil { marqueeStart = transform.toCanvas(g.startLocation) }
+                let s = marqueeStart!
+                marquee = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
             }
-            .onEnded { _ in panOrigin = nil; model.viewState.cameras[.root] = transform.camera }
+            .onEnded { g in
+                defer { panOrigin = nil; marqueeStart = nil; marquee = nil }
+                if panOrigin != nil { model.viewState.cameras[.root] = transform.camera; return }
+                let moved = abs(g.translation.width) >= 4 || abs(g.translation.height) >= 4
+                if moved, let m = marquee {
+                    let hit = NodeGeometry.nodes(in: model.document.root, intersecting: m, registry: model.registry)
+                    model.select(nodes: hit, mode: InputModifiers.shiftHeld ? .add : .replace)
+                } else {
+                    click(at: transform.toCanvas(g.location))
+                }
+            }
+    }
+
+    private func click(at p: CGPoint) {
+        var best: (SocketRef, CGFloat)?
+        for (to, from) in model.document.root.inputs {
+            guard let a = anchors[from], let b = anchors[to] else { continue }
+            let d = WireGeometry.distance(from: p, wireFrom: a, to: b)
+            if d <= Self.wireHitDistance / transform.zoom && (best == nil || d < best!.1) { best = (to, d) }
+        }
+        if let (wire, _) = best {
+            model.selection = []
+            model.selectedWire = wire
+        } else {
+            model.clearSelection()
+        }
     }
 
     private var magnifyGesture: some Gesture {

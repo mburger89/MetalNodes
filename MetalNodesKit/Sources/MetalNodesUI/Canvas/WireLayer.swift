@@ -36,17 +36,21 @@ enum WireGeometry {
     }
 }
 
-/// All wires in one `Canvas`, drawn beneath the nodes.
+/// All wires in one `Canvas`, drawn beneath the nodes. The selected wire is drawn last, thicker, in `foreground`.
 struct WireLayer: View {
     let graph: Graph
     let anchors: [SocketRef: CGPoint]
+    var selected: SocketRef? = nil
     let color: (SocketRef) -> Color
 
     var body: some View {
         Canvas { ctx, _ in
-            for (to, from) in graph.inputs {
+            for (to, from) in graph.inputs where to != selected {
                 guard let a = anchors[from], let b = anchors[to] else { continue }
                 ctx.stroke(WireGeometry.path(from: a, to: b), with: .color(color(from)), lineWidth: 2)
+            }
+            if let to = selected, let from = graph.inputs[to], let a = anchors[from], let b = anchors[to] {
+                ctx.stroke(WireGeometry.path(from: a, to: b), with: .color(DraculaTheme.selection.color), lineWidth: 3.5)
             }
         }
         .allowsHitTesting(false)

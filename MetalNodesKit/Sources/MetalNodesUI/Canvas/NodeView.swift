@@ -6,31 +6,44 @@ struct NodeView: View {
     let def: NodeDef
     let resolved: ResolvedNode?
     let graph: Graph
+    let isSelected: Bool
+    var compact = false
     let onChange: (DocumentChange) -> Void
+    let onSelect: (SelectionMode) -> Void
+    let onDragBegan: () -> Void
+    let onDrag: (CGSize) -> Void
+    let onDragEnded: () -> Void
+    let onEditing: (Bool) -> Void
 
-    @State private var dragOrigin: CGPoint?
-    static let width: CGFloat = 190
+    @State private var dragging = false
+    @State private var wasSelectedAtStart = false
+    static let width: CGFloat = NodeGeometry.width
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(def.inputs, id: \.name) { inputRow($0) }
-                ForEach(def.params, id: \.name) { param in
-                    ParamControl(label: param.label, kind: param.kind,
-                                 value: node.params[param.name] ?? param.defaultValue) {
-                        onChange(.setParam(node.id, param.name, $0))
+            if !compact {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(def.inputs, id: \.name) { inputRow($0) }
+                    ForEach(def.params, id: \.name) { param in
+                        ParamControl(label: param.label, kind: param.kind,
+                                     value: node.params[param.name] ?? param.defaultValue,
+                                     onChange: { onChange(.setParam(node.id, param.name, $0)) },
+                                     onEditing: onEditing)
                     }
+                    ForEach(def.outputs, id: \.name) { outputRow($0) }
                 }
-                ForEach(def.outputs, id: \.name) { outputRow($0) }
+                .padding(8)
             }
-            .padding(8)
         }
         .frame(width: Self.width)
         .background(DraculaToken.surface.color)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DraculaToken.background.color, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(isSelected ? DraculaTheme.selection.color : DraculaToken.background.color, lineWidth: isSelected ? 2 : 1))
+        .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 6, y: isSelected ? 0 : 3)
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect(InputModifiers.selectionMode()) }
     }
 
     private var header: some View {
@@ -44,13 +57,26 @@ struct NodeView: View {
         .background(DraculaTheme.token(for: def.category).color)
         .contentShape(Rectangle())
         .gesture(
-            DragGesture(coordinateSpace: .named("canvas"))
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
                 .onChanged { g in
-                    if dragOrigin == nil { dragOrigin = node.position }
-                    let o = dragOrigin!
-                    onChange(.moveNodes([node.id: CGPoint(x: o.x + g.translation.width, y: o.y + g.translation.height)]))
+                    if !dragging {
+                        dragging = true
+                        wasSelectedAtStart = isSelected
+                        let mode = InputModifiers.selectionMode()
+                        if !isSelected || mode != .replace { onSelect(mode) }
+                        onDragBegan()
+                    }
+                    onDrag(g.translation)
                 }
-                .onEnded { _ in dragOrigin = nil }
+                .onEnded { g in
+                    dragging = false
+                    onDragEnded()
+                    // A click (no movement) on an already-selected node collapses the selection to it.
+                    if abs(g.translation.width) < 1 && abs(g.translation.height) < 1,
+                       wasSelectedAtStart, InputModifiers.selectionMode() == .replace {
+                        onSelect(.replace)
+                    }
+                }
         )
     }
 
@@ -61,9 +87,10 @@ struct NodeView: View {
         return HStack(spacing: 6) {
             SocketView(type: type).socketAnchor(ref).offset(x: -8 - SocketView.size / 2)
             if !wired, case .value(let dflt) = decl.default {
-                ParamControl(label: decl.label, kind: .value(type, range: decl.range), value: coerced(node.params[decl.name] ?? dflt, to: type)) {
-                    onChange(.setParam(node.id, decl.name, $0))
-                }
+                ParamControl(label: decl.label, kind: .value(type, range: decl.range),
+                             value: coerced(node.params[decl.name] ?? dflt, to: type),
+                             onChange: { onChange(.setParam(node.id, decl.name, $0)) },
+                             onEditing: onEditing)
             } else {
                 Text(decl.label).font(.caption)
             }
@@ -84,7 +111,6 @@ struct NodeView: View {
         if case .concrete(let c) = t { return c } else { return .float }
     }
 
-    /// Show a stored scalar as the resolved vector type so the control matches the socket.
     private func coerced(_ v: ParamValue, to type: SocketType) -> ParamValue {
         switch (v, type) {
         case (.float(let x), .float2): .float2(.init(x, x))
