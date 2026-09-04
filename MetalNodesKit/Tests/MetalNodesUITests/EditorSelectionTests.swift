@@ -85,4 +85,24 @@ import MetalNodesRender
         #expect(m.selectionBounds == m.frame(of: uv))
         #expect(m.contentBounds!.maxX == 1290)
     }
+
+    @Test func addNodePlacesSelectsAndUndoes() {
+        let m = model()
+        let original = m.document
+        let id = m.addNode(defID: "noise.value", at: CGPoint(x: 300, y: 300))!
+        #expect(m.document.root.nodes[id]?.position == CGPoint(x: 300, y: 300))
+        #expect(m.selection == [id])
+        #expect(m.addNode(defID: "nope", at: .zero) == nil)
+        m.undo()
+        #expect(m.document == original)
+    }
+
+    @Test func connectIfCompatibleChecksTypesAndNodes() {
+        let m = model()
+        let uv = node(m, "input.uv"), comb = node(m, "vector.combine")
+        #expect(m.connectIfCompatible(SocketRef(uv.id, "uv"), to: SocketRef(comb.id, "z")))      // float2 → float (average)
+        #expect(m.document.root.source(feeding: SocketRef(comb.id, "z")) == SocketRef(uv.id, "uv"))
+        let bogus = NodeInstance(kind: .builtin("input.uv"))
+        #expect(m.connectIfCompatible(SocketRef(bogus.id, "uv"), to: SocketRef(comb.id, "x")) == false)  // unknown node
+    }
 }
