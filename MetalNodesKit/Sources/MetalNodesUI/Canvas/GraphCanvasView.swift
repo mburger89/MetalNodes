@@ -13,18 +13,29 @@ public struct GraphCanvasView: View {
     public init(model: EditorModel) { self.model = model }
 
     public var body: some View {
-        ZStack(alignment: .topLeading) {
-            DraculaToken.background.color
-            gridDots
-            content
-                .frame(width: Self.contentSize, height: Self.contentSize, alignment: .topLeading)
-                .scaleEffect(transform.zoom, anchor: .topLeading)
-                .offset(transform.pan)
+        // GeometryReader decouples the viewport's reported size from `content`'s explicit
+        // 4000×4000 frame: without it, the ZStack's ideal size bubbles up as 4000×4000 (a
+        // plain `.frame(maxWidth: .infinity)` on the ZStack does not fix this — SwiftUI still
+        // answers unconstrained ideal-size queries, which is what HSplitView's initial pane
+        // sizing uses, with the child's natural size), so the HSplitView pane — and the whole
+        // window — grow to fit the canvas and the visible slice lands far from its origin.
+        // Pinning the ZStack to the reader's proposed size keeps the viewport at the pane's
+        // actual bounds; `.clipped()` then clips the offset/scaled canvas to that viewport.
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                DraculaToken.background.color
+                gridDots
+                content
+                    .frame(width: Self.contentSize, height: Self.contentSize, alignment: .topLeading)
+                    .scaleEffect(transform.zoom, anchor: .topLeading)
+                    .offset(transform.pan)
+            }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+            .clipped()
+            .contentShape(Rectangle())
+            .gesture(panGesture)
+            .simultaneousGesture(magnifyGesture)
         }
-        .clipped()
-        .contentShape(Rectangle())
-        .gesture(panGesture)
-        .simultaneousGesture(magnifyGesture)
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
         .onAppear { if let cam = model.viewState.cameras[.root] { transform = CanvasTransform(camera: cam) } }
     }

@@ -40,6 +40,7 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         // paused span into timeOffset so playback continues from the frozen value
         // with no jump.
         let now = Float(CACurrentMediaTime() - startTime)
+        if state.resetRequested { state.timeOffset = now; pausedAt = nil; state.resetRequested = false }
         let t: Float
         if state.isPlaying {
             if let p = pausedAt { state.timeOffset = now - p; pausedAt = nil }
