@@ -67,6 +67,20 @@ actor RecordingCompiler: ShaderCompiling {
         #expect(await c.generations == [1, 2])
     }
 
+    @Test func awaitIdleWaitsForEditsThatLandMidAwait() async {
+        let c = RecordingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        let sine = node(m, "math.math")
+        m.apply(.setParam(sine.id, "op", .enumCase("cosine")))
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1))
+            m.apply(.setParam(sine.id, "op", .enumCase("sine")))
+        }
+        await m.awaitIdle()
+        #expect(await c.generations.count == 2)
+    }
+
     @Test func invalidGraphReportsDiagnosticsAndDoesNotCompile() async {
         let c = RecordingCompiler()
         let m = model(c)

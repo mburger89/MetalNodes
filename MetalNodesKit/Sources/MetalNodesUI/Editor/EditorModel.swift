@@ -19,6 +19,9 @@ public final class EditorModel {
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
     private var compileTask: Task<Void, Never>?
+    /// Bumped by every `start()`/`scheduleCompile()` so `awaitIdle` can tell whether a
+    /// new edit landed while it was suspended (`Task` is a struct — no identity to compare).
+    private var scheduleCount = 0
 
     public init(document: ShaderDocument, compiler: any ShaderCompiling,
                 registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState()) {
@@ -30,13 +33,21 @@ public final class EditorModel {
 
     /// First compile, undebounced.
     public func start() {
+        scheduleCount += 1
         compileTask = Task { await self.compileNow() }
     }
 
     /// Waits for any pending debounce and compile. For tests and for save.
+    /// Loops until quiescent: an edit landing while we're suspended reschedules
+    /// work we haven't awaited yet, so a single await-pair could return early.
     public func awaitIdle() async {
-        await debounceTask?.value
-        await compileTask?.value
+        while true {
+            let count = scheduleCount
+            let d = debounceTask, c = compileTask
+            await d?.value
+            await c?.value
+            if scheduleCount == count { return }   // nothing new was scheduled meanwhile
+        }
     }
 
     public func apply(_ change: DocumentChange) {
@@ -60,7 +71,9 @@ public final class EditorModel {
             break
         case .parameter:
             if case .setParam(let id, let key, let value) = change, var img = preview.uniforms {
-                img.set(value, for: ParamPath(node: id, param: key))
+                if !img.set(value, for: ParamPath(node: id, param: key)) {
+                    scheduleCompile()
+                }
                 preview.uniforms = img
             }
         case .topology:
@@ -69,6 +82,7 @@ public final class EditorModel {
     }
 
     private func scheduleCompile() {
+        scheduleCount += 1
         debounceTask?.cancel()
         debounceTask = Task { [debounceInterval] in
             try? await Task.sleep(for: debounceInterval)
