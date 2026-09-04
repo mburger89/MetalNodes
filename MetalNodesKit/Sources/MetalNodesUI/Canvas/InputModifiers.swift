@@ -21,4 +21,12 @@ enum InputModifiers {
         false
         #endif
     }
+
+    static var optionHeld: Bool {
+        #if os(macOS)
+        NSEvent.modifierFlags.contains(.option)
+        #else
+        false
+        #endif
+    }
 }

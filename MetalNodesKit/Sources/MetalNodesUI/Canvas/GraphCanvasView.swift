@@ -1,5 +1,6 @@
 import SwiftUI
 import MetalNodesCore
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
@@ -132,6 +133,9 @@ public struct GraphCanvasView: View {
             // parameter `TextField` gets first crack at Delete/Select All — see EditorCommands.
             .onDeleteCommand { model.deleteSelection() }
             .onCommand(#selector(NSResponder.selectAll(_:))) { model.selectAll() }
+            .onCutCommand { model.cutSelection(); return [] }
+            .onCopyCommand { model.copySelection(); return [] }
+            .onPasteCommand(of: [UTType(EditorModel.pasteboardType) ?? .data]) { _ in model.paste() }
             #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
@@ -231,12 +235,14 @@ public struct GraphCanvasView: View {
 
     private func beginNodeDrag() {
         canvasFocused = true
+        if model.isInTransaction { model.endTransaction() }   // defensive reset: an interrupted drag can leave one open
+        let duplicating = InputModifiers.optionHeld && !model.selection.isEmpty
+        model.beginTransaction(duplicating ? "Duplicate" : "Move")
+        if duplicating { model.duplicateSelection(offset: .zero) }   // selection is now the copies, in place
         dragOrigins = [:]
         for id in model.selection {
             if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
         }
-        if model.isInTransaction { model.endTransaction() }   // defensive reset: an interrupted drag can leave one open
-        model.beginTransaction("Move")
     }
 
     private func moveSelection(by t: CGSize) {

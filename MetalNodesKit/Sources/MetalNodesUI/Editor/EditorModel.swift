@@ -27,6 +27,8 @@ public final class EditorModel {
     public var canvasHasFocus = false
     public let preview: PreviewState
     public let registry: NodeRegistry
+    public let pasteboard: any Pasteboarding
+    public static let pasteboardType = "com.maxburger.metalnodes.graph"
     public private(set) var diagnostics: [Diagnostic] = []
     public private(set) var generatedSource = ""
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]
@@ -47,11 +49,13 @@ public final class EditorModel {
     var transactionDepth = 0
 
     public init(document: ShaderDocument, compiler: any ShaderCompiling,
-                registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState()) {
+                registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState(),
+                pasteboard: any Pasteboarding = SystemPasteboard()) {
         self.document = document
         self.compiler = compiler
         self.registry = registry
         self.preview = preview
+        self.pasteboard = pasteboard
         undoManager.groupsByEvent = false
     }
 

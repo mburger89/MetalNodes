@@ -32,6 +32,9 @@ public struct EditorCommands: Commands {
         }
         CommandGroup(after: .pasteboard) {
             Divider()
+            Button("Duplicate") { model?.duplicateSelection() }
+                .keyboardShortcut("d", modifiers: .command)
+                .disabled(!(model?.canvasHasFocus ?? false) || !(model?.canCopy ?? false))
             Button("Delete") { model?.deleteSelection() }
                 .keyboardShortcut(.delete, modifiers: [])
                 .disabled(!(model?.canvasHasFocus ?? false) || ((model?.selection.isEmpty ?? true) && model?.selectedWire == nil))
