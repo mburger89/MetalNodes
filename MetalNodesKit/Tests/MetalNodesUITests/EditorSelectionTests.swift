@@ -83,6 +83,6 @@ import MetalNodesRender
         #expect(m.node(at: CGPoint(x: -5, y: -5)) == nil)
         m.select(uv)
         #expect(m.selectionBounds == m.frame(of: uv))
-        #expect(m.contentBounds!.maxX == 1100 + 190)
+        #expect(m.contentBounds!.maxX == 1290)
     }
 }

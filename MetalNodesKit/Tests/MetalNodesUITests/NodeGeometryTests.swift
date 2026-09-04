@@ -10,7 +10,7 @@ import MetalNodesCore
         let sep = reg["vector.separate"]!          // 1 input, 0 params, 3 outputs = 4 rows
         let s = NodeGeometry.estimatedSize(for: sep)
         #expect(s.width == 190)
-        #expect(s.height == 26 + 16 + 4 * 22)
+        #expect(s.height == 130)   // header 26 + padding 16 + 4 rows × 22
     }
 
     @Test func frameStartsAtPosition() {
@@ -32,7 +32,7 @@ import MetalNodesCore
         let doc = ShaderDocument.sample()
         let all = NodeGeometry.bounds(of: doc.root.nodes.keys, in: doc.root, registry: reg)!
         #expect(all.minX == 0 && all.minY == 0)
-        #expect(all.maxX == 1100 + 190)
+        #expect(all.maxX == 1290)   // out node at x 1100 + width 190
         #expect(NodeGeometry.bounds(of: [NodeID](), in: doc.root, registry: reg) == nil)
     }
 }
