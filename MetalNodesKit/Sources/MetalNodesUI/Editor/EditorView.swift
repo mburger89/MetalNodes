@@ -53,7 +53,8 @@ public struct EditorView: View {
             }
             .controlSize(.small)
             diagnosticsList
-            Spacer()
+            Divider()
+            InspectorView(model: model)
         }
         .padding(10)
     }
