@@ -82,12 +82,62 @@ import MetalNodesCore
         }
         #expect(!lines.isEmpty)
         #expect(lines.first!.line > 1)
+        #expect(lines.first!.severity == .error)
     }
 
-    @Test func parsesClangStyleLines() {
-        let msg = "program_source:42:9: error: use of undeclared identifier 'retrun'\nprogram_source:50:1: warning: unused"
-        let lines = ShaderCompiler.parseLines(msg)
-        #expect(lines == [CompileLine(line: 42, message: "use of undeclared identifier 'retrun'"),
-                          CompileLine(line: 50, message: "unused")])
+    private func variant(_ shader: GeneratedShader, tag: Int) -> GeneratedShader {
+        GeneratedShader(source: shader.source + "\n// variant \(tag)\n", layout: shader.layout, lineMap: shader.lineMap,
+                        resolved: shader.resolved, fragmentFunctionName: shader.fragmentFunctionName, target: shader.target)
+    }
+
+    @Test func parsesClangStyleLinesWithSeverity() {
+        let msg = """
+        program_source:42:9: error: use of undeclared identifier 'retrun'
+        program_source:50:1: warning: unused variable 'v3'
+        program_source:12:3: note: expanded from macro
+        """
+        #expect(ShaderCompiler.parseLines(msg) == [
+            CompileLine(line: 42, severity: .error, message: "use of undeclared identifier 'retrun'"),
+            CompileLine(line: 50, severity: .warning, message: "unused variable 'v3'"),
+            CompileLine(line: 12, severity: .note, message: "expanded from macro"),
+        ])
+    }
+
+    @Test func lruEvictsTheLeastRecentlyUsedPipeline() async throws {
+        let d = try #require(Self.device)
+        let c = try ShaderCompiler(device: d, cacheLimit: 2)
+        let base = try ShaderGenerator.generate(ShaderDocument.sample())
+        let a = variant(base, tag: 1), b = variant(base, tag: 2), x = variant(base, tag: 3)
+        _ = await c.compile(a, generation: 1)
+        _ = await c.compile(b, generation: 1)
+        _ = await c.compile(a, generation: 1)          // touch a → b is now least recent
+        _ = await c.compile(x, generation: 1)          // evicts b
+        #expect(await c.cacheCount == 2)
+        #expect(await c.isCached(a))
+        #expect(await c.isCached(x))
+        #expect(await c.isCached(b) == false)
+    }
+
+    @Test func fastMathIsPartOfTheCacheKey() async throws {
+        let c = try compiler()
+        let shader = try ShaderGenerator.generate(ShaderDocument.sample())
+        _ = await c.compile(shader, generation: 1, fastMath: true)
+        _ = await c.compile(shader, generation: 1, fastMath: false)
+        #expect(await c.cacheCount == 2)
+        #expect(await c.isCached(shader, fastMath: false))
+    }
+
+    @Test func staleFailureIsSuperseded() async throws {
+        let c = try compiler()
+        let good = try ShaderGenerator.generate(ShaderDocument.sample())
+        _ = await c.compile(good, generation: 2)
+        var broken = variant(good, tag: 9)
+        broken = GeneratedShader(source: broken.source.replacingOccurrences(of: "return", with: "retrun"),
+                                 layout: broken.layout, lineMap: broken.lineMap, resolved: broken.resolved,
+                                 fragmentFunctionName: broken.fragmentFunctionName, target: broken.target)
+        guard case .superseded(let g) = await c.compile(broken, generation: 1) else {
+            Issue.record("expected superseded, not failure, for a stale broken compile"); return
+        }
+        #expect(g == 1)
     }
 }
