@@ -5,12 +5,16 @@ public struct SocketDecl: Sendable, Hashable, Codable {
     public var label: String
     public var type: TypeRef
     public var `default`: SocketDefault
+    /// Slider range for the unwired-input fallback control. `nil` uses the control's own default.
+    public var range: ClosedRange<Float>?
 
-    public init(name: String, label: String? = nil, type: TypeRef, default: SocketDefault = .required) {
+    public init(name: String, label: String? = nil, type: TypeRef, default: SocketDefault = .required,
+                range: ClosedRange<Float>? = nil) {
         self.name = name
         self.label = label ?? name.capitalized
         self.type = type
         self.default = `default`
+        self.range = range
     }
 }
 

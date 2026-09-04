@@ -61,7 +61,7 @@ struct NodeView: View {
         return HStack(spacing: 6) {
             SocketView(type: type).socketAnchor(ref).offset(x: -8 - SocketView.size / 2)
             if !wired, case .value(let dflt) = decl.default {
-                ParamControl(label: decl.label, kind: .value(type, range: nil), value: coerced(node.params[decl.name] ?? dflt, to: type)) {
+                ParamControl(label: decl.label, kind: .value(type, range: decl.range), value: coerced(node.params[decl.name] ?? dflt, to: type)) {
                     onChange(.setParam(node.id, decl.name, $0))
                 }
             } else {

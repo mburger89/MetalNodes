@@ -92,7 +92,7 @@ actor RecordingCompiler: ShaderCompiling {
     }
 
     @Test func parameterChangeWritesUniformsWithoutRecompiling() async throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let device = try #require(MTLCreateSystemDefaultDevice(), "No Metal device — these tests need a GPU")
         let real = try ShaderCompiler(device: device)
         let m = model(real)
         m.start(); await m.awaitIdle()
@@ -107,7 +107,7 @@ actor RecordingCompiler: ShaderCompiling {
     }
 
     @Test func compileFailureKeepsLastGoodPipelineAndMapsLines() async throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let device = try #require(MTLCreateSystemDefaultDevice(), "No Metal device — these tests need a GPU")
         let m = model(try ShaderCompiler(device: device))
         m.start(); await m.awaitIdle()
         let good = try #require(m.preview.pipeline)

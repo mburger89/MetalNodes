@@ -40,4 +40,9 @@ import Testing
         #expect(doc.root.inputs.count >= 8)
         #expect(doc.definitions.isEmpty)
     }
+
+    @Test func noiseScaleRangeContainsSampleDefault() throws {
+        let decl = try #require(NodeRegistry.builtin["noise.value"]!.input(named: "scale"))
+        #expect(try #require(decl.range).contains(6))
+    }
 }

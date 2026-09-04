@@ -96,11 +96,17 @@ public final class EditorModel {
         generation += 1
         let gen = generation
         let doc = document
+        let registry = registry
+
+        let result: Result<GeneratedShader, GenerationError> = await Task.detached(priority: .userInitiated) {
+            generateResult(doc, registry: registry)
+        }.value
 
         let shader: GeneratedShader
-        do {
-            shader = try ShaderGenerator.generate(doc, target: .fragment, registry: registry)
-        } catch {
+        switch result {
+        case .success(let s):
+            shader = s
+        case .failure(let error):
             switch error {
             case .invalid(let diags):
                 diagnostics = diags
@@ -130,5 +136,17 @@ public final class EditorModel {
         case .superseded:
             break
         }
+    }
+}
+
+/// Free function (not a closure) so the do/catch below infers `error` as the concrete
+/// `GenerationError` from `ShaderGenerator.generate`'s typed throw, rather than `any Error`.
+/// `nonisolated` so it actually runs on the `Task.detached` background thread instead of
+/// hopping back to the main actor (this module defaults new declarations to `@MainActor`).
+nonisolated private func generateResult(_ doc: ShaderDocument, registry: NodeRegistry) -> Result<GeneratedShader, GenerationError> {
+    do {
+        return .success(try ShaderGenerator.generate(doc, target: .fragment, registry: registry))
+    } catch {
+        return .failure(error)
     }
 }

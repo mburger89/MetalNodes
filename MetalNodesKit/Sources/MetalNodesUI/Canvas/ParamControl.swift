@@ -32,7 +32,7 @@ struct ParamControl: View {
             let f: Float = { if case .float(let x) = value { return x } else { return 0 } }()
             HStack(spacing: 4) {
                 Text(label).font(.caption).frame(width: 46, alignment: .leading)
-                Slider(value: Binding(get: { f }, set: { onChange(.float($0)) }), in: range ?? -1...1)
+                Slider(value: Binding(get: { f }, set: { onChange(.float($0)) }), in: range ?? -10...10)
                     .controlSize(.mini)
                 Text(f.formatted(.number.precision(.fractionLength(2)))).font(.caption2.monospacedDigit()).frame(width: 36, alignment: .trailing)
             }
@@ -49,8 +49,10 @@ struct ParamControl: View {
             ColorPicker(label, selection: Binding(
                 get: { CGColor(srgbRed: CGFloat(v.x), green: CGFloat(v.y), blue: CGFloat(v.z), alpha: CGFloat(v.w)) },
                 set: { c in
-                    let comps = (c.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil) ?? c).components ?? [1, 1, 1, 1]
-                    onChange(.float4(.init(Float(comps[0]), Float(comps[1]), Float(comps[2]), Float(comps.count > 3 ? comps[3] : 1))))
+                    var comps = (c.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil) ?? c).components ?? [1, 1, 1, 1]
+                    if comps.count == 2 { comps = [comps[0], comps[0], comps[0], comps[1]] }
+                    while comps.count < 4 { comps.append(comps.count == 3 ? 1 : 0) }
+                    onChange(.float4(.init(Float(comps[0]), Float(comps[1]), Float(comps[2]), Float(comps[3]))))
                 }), supportsOpacity: true)
                 .font(.caption)
         case .float2, .float3:
