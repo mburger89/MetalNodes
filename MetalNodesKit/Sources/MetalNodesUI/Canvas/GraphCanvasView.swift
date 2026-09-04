@@ -33,6 +33,9 @@ public struct GraphCanvasView: View {
     }
     @State private var chooser: Chooser?
     @State private var hoverLocation: CGPoint = .zero      // viewport coords, for ⇧A
+    /// Last background click (viewport coords), for synthesising double-click since
+    /// `backgroundDrag` already claims single clicks — see its `onEnded` click branch.
+    @State private var lastClick: (time: Date, point: CGPoint)?
 
     static let contentSize: CGFloat = 4000
     static let wireHitDistance: CGFloat = 6
@@ -68,7 +71,7 @@ public struct GraphCanvasView: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 #endif
             }
-            .onAppear { viewport = geo.size }
+            .onAppear { viewport = geo.size; hoverLocation = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2) }
             .onChange(of: geo.size) { _, s in viewport = s }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
@@ -103,10 +106,14 @@ public struct GraphCanvasView: View {
                 model.canvasHasFocus = focused
                 if !focused { spaceHeld = false }
             }
-            .onContinuousHover { phase in if case .active(let p) = phase { hoverLocation = p } }
-            .onTapGesture(count: 2) { p in openChooser(atScreen: p, wire: nil) }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let p): hoverLocation = p
+                case .ended: hoverLocation = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+                }
+            }
             .onKeyPress(characters: .init(charactersIn: "aA")) { press in
-                guard press.modifiers.contains(.shift) else { return .ignored }
+                guard press.modifiers == .shift else { return .ignored }
                 openChooser(atScreen: hoverLocation, wire: nil)
                 return .handled
             }
@@ -293,7 +300,8 @@ public struct GraphCanvasView: View {
         chooser = nil
         model.beginTransaction("Add Node")
         defer { model.endTransaction() }
-        guard let id = model.addNode(defID: def.id, at: c.canvasPoint) else { return }
+        let origin = CGPoint(x: c.canvasPoint.x - NodeGeometry.width / 2, y: c.canvasPoint.y - NodeGeometry.headerHeight / 2)
+        guard let id = model.addNode(defID: def.id, at: origin) else { return }
         if let w = c.wire,
            let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
                                                          registry: model.registry, resolved: model.resolvedTypes) {
@@ -324,8 +332,13 @@ public struct GraphCanvasView: View {
                 if moved, let m = marquee {
                     let hit = NodeGeometry.nodes(in: model.document.root, intersecting: m, registry: model.registry)
                     model.select(nodes: hit, mode: InputModifiers.shiftHeld ? .add : .replace)
+                } else if let last = lastClick, Date.now.timeIntervalSince(last.time) < 0.4,
+                          hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
+                    lastClick = nil
+                    openChooser(atScreen: g.location, wire: nil)
                 } else {
                     click(at: transform.toCanvas(g.location))
+                    lastClick = (time: .now, point: g.location)
                 }
             }
     }
