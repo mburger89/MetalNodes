@@ -56,6 +56,13 @@ public struct CommentFrame: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
+/// One wire. `to` is the input socket (unique per graph), `from` its source output.
+public struct Edge: Codable, Sendable, Hashable {
+    public var to: SocketRef
+    public var from: SocketRef
+    public init(to: SocketRef, from: SocketRef) { self.to = to; self.from = from }
+}
+
 /// Nodes plus wires. Wires are stored **input → output** so each input has at
 /// most one source by construction (spec §3).
 public struct Graph: Sendable, Hashable {
@@ -92,10 +99,26 @@ public struct Graph: Sendable, Hashable {
         }
         return seen
     }
+
+    /// Every wire, sorted by input socket so output is deterministic.
+    public var edgeList: [Edge] {
+        inputs.map { Edge(to: $0.key, from: $0.value) }
+            .sorted { ($0.to.node.raw.uuidString, $0.to.socket) < ($1.to.node.raw.uuidString, $1.to.socket) }
+    }
+
+    /// Wires whose both ends are inside `ids` — the edges a copy/group operation keeps.
+    public func internalEdges(among ids: Set<NodeID>) -> [Edge] {
+        edgeList.filter { ids.contains($0.to.node) && ids.contains($0.from.node) }
+    }
+
+    /// Removes several nodes and every wire touching any of them.
+    public mutating func remove(nodes ids: Set<NodeID>) {
+        for id in ids { nodes[id] = nil }
+        inputs = inputs.filter { !ids.contains($0.key.node) && !ids.contains($0.value.node) }
+    }
 }
 
 extension Graph: Codable {
-    private struct Edge: Codable { var to: SocketRef; var from: SocketRef }
     private enum Keys: String, CodingKey { case nodes, edges, stickies, frames }
 
     public init(from decoder: Decoder) throws {
@@ -109,8 +132,7 @@ extension Graph: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
         try c.encode(nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .nodes)
-        try c.encode(inputs.map { Edge(to: $0.key, from: $0.value) }
-            .sorted { ($0.to.node.raw.uuidString, $0.to.socket) < ($1.to.node.raw.uuidString, $1.to.socket) }, forKey: .edges)
+        try c.encode(edgeList, forKey: .edges)
         try c.encode(stickies.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .stickies)
         try c.encode(frames.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .frames)
     }

@@ -40,12 +40,45 @@ actor WarningCompiler: ShaderCompiling {
 
     @Test func classification() {
         let id = NodeID()
-        #expect(DocumentChange.moveNode(id, to: .zero).changeClass == .cosmetic)
+        #expect(DocumentChange.moveNodes([id: .zero]).changeClass == .cosmetic)
         #expect(DocumentChange.setParam(id, "value", .float(1)).changeClass == .parameter)
         #expect(DocumentChange.setParam(id, "op", .enumCase("sine")).changeClass == .topology)
         #expect(DocumentChange.connect(from: SocketRef(id, "a"), to: SocketRef(id, "b")).changeClass == .topology)
         #expect(DocumentChange.disconnect(SocketRef(id, "a")).changeClass == .topology)
-        #expect(DocumentChange.removeNode(id).changeClass == .topology)
+        #expect(DocumentChange.removeNodes([id]).changeClass == .topology)
+        #expect(DocumentChange.setTitle(id, "x").changeClass == .cosmetic)
+        #expect(DocumentChange.insert(nodes: [], edges: []).changeClass == .topology)
+    }
+
+    @Test func removeNodesPrunesSelectionAndDropsWires() async {
+        let m = model(RecordingCompiler())
+        let uv = node(m, "input.uv"), sep = node(m, "vector.separate")
+        m.viewState.selection = [uv.id, sep.id]
+        m.apply(.removeNodes([uv.id]))
+        #expect(m.viewState.selection == [sep.id])
+        #expect(m.document.root.inputs.values.contains { $0.node == uv.id } == false)
+    }
+
+    @Test func insertAddsNodesThenWiresInOneChange() async {
+        let c = RecordingCompiler()
+        let m = model(c); m.start(); await m.awaitIdle()
+        let a = NodeInstance(kind: .builtin("input.time")), b = NodeInstance(kind: .builtin("math.math"))
+        m.apply(.insert(nodes: [a, b], edges: [Edge(to: SocketRef(b.id, "a"), from: SocketRef(a.id, "time"))]))
+        await m.awaitIdle()
+        #expect(m.document.root.source(feeding: SocketRef(b.id, "a")) == SocketRef(a.id, "time"))
+        #expect(await c.generations.count == 2)
+    }
+
+    @Test func setTitleIsCosmeticAndEmptyClears() async {
+        let c = RecordingCompiler()
+        let m = model(c); m.start(); await m.awaitIdle()
+        let uv = node(m, "input.uv")
+        m.apply(.setTitle(uv.id, "Coords"))
+        #expect(m.document.root.nodes[uv.id]?.customTitle == "Coords")
+        m.apply(.setTitle(uv.id, ""))
+        #expect(m.document.root.nodes[uv.id]?.customTitle == nil)
+        await m.awaitIdle()
+        #expect(await c.generations.count == 1)
     }
 
     @Test func startCompilesOnce() async {
@@ -63,7 +96,7 @@ actor WarningCompiler: ShaderCompiling {
         let m = model(c)
         m.start(); await m.awaitIdle()
         let uv = node(m, "input.uv")
-        m.apply(.moveNode(uv.id, to: CGPoint(x: 5, y: 5)))
+        m.apply(.moveNodes([uv.id: CGPoint(x: 5, y: 5)]))
         await m.awaitIdle()
         #expect(await c.generations.count == 1)
         #expect(m.document.root.nodes[uv.id]?.position == CGPoint(x: 5, y: 5))
@@ -97,7 +130,7 @@ actor WarningCompiler: ShaderCompiling {
         let c = RecordingCompiler()
         let m = model(c)
         m.start(); await m.awaitIdle()
-        m.apply(.removeNode(node(m, "output.fragment").id))
+        m.apply(.removeNodes([node(m, "output.fragment").id]))
         await m.awaitIdle()
         #expect(m.diagnostics.contains { $0.message.contains("Fragment Output") })
         #expect(await c.generations == [1])

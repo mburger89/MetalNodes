@@ -52,18 +52,29 @@ public final class EditorModel {
 
     public func apply(_ change: DocumentChange) {
         switch change {
-        case .moveNode(let id, let p):
-            document.root.nodes[id]?.position = p
+        case .moveNodes(let positions):
+            for (id, p) in positions { document.root.nodes[id]?.position = p }
         case .setParam(let id, let key, let value):
             document.root.nodes[id]?.params[key] = value
+        case .setTitle(let id, let title):
+            document.root.nodes[id]?.customTitle = title.flatMap { $0.isEmpty ? nil : $0 }
         case .connect(let from, let to):
             document.root.connect(from, to: to)
         case .disconnect(let input):
             document.root.disconnect(input)
         case .addNode(let n):
             document.root.nodes[n.id] = n
-        case .removeNode(let id):
-            document.root.remove(node: id)
+        case .removeNodes(let ids):
+            document.root.remove(nodes: ids)
+            pruneSelection()
+        case .insert(let nodes, let edges):
+            for n in nodes { document.root.nodes[n.id] = n }
+            for e in edges { document.root.connect(e.from, to: e.to) }
+        case .setSettings(let s):
+            document.settings = s
+        case .restore(let doc):
+            document = doc
+            pruneSelection()
         }
 
         switch change.changeClass {
@@ -79,6 +90,11 @@ public final class EditorModel {
         case .topology:
             scheduleCompile()
         }
+    }
+
+    /// Selection may only reference nodes that exist (spec §18.3).
+    func pruneSelection() {
+        viewState.selection = viewState.selection.filter { document.root.nodes[$0] != nil }
     }
 
     private func scheduleCompile() {

@@ -48,7 +48,7 @@ struct NodeView: View {
                 .onChanged { g in
                     if dragOrigin == nil { dragOrigin = node.position }
                     let o = dragOrigin!
-                    onChange(.moveNode(node.id, to: CGPoint(x: o.x + g.translation.width, y: o.y + g.translation.height)))
+                    onChange(.moveNodes([node.id: CGPoint(x: o.x + g.translation.width, y: o.y + g.translation.height)]))
                 }
                 .onEnded { _ in dragOrigin = nil }
         )
