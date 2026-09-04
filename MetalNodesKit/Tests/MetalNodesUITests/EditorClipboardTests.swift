@@ -36,8 +36,10 @@ import MetalNodesRender
         #expect(m.selection == pasted)
         #expect(pasted.isDisjoint(with: [uv.id, sep.id]))
         let newSep = pasted.first { m.document.root.nodes[$0]?.kind == .builtin("vector.separate") }!
-        #expect(m.document.root.source(feeding: SocketRef(newSep, "v"))?.node != uv.id)   // wired to the *copied* uv
-        #expect(m.document.root.nodes.values.first { $0.kind == .builtin("input.uv") && $0.id != uv.id }?.position == CGPoint(x: 2000, y: 2000))
+        let newUV = try #require(pasted.first { m.document.root.nodes[$0]?.kind == .builtin("input.uv") })
+        let src = try #require(m.document.root.source(feeding: SocketRef(newSep, "v")))
+        #expect(src.node == newUV)   // wired to the *copied* uv, not the original
+        #expect(m.document.root.nodes[newUV]?.position == CGPoint(x: 2000, y: 2000))
     }
 
     @Test func pasteIsOneUndoStep() {

@@ -28,7 +28,7 @@ public final class EditorModel {
     public let preview: PreviewState
     public let registry: NodeRegistry
     public let pasteboard: any Pasteboarding
-    public static let pasteboardType = "com.maxburger.metalnodes.graph"
+    public nonisolated static let pasteboardType = "com.maxburger.metalnodes.graph"
     public private(set) var diagnostics: [Diagnostic] = []
     public private(set) var generatedSource = ""
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]

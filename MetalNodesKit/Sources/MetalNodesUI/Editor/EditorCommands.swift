@@ -11,7 +11,8 @@ public extension FocusedValues {
     }
 }
 
-/// Edit / View menu items routed to the focused editor (spec §18.6). Cut/Copy/Paste/Duplicate land in Task 13.
+/// Edit / View menu items routed to the focused editor (spec §18.6). Cut/Copy/Paste are the
+/// standard items, routed to the canvas via onCut/onCopy/onPasteCommand; Duplicate is a custom item here.
 public struct EditorCommands: Commands {
     @FocusedValue(\.editorModel) private var model
 

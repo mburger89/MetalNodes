@@ -22,6 +22,9 @@ public struct GraphCanvasView: View {
     @State private var marquee: CGRect?                // canvas coords
     @State private var spaceHeld = false
     @State private var dragOrigins: [NodeID: CGPoint] = [:]
+    /// ⌥-drag: duplication is deferred until the drag actually moves (see `beginNodeDrag`),
+    /// so a zero-movement ⌥-click doesn't leave invisible copies stacked on the originals.
+    @State private var pendingDuplicate = false
     @State private var pendingWire: PendingWire?
     @State private var viewport: CGSize = .zero
     @FocusState private var canvasFocused: Bool
@@ -135,7 +138,7 @@ public struct GraphCanvasView: View {
             .onCommand(#selector(NSResponder.selectAll(_:))) { model.selectAll() }
             .onCutCommand { model.cutSelection(); return [] }
             .onCopyCommand { model.copySelection(); return [] }
-            .onPasteCommand(of: [UTType(EditorModel.pasteboardType) ?? .data]) { _ in model.paste() }
+            .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste() }
             #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
@@ -236,9 +239,8 @@ public struct GraphCanvasView: View {
     private func beginNodeDrag() {
         canvasFocused = true
         if model.isInTransaction { model.endTransaction() }   // defensive reset: an interrupted drag can leave one open
-        let duplicating = InputModifiers.optionHeld && !model.selection.isEmpty
-        model.beginTransaction(duplicating ? "Duplicate" : "Move")
-        if duplicating { model.duplicateSelection(offset: .zero) }   // selection is now the copies, in place
+        pendingDuplicate = InputModifiers.optionHeld && !model.selection.isEmpty
+        model.beginTransaction(pendingDuplicate ? "Duplicate" : "Move")
         dragOrigins = [:]
         for id in model.selection {
             if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
@@ -246,6 +248,14 @@ public struct GraphCanvasView: View {
     }
 
     private func moveSelection(by t: CGSize) {
+        if pendingDuplicate, abs(t.width) >= 1 || abs(t.height) >= 1 {
+            pendingDuplicate = false
+            model.duplicateSelection(offset: .zero)   // selection is now the copies, in place
+            dragOrigins = [:]
+            for id in model.selection {
+                if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
+            }
+        }
         guard !dragOrigins.isEmpty else { return }
         var moves: [NodeID: CGPoint] = [:]
         for (id, o) in dragOrigins { moves[id] = CGPoint(x: o.x + t.width, y: o.y + t.height) }
@@ -255,6 +265,7 @@ public struct GraphCanvasView: View {
     private func endNodeDrag() {
         model.endTransaction()
         dragOrigins = [:]
+        pendingDuplicate = false
     }
 
     // MARK: Wiring (spec §18.5)
