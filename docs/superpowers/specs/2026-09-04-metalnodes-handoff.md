@@ -1,0 +1,206 @@
+# MetalNodes — Session Handoff
+
+**Written:** 2026-09-04, at a model switch (Opus 5 → Fable 5.1)
+**Companion document:** `2026-09-04-metalnodes-design.md` in this directory
+**Prior session:** https://claude.ai/code/session_01RPcmDZb2TAGiC8ZmdZtCEF
+
+Read this file first, then the design doc. This file carries what the design
+doc deliberately leaves out: where we are in the process, what was *rejected*
+and why, and what is still blocking.
+
+---
+
+## 1. Read this before doing anything
+
+**No code has been written and none should be, yet.**
+
+We are on the `superpowers:brainstorming` **architectural** path. Its hard gate:
+no implementation skill, no scaffolding, no code until the user approves the
+written spec. The spec is written; the user has **not** yet approved it.
+
+The checklist stands at:
+
+```
+1. Explore project context ..................... DONE
+2. Offer visual companion ...................... n/a (never arose)
+3. Ask clarifying questions .................... DONE (5 asked, all answered)
+4. Propose 2-3 approaches ...................... DONE (user chose A)
+5. Present design in sections .................. PARTIAL — see §2
+6. Write design doc ............................ DONE
+7. Spec self-review ............................ DONE (4 defects fixed, see §5)
+8. User reviews written spec ................... DONE ("looks good lets continue")
+9. Invoke writing-plans skill .................. DONE — M0+M1 plan (18 tasks) at
+   docs/superpowers/plans/2026-09-04-metalnodes-m0-m1-foundation.md
+10. Execute plan ................................ NOT STARTED — user must choose
+    subagent-driven vs inline execution. M2–M6 need their own plans after M1 lands.
+```
+
+**Terminal state is path-bound.** After the user approves, the *only* skill to
+invoke is `superpowers:writing-plans`. Not `frontend-design`, not `swiftui-pro`,
+not any implementation skill. Those come later, during execution of the plan.
+
+---
+
+## 2. One process deviation worth knowing
+
+Step 5 says to present the design in sections, taking approval after each. I
+presented **section 1 of 5 only** (document model and groups) in chat. The user
+then asked for the whole thing as a markdown file they could read in their
+editor, so sections 2–5 went straight into the design doc without individual
+chat sign-off.
+
+**Consequence:** the user has explicitly reacted only to the document model.
+Sections 7–13 of the design doc (type system, codegen, render loop, canvas
+interaction, theme, node library) have been *written* but never *discussed*.
+Expect substantive feedback there and do not treat them as settled.
+
+Two points I flagged for the user's attention that they have not yet answered:
+
+- **§5 snapshot undo** — granularity is one gesture, not one keystroke.
+- **§4.1 the ⌘G cut rule** — deduping group inputs by source socket.
+
+---
+
+## 3. Locked decisions
+
+All of these came from explicit user choices, not inference. Do not silently
+revisit them.
+
+| # | Question | User chose |
+|---|---|---|
+| 1 | Shader kind | **Start 2D fragment, architect so 3D can be added later.** Not 3D now, not SwiftUI-stitchable now |
+| 2 | Platforms | **macOS + iPad**, shared engine, two UI layers. User declined "macOS only" and declined "macOS now, iPad later" |
+| 3 | Node groups | **Definition + instances, editable in place.** Edit definition → all instances update. Compiles to one real MSL function |
+| 4 | Preview | **Main preview panel + a viewer flag movable to any node** |
+| 5 | v1 library | **Core set, ~30 nodes** |
+| — | Codegen | **Approach A: declarative node definitions + SSA emission.** User confirmed in their own words: "yes, approach A sounds right" |
+| — | Live-ness | Parameters live in a uniform buffer; only topology changes recompile. Presented alongside A and approved with it |
+
+### Note on decision 3
+
+The user picked definition+instances but **declined** the third option, which
+added a cross-document on-disk library with versioning. So group definitions
+live **inside the document only**. Sharing between documents happens through
+copy/paste, which carries referenced definitions along (design doc §6). Do not
+reintroduce an on-disk asset library — it was offered and turned down.
+
+---
+
+## 4. Rejected alternatives, and why
+
+This is the part that exists nowhere else. Without it you will waste the user's
+time re-proposing things they already declined.
+
+| Rejected | Why |
+|---|---|
+| **3D material graph in v1** | User wants 2D first with 3D reachable later. The `OutputTarget` abstraction exists for exactly this |
+| **SwiftUI `[[stitchable]]` target in v1** | Deferred to ~v1.5. Still an open question — see §6 item 5 |
+| **macOS-only** | User explicitly wants iPad too, accepting the extra UI work |
+| **Groups as visual folders** | Not real reusable functions; user wants true instancing |
+| **On-disk cross-document group library** | Offered as option 3 of that question, declined. See §3 note |
+| **Per-node live thumbnails** | Offered, declined. Needs N pipelines + N offscreen draws per frame, an atlas, LOD and throttling. Do not sneak it back in |
+| **Single-output-only preview** | Too weak; user wants viewer flags on any node |
+| **Codegen approach B** (a Swift type with `emit()` per node) | ~60 bespoke types, no data-driven node authoring, definitions not serializable |
+| **Codegen approach C** (typed IR + optimizer) | A compiler project bolted onto an app project; Metal's own compiler already optimizes. Deliberately kept *reachable* — the SSA statement list is a minimal IR |
+| **Whole canvas drawn in one `Canvas`** | Would mean reimplementing every slider, color well and picker by hand |
+| **Command-pattern undo** | Needs a correct inverse for all five group operations; that is where node editors start corrupting state |
+| **Golden-image render tests** | Flaky across GPU generations; the per-node compile smoke test covers more for less |
+
+---
+
+## 5. What the spec self-review already fixed
+
+Do not "re-discover" these; they are resolved in the current file.
+
+1. **Yellow meant three things** (Color category, `color` socket, selection
+   outline). Selection now uses a `foreground` outline plus glow rather than a
+   hue, because every hue is claimed by the type system. Only red (error) and
+   green (viewer flag) remain reserved.
+2. **The generated-MSL example contradicted §9.2.** It hardcoded `0.5` for a
+   second group instance's scale when the rule is that exposed group inputs get
+   a per-instance uniform slot. It now shows `u.p0` / `u.p1` per instance and
+   `u.p2` shared inside the function.
+3. **`comments` was ambiguous** against comment frames. Sticky notes are now
+   `stickies`.
+4. **The node count didn't add up** — "~30" claimed, 43 listed. Arithmetic and
+   trig collapse into one `Math` node with an operation picker, as Blender does.
+   Now **33 node types, 47 operations**, which required adding a `variants`
+   feature to the `NodeDef` format (design doc §8).
+
+---
+
+## 5b. Second review round (Fable, same session)
+
+After the model switch the user asked for a critical read. Nine changes were
+proposed and the user said "fold all nine in"; all are now in the design doc:
+
+1. Sockets addressed by stable name, not index (§3)
+2. Edges keyed by input socket — `inputs: [SocketRef: SocketRef]` (§3)
+3. Uniform buffer alignment rules, layout returned by codegen, full rebuild on
+   publish, generation counter (§9.5, §9.1 example reordered)
+4. `bool` producers: Compare, Switch, Constant variants; Reroute added.
+   Library is now **36 types / 58 ops** with a Utility category (§13, §12)
+5. Viewer-inside-a-definition rule; one terminal per graph (§9.3)
+6. `.mnshader` is a **package** (document.json + view.json + textures/);
+   `EditorViewState` separated from the document and excluded from undo (§3, §5)
+7. Viewer float range is manual min/max in v1, not auto-normalize (§9.3)
+8. `GroupDefinition.inputs/outputs` canonical; pseudo-nodes mirror them (§3)
+9. Generated-code panel (§11.6); UV convention + static vertex stage (§9.1);
+   zoom-to-fit shortcuts (§11.2)
+
+Tests (§14) and milestones (§15) updated to match. The spec is still awaiting
+the user's approval — nothing about the gate changed.
+
+## 6. Open questions — still unanswered by the user
+
+Verbatim from design doc §17. Item 5 is the only one that changes the build
+order, so ask it first if you ask at all.
+
+1. **Group input editing** — drag-to-reorder and rename for exposed group
+   inputs in v1, or is add/remove enough to start?
+2. **Textures** — import from file only, or also procedural sources (gradient,
+   checker) and pasteboard?
+3. **Export** — generated `.metal` source only, or also a precompiled
+   `.metallib`?
+4. **Time** — wall-clock, or a scrubable fixed-rate timeline with a frame
+   counter (better for recording)?
+5. ~~SwiftUI `[[stitchable]]` target~~ — **answered 2026-09-04: pulled into v1
+   at M3** ("lets pull stichable forward"). Spec §9.5 added.
+
+None of these block writing the implementation plan except arguably #5. The
+rest can be resolved at the milestone that needs them.
+
+---
+
+## 7. Repository state
+
+```
+branch: main — NO COMMITS YET (git log fails: "does not have any commits")
+untracked:
+  .DS_Store                     ← should be gitignored
+  MetalNodes.xcodeproj/         ← stock multiplatform template
+  MetalNodes/                   ← MyApp.swift + "Hello, world!" ContentView
+  docs/                         ← the design doc + this handoff
+```
+
+Nothing has been committed. The user was offered a `.gitignore` plus an initial
+commit and has not answered. **Do not commit without asking** — the harness rule
+in effect is that commits happen only when the user asks.
+
+The Xcode scaffold is an untouched template. It contains a `#Playground` block
+and `MyApp.swift`, and its build settings need the changes catalogued in design
+doc §16 — narrowing `SUPPORTED_PLATFORMS` (it currently includes `xros`), Swift
+`5.0` → `6.0`, `MACOSX_DEPLOYMENT_TARGET` `26.6.2` → `26.0`, and a bundle ID off
+`devplaceholder.*`. That work is milestone M0.
+
+---
+
+## 8. Suggested opening move
+
+> Read `2026-09-04-metalnodes-design.md`, then ask the user whether they want
+> changes — flagging that sections 7–13 were written but never discussed in
+> chat, and that open question #5 (SwiftUI stitchable in v1?) affects the build
+> order. On approval, invoke `superpowers:writing-plans` and nothing else.
+
+Do not restate the design back to the user as if it were new. They have read
+section 1 in chat and have the full file in their editor.
