@@ -63,18 +63,27 @@ struct NodeView: View {
                         dragging = true
                         wasSelectedAtStart = isSelected
                         let mode = InputModifiers.selectionMode()
-                        if !isSelected || mode != .replace { onSelect(mode) }
+                        // An already-selected node stays selected as-is (⌘-drag must not toggle it
+                        // out of the selection before the drag snapshots origins); only an unselected
+                        // node needs onSelect to establish/extend the selection before the drag starts.
+                        if !isSelected { onSelect(mode) }
                         onDragBegan()
                     }
                     onDrag(g.translation)
                 }
                 .onEnded { g in
+                    let wasDragging = dragging
                     dragging = false
-                    onDragEnded()
-                    // A click (no movement) on an already-selected node collapses the selection to it.
-                    if abs(g.translation.width) < 1 && abs(g.translation.height) < 1,
-                       wasSelectedAtStart, InputModifiers.selectionMode() == .replace {
-                        onSelect(.replace)
+                    if wasDragging { onDragEnded() }
+                    if abs(g.translation.width) < 1 && abs(g.translation.height) < 1, wasSelectedAtStart {
+                        let mode = InputModifiers.selectionMode()
+                        // A click (no movement) on an already-selected node collapses the selection to it.
+                        if mode == .replace {
+                            onSelect(.replace)
+                        } else if mode == .toggle {
+                            // ⌘-drag moves the selection; ⌘-click (no movement) still toggles.
+                            onSelect(.toggle)
+                        }
                     }
                 }
         )
@@ -111,6 +120,7 @@ struct NodeView: View {
         if case .concrete(let c) = t { return c } else { return .float }
     }
 
+    /// Show a stored scalar as the resolved vector type so the control matches the socket.
     private func coerced(_ v: ParamValue, to type: SocketType) -> ParamValue {
         switch (v, type) {
         case (.float(let x), .float2): .float2(.init(x, x))

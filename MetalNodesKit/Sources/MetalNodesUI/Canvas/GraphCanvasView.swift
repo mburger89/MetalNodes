@@ -19,7 +19,13 @@ public struct GraphCanvasView: View {
     public init(model: EditorModel) { self.model = model }
 
     public var body: some View {
-        // See the M1 note: the GeometryReader keeps the 4000×4000 content from dictating the pane size.
+        // GeometryReader decouples the viewport's reported size from `content`'s explicit 4000×4000
+        // frame: without it, the ZStack's ideal size bubbles up as 4000×4000 (a plain
+        // `.frame(maxWidth: .infinity)` does not fix this — SwiftUI still answers unconstrained
+        // ideal-size queries with the child's natural size, which is what HSplitView's initial pane
+        // sizing uses), so the pane and window grow to fit the canvas. Pinning the ZStack to the
+        // reader's proposed size keeps the viewport at the pane's bounds; `.clipped()` then clips
+        // the offset/scaled canvas.
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 DraculaToken.background.color
@@ -56,9 +62,13 @@ public struct GraphCanvasView: View {
                 model.nudgeSelection(by: d)
                 return .handled
             }
+            .onChange(of: canvasFocused) { _, focused in
+                if !focused { spaceHeld = false }
+            }
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
         .onAppear { if let cam = model.viewState.cameras[.root] { transform = CanvasTransform(camera: cam) } }
+        .onAppear { canvasFocused = true }
     }
 
     // MARK: Content
@@ -81,7 +91,14 @@ public struct GraphCanvasView: View {
                              onDragBegan: { beginNodeDrag() },
                              onDrag: { moveSelection(by: $0) },
                              onDragEnded: { endNodeDrag() },
-                             onEditing: { editing in editing ? model.beginTransaction("Change Value") : model.endTransaction() })
+                             onEditing: { editing in
+                                 if editing {
+                                     if model.isInTransaction { model.endTransaction() }   // defensive reset
+                                     model.beginTransaction("Change Value")
+                                 } else {
+                                     model.endTransaction()
+                                 }
+                             })
                         .offset(x: node.position.x, y: node.position.y)
                 }
             }
@@ -125,10 +142,12 @@ public struct GraphCanvasView: View {
     // MARK: Node drag (whole selection, one transaction)
 
     private func beginNodeDrag() {
+        canvasFocused = true
         dragOrigins = [:]
         for id in model.selection {
             if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
         }
+        if model.isInTransaction { model.endTransaction() }   // defensive reset: an interrupted drag can leave one open
         model.beginTransaction("Move")
     }
 
