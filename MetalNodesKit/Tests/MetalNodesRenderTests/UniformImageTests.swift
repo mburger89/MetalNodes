@@ -16,7 +16,8 @@ import MetalNodesCore
     @Test func writesFloatAtFieldOffset() {
         let layout = UniformLayoutBuilder.build([(path("a"), .float)])
         var img = UniformImage(layout: layout)
-        #expect(img.set(.float(0.75), for: path("a")))
+        let ok = img.set(.float(0.75), for: path("a"))
+        #expect(ok)
         #expect(readFloat(img, layout.field(for: path("a"))!.offset) == 0.75)
         #expect(img.bytes.count == layout.totalSize)
     }
@@ -48,7 +49,8 @@ import MetalNodesCore
 
     @Test func unknownPathReturnsFalse() {
         var img = UniformImage(layout: UniformLayoutBuilder.build([]))
-        #expect(img.set(.float(1), for: path("nope")) == false)
+        let ok = img.set(.float(1), for: path("nope"))
+        #expect(ok == false)
     }
 
     @Test func reservedFieldsAreWritten() {
