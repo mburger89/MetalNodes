@@ -20,7 +20,7 @@ public enum GraphValidator {
 
         // Definitions and kinds.
         var defs: [NodeID: NodeDef] = [:]
-        for n in graph.nodes.values {
+        for n in graph.nodes.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
             switch n.kind {
             case .builtin(let id):
                 if let d = registry[id] { defs[n.id] = d }
@@ -41,7 +41,7 @@ public enum GraphValidator {
         }
 
         // Wire endpoints.
-        for (to, from) in graph.inputs {
+        for (to, from) in graph.inputs.sorted(by: { ($0.key.node.raw.uuidString, $0.key.socket) < ($1.key.node.raw.uuidString, $1.key.socket) }) {
             guard let toDef = defs[to.node] else {
                 if graph.nodes[to.node] == nil { out.append(Diagnostic(.error, "Wire ends at a missing node")) }
                 continue
@@ -88,7 +88,7 @@ public enum GraphValidator {
         }
 
         // Required inputs.
-        for (id, def) in defs {
+        for (id, def) in defs.sorted(by: { $0.key.raw.uuidString < $1.key.raw.uuidString }) {
             for decl in def.inputs where decl.default == .required && graph.inputs[SocketRef(id, decl.name)] == nil {
                 out.append(Diagnostic(.error, "“\(decl.label)” must be connected", node: id, socket: decl.name))
             }
