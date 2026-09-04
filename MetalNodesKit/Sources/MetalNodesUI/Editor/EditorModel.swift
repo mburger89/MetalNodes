@@ -3,7 +3,11 @@ import Observation
 import MetalNodesCore
 import MetalNodesRender
 
-public enum CanvasRequest: Equatable, Sendable { case fitAll, fitSelection }
+public enum CanvasRequest: Equatable, Sendable {
+    case fitAll, fitSelection
+    /// Add a builtin at the viewport centre (palette double-click).
+    case place(defID: String)
+}
 
 @MainActor
 @Observable

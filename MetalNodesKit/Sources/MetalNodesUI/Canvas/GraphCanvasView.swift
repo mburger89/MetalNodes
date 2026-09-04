@@ -24,8 +24,15 @@ public struct GraphCanvasView: View {
     @State private var pendingWire: PendingWire?
     @State private var viewport: CGSize = .zero
     @FocusState private var canvasFocused: Bool
-    /// Task 11 sets this to open the search popover with an auto-wire; `nil` just cancels.
-    var onWireDroppedOnEmpty: ((SocketRef, SocketType, CGPoint) -> Void)? = nil
+    /// Why the chooser is open: where to place, and (for a wire drop) what to auto-wire.
+    struct Chooser: Identifiable {
+        let id = UUID()
+        var canvasPoint: CGPoint
+        var screenPoint: CGPoint
+        var wire: (source: SocketRef, type: SocketType)?
+    }
+    @State private var chooser: Chooser?
+    @State private var hoverLocation: CGPoint = .zero      // viewport coords, for ⇧A
 
     static let contentSize: CGFloat = 4000
     static let wireHitDistance: CGFloat = 6
@@ -96,6 +103,23 @@ public struct GraphCanvasView: View {
                 model.canvasHasFocus = focused
                 if !focused { spaceHeld = false }
             }
+            .onContinuousHover { phase in if case .active(let p) = phase { hoverLocation = p } }
+            .onTapGesture(count: 2) { p in openChooser(atScreen: p, wire: nil) }
+            .onKeyPress(characters: .init(charactersIn: "aA")) { press in
+                guard press.modifiers.contains(.shift) else { return .ignored }
+                openChooser(atScreen: hoverLocation, wire: nil)
+                return .handled
+            }
+            .dropDestination(for: NodeDefTransfer.self) { items, location in
+                guard let t = items.first else { return false }
+                let c = transform.toCanvas(location)
+                model.addNode(defID: t.defID, at: CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2))
+                return true
+            }
+            .popover(item: $chooser, attachmentAnchor: .rect(.rect(CGRect(origin: chooser?.screenPoint ?? .zero, size: CGSize(width: 1, height: 1)))), arrowEdge: .top) { c in
+                let defs = c.wire.map { w in model.registry.all.filter { PaletteSearch.acceptsInput(of: w.type, $0) } } ?? model.registry.all
+                NodeSearchPopover(defs: defs, onPick: { def in place(def, for: c) }, onCancel: { chooser = nil })
+            }
             #if os(macOS)
             // Responder-chain commands (rather than menu key equivalents) so a focused node
             // parameter `TextField` gets first crack at Delete/Select All — see EditorCommands.
@@ -109,9 +133,14 @@ public struct GraphCanvasView: View {
         .onChange(of: model.canvasRequest) { _, req in
             guard let req else { return }
             defer { model.canvasRequest = nil }
-            let rect: CGRect? = switch req {
-            case .fitAll: model.contentBounds
-            case .fitSelection: model.selectionBounds ?? model.contentBounds
+            let rect: CGRect?
+            switch req {
+            case .place(let defID):
+                let centre = transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2))
+                model.addNode(defID: defID, at: CGPoint(x: centre.x - NodeGeometry.width / 2, y: centre.y - NodeGeometry.headerHeight / 2))
+                return
+            case .fitAll: rect = model.contentBounds
+            case .fitSelection: rect = model.selectionBounds ?? model.contentBounds
             }
             guard let r = rect, viewport != .zero else { return }
             transform = CanvasTransform.fitting(r, in: viewport, padding: 40)
@@ -250,7 +279,25 @@ public struct GraphCanvasView: View {
                 model.connectIfCompatible(w.source, to: input)
             }
         case .empty:
-            onWireDroppedOnEmpty?(w.source, w.type, p)
+            openChooser(atScreen: transform.toScreen(p), wire: (w.source, w.type))
+        }
+    }
+
+    // MARK: Chooser popover (⇧A / double-click / wire-drop-on-empty)
+
+    private func openChooser(atScreen p: CGPoint, wire: (SocketRef, SocketType)?) {
+        chooser = Chooser(canvasPoint: transform.toCanvas(p), screenPoint: p, wire: wire.map { (source: $0.0, type: $0.1) })
+    }
+
+    private func place(_ def: NodeDef, for c: Chooser) {
+        chooser = nil
+        model.beginTransaction("Add Node")
+        defer { model.endTransaction() }
+        guard let id = model.addNode(defID: def.id, at: c.canvasPoint) else { return }
+        if let w = c.wire,
+           let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
+                                                         registry: model.registry, resolved: model.resolvedTypes) {
+            model.connectIfCompatible(w.source, to: input)
         }
     }
 

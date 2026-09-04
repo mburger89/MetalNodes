@@ -24,11 +24,13 @@ public struct EditorView: View {
     private var split: some View {
         #if os(macOS)
         HSplitView {
+            PaletteView(model: model).frame(minWidth: 200, idealWidth: 220, maxWidth: 320)
             GraphCanvasView(model: model).frame(minWidth: 480)
             previewPane.frame(minWidth: 320, idealWidth: 420)
         }
         #else
         HStack(spacing: 0) {
+            PaletteView(model: model).frame(width: 220)
             GraphCanvasView(model: model)
             previewPane.frame(width: 420)
         }
