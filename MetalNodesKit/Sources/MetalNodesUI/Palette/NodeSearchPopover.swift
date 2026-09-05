@@ -48,6 +48,10 @@ struct NodeSearchPopover: View {
         .onKeyPress(.downArrow) { highlighted = min(highlighted + 1, max(results.count - 1, 0)); return .handled }
         .onKeyPress(.upArrow) { highlighted = max(highlighted - 1, 0); return .handled }
         .onKeyPress(.escape) { onCancel(); return .handled }
+        #if os(macOS)
+        // A focused text field may turn Escape into `cancelOperation:` before `onKeyPress` sees it.
+        .onExitCommand(perform: onCancel)
+        #endif
     }
 
     private func pick() {
@@ -55,3 +59,4 @@ struct NodeSearchPopover: View {
         onPick(results[highlighted])
     }
 }
+
