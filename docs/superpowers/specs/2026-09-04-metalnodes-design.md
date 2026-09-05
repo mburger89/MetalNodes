@@ -1093,3 +1093,206 @@ already lists the messages. Warnings do not outline.
   script step; `[[stitchable]]` is not exercised by the runtime compiler).
 - Model: viewer toggle/prune schedules exactly one compile; unchanged source
   skips the compile; `settings.target` change recompiles.
+
+
+---
+
+## 20. M4 addendum — groups (added 2026-09-05)
+
+Binding mechanics for milestone M4, in the spirit of §18/§19. Where this
+section and §3/§4/§9 differ in detail, this section wins for M4.
+
+### 20.1 Scope and order
+
+1. **Node shapes** — one description of "what a node looks like" (`NodeShape`:
+   title, category/accent, inputs, outputs, params, generics, style) resolved
+   from the registry for builtins and from the enclosing/target definition
+   for group instances, `GroupInput` and `GroupOutput`. Every consumer that
+   used `NodeDef` for layout, wiring, typing or drawing goes through it.
+2. **Graph paths** — the editor binds to the active path derived from view
+   state; every `DocumentChange` applies to the active graph; cameras and
+   selection are per path.
+3. **Codegen** — one MSL function per definition, called from wherever an
+   instance appears; uniform slots follow §9.2.
+4. **The five operations** (§4) as pure document transforms, plus socket
+   add/remove/rename.
+5. **Clipboard** — definitions travel with the payload and dedupe on paste.
+6. **UI** — breadcrumb, dive-in/out, group headers, palette "My Functions",
+   inspector panes for instances and definitions, recursion refusal.
+7. **Viewer inside a definition** through the dived-through instance.
+
+Decisions taken with the user: exposed sockets support **add, remove,
+rename** (no reorder); **nested** groups; paste dedupe implemented and
+tested **in-document** (cross-document arrives with persistence in M5);
+viewer-in-definition **included**.
+
+### 20.2 Shapes
+
+```swift
+public struct NodeShape: Sendable, Hashable {
+    public var title: String
+    public var category: NodeCategory          // .group for instances and pseudo-nodes
+    public var accent: DraculaAccent?          // group header colour (definition.accent)
+    public var inputs: [SocketDecl]
+    public var outputs: [SocketDecl]
+    public var params: [ParamDecl]             // empty for groups
+    public var generics: [String: [SocketType]]
+    public var style: NodeStyle
+}
+```
+
+`ShaderDocument.shape(of node: NodeInstance, in path: GraphPath, registry:)`:
+builtin → the `NodeDef`; `.group(id)` → `definitions[id]` (inputs, outputs,
+title = name, accent); `.groupInput` (only valid inside a definition D) →
+outputs = `D.inputs`, title "Group Input"; `.groupOutput` → inputs =
+`D.outputs`, title "Group Output". `NodeCategory` gains `.group` (palette
+section "My Functions", theme token purple). A group instance draws a
+**doubled border** (2 pt outer + 1 pt inner ring, both `accent`).
+
+A definition is created with its two pseudo-nodes already present
+(`GroupDefinition.make(name:)`), and validation requires exactly one of each.
+Pseudo-nodes cannot be deleted, copied, cut or grouped; they can be moved.
+
+### 20.3 Graph paths
+
+`GraphPath` stays `.root | .definition(GroupID)`. View state gains
+`editingDefinition: GroupID?` (a definition opened from the palette, with no
+instance) beside `editingStack: [NodeID]` (the instances dived through,
+outermost first). The active path: `editingStack.last`'s definition, else
+`editingDefinition`, else `.root`. `ShaderDocument.graph(at:)` /
+`subscript(path)` read and mutate the right `Graph`; `ShaderDocument.node(_
+id:)` finds an instance in any graph (ids are unique document-wide). Every
+`DocumentChange` applies to the active path; selection is cleared on dive
+in/out; cameras stay keyed by path.
+
+### 20.4 Codegen
+
+**One function per reachable definition**, inner-most first, then the root
+(or stitchable) program. Function name `mn_g_<sanitized name>_<8 hex of id>`.
+
+```metal
+struct G_1a2b3c4d_Out { float value; float2 uv; };      // one field per output, always a struct
+G_1a2b3c4d_Out mn_g_Fbm_1a2b3c4d(float2 uv, float time, float2 size, float2 mouse,
+                                  float2 in_uv, float in_scale,        // exposed inputs, in order
+                                  int p2, float p5) {                  // every uniform the body needs
+    …                                                                   // the definition graph, SSA
+    G_1a2b3c4d_Out out; out.value = v7; out.uv = v3; return out;
+}
+```
+
+- The four system values are always the first four parameters; inside the
+  function the environment maps `{sys.*}` to them. Exposed inputs follow, as
+  `in_<socket>`. Then **every uniform slot the body reads** (its own unwired
+  inputs and value params, plus those of nested instances' functions, and
+  the *shared* unwired exposed inputs of nested instances), as parameters
+  named by the slot. Functions are therefore target-agnostic: the **call
+  site** spells the uniforms (`u.p2` under a fragment program, `p2` inside a
+  stitchable function) and passes its own `{sys.*}` values through.
+- **Slots (§9.2, made concrete):** an unwired exposed input of an instance in
+  the **root** graph is per-instance: `ParamPath(node: instanceID, param:
+  socket)`, value stored in `instance.params[socket]`, default from the
+  definition's `SocketDecl.default`. Everything inside a definition —
+  unwired inputs and value params of its nodes, including the unwired
+  exposed inputs of a *nested* instance — is shared by all instances:
+  `ParamPath(node: thatNodeID, param:)`, requested once. `instancePath`
+  therefore stays length 1 in M4.
+- A `GroupInput`'s output socket evaluates to its parameter; a
+  `GroupOutput`'s inputs become the struct's fields. An unwired `GroupOutput`
+  input is an ordinary unwired input: a shared uniform slot with the
+  socket's declared default (`.required` outputs report "must be
+  connected").
+- Call site: `G_…_Out rN = mn_g_…(<sys>, <converted input exprs>, <uniform
+  exprs>); <T> vK = rN.<socket>;` — one SSA variable per output socket as for
+  any node, so downstream conversion and the line map work unchanged.
+- The stdlib closure includes every `requires` of every emitted function.
+- Recursion is refused at edit time (§4.6) and, defensively, by validation
+  ("Definition contains itself").
+
+### 20.5 Viewer inside a definition
+
+`generate(doc, viewer:, viewerPath: [NodeID])`: `viewerPath` is the editing
+stack. Empty and the viewed node in the root → today's behaviour. Otherwise
+the viewed node lives in the definition of the last instance; codegen emits a
+**view variant** of every definition on the path whose single output is the
+viewed value (the inner variant's for the outer ones), calls the outermost
+variant at the dived-through instance's position in the root order, and
+wraps the result per §9.3. Opened from the palette with no instance
+(`editingDefinition` set, `viewerPath == []`): the root program is replaced by
+a synthetic call of the definition's view variant with its declared defaults
+as arguments. Deleting any instance on the path clears the viewer.
+
+### 20.6 Operations
+
+- **Group (⌘G)** on ≥ 1 selected non-pseudo nodes in any graph. Cut: inbound
+  crossing edges → inputs, deduplicated by **source socket**, named after
+  the source socket (`uv`, `out`, …; de-duplicated with a numeric suffix,
+  typed from the source's resolved output type); outbound crossing edges →
+  outputs, one per distinct source socket inside the selection, named after
+  it. The definition's graph gets the nodes with their relative positions
+  preserved (offset so the bounding box starts at (220, 0)), a `GroupInput`
+  at x = 0 and a `GroupOutput` right of the bounding box. The instance is
+  placed at the bounding box's origin, external wires rewired to it. Name
+  `Group`, `Group 2`, … Refused when the selection includes a pseudo-node or
+  would create recursion.
+- **Dive in** (double-click an instance, or the inspector button) pushes the
+  instance; breadcrumb click / ⌘↑ pops to that level. "Edit" from the
+  palette sets `editingDefinition` with an empty stack.
+- **Make Unique** deep-copies the definition (new `GroupID`, name `X 2`;
+  nested instances keep pointing at their definitions) and retargets only
+  that instance. **Ungroup (⌘⇧G)** inlines with fresh ids at the instance's
+  position plus the internal offsets, reconnecting inbound wires to whatever
+  each `GroupInput` output fed and outbound wires from whatever fed each
+  `GroupOutput` input; unwired exposed inputs become unwired internal inputs
+  carrying the instance's stored value. Unused definitions are **kept**
+  (still listed under "My Functions"; deletable from the inspector when no
+  instance remains).
+- **Sockets**: add by wiring into the pseudo-nodes' `+` socket — a
+  `GroupOutput` shows a trailing `+` input that accepts any type and creates
+  an output named after the wire's source socket; a `GroupInput` shows a
+  trailing `+` output; dragging it onto an input creates an input named after
+  that target socket, typed from it. Rename and remove in the definition
+  inspector; removal deletes the orphaned wires on every instance and inside
+  the definition in the same undo transaction (§4.5). Renaming rewrites the
+  `SocketRef`s on every instance and inside the definition.
+
+### 20.7 Clipboard
+
+`GraphClipboard.extract` includes every definition transitively referenced by
+the copied instances. On paste (§6): same `GroupID` present with the same
+`contentHash` → reuse; present with a different hash → insert a copy under a
+fresh id named `<name> (imported)` and retarget the pasted instances; absent
+→ insert as-is. `GroupDefinition.contentHash` hashes name, sockets and the
+graph (ids included — a definition is identical only when it is literally the
+same). Pseudo-nodes never copy.
+
+### 20.8 UI
+
+- Breadcrumb bar above the canvas: `Shader › Fbm › Turbulence`, each segment
+  a button; the last is bold. Always visible, so the layout never jumps.
+- Group instance: header in the definition's accent (purple by default),
+  doubled border, title = definition name (instance `customTitle` overrides),
+  no params; unwired exposed inputs show `ParamControl`s bound to
+  `instance.params`.
+- Pseudo-nodes: header "Group Input"/"Group Output" in the definition's
+  accent, a `+` socket as in 20.6, no ◉ badge, cannot be deleted.
+- Inspector: instance pane (title, "Edit Group" → dive, "Make Unique",
+  "Ungroup", exposed input controls); definition pane while editing (name,
+  accent picker, input/output lists with rename and remove, "Delete
+  definition" when unused); palette "My Functions" lists definitions with
+  drag-in (`NodeDefTransfer` gains `groupID`), double-click to place, and an
+  "Edit" button.
+- Recursion refusal: the drop/paste/group is ignored and a notice "Fbm cannot
+  contain itself" shows in the preview pane's diagnostics strip for 3 s.
+
+### 20.9 Testing (adds to §14)
+
+Cut correctness incl. dedup by source socket; group → ungroup identity modulo
+ids (nodes, params, edges, positions); make-unique isolation; recursion
+refusal (direct and transitive); socket remove deletes orphans in one undo;
+rename rewrites refs; codegen goldens for a one-level and a nested group,
+shared vs per-instance slots (two instances, one definition → one shared
+slot, two per-instance slots); viewer through an instance and from the
+palette; clipboard dedupe (same hash reuse, different hash import, absent
+insert); every group program compiles on the device (fragment, stitchable,
+viewer); model tests for dive-in/out (selection, active graph),
+`DocumentChange` on a definition graph, `pruneViewer` on instance deletion.
