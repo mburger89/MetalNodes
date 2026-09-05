@@ -33,6 +33,9 @@ public final class EditorModel {
     public private(set) var generatedSource = ""
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]
     public var debounceInterval: Duration = .milliseconds(150)
+    /// Bumped by File ▸ Export Shader…; the macOS view presents the save panel on change.
+    public private(set) var exportRequest = 0
+    public func requestExport() { exportRequest += 1 }
 
     private let compiler: any ShaderCompiling
     private var generation: UInt64 = 0
@@ -223,6 +226,18 @@ public final class EditorModel {
     }
 
     public var errorNodes: Set<NodeID> { Set(diagnostics.filter { $0.severity == .error }.compactMap(\.node)) }
+
+    public func exportFiles() throws(GenerationError) -> [ExportFile] {
+        try ShaderExport.files(for: document, registry: registry)
+    }
+
+    /// Puts the `.swift` snippet on the pasteboard as plain text. False for the fragment target.
+    @discardableResult
+    public func copySwiftSnippet() -> Bool {
+        guard let files = try? exportFiles(), let swift = files.first(where: { $0.name.hasSuffix(".swift") }) else { return false }
+        pasteboard.write(Data(swift.contents.utf8), type: "public.utf8-plain-text")
+        return true
+    }
 
     /// "Title.socket" for a source ref, used by the inspector's "← source" labels and the
     /// viewer picker. Falls back to the node's custom title, then its definition's title.

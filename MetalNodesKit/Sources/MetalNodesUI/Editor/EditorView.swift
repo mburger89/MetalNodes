@@ -6,6 +6,7 @@ import MetalNodesRender
 public struct EditorView: View {
     let model: EditorModel
     let device: MTLDevice
+    @State private var exportError: String?
 
     public init(model: EditorModel, device: MTLDevice) {
         self.model = model
@@ -18,6 +19,15 @@ public struct EditorView: View {
             .preferredColorScheme(.dark)
             .tint(DraculaToken.purple.color)
             .focusedSceneValue(\.editorModel, model)
+            .onChange(of: model.exportRequest) { _, _ in
+                #if os(macOS)
+                do { exportError = ExportPanelMac.run(files: try model.exportFiles()) }
+                catch { exportError = "The graph has errors; fix them before exporting." }
+                #endif
+            }
+            .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+                Button("OK") { exportError = nil }
+            } message: { Text(exportError ?? "") }
     }
 
     @ViewBuilder

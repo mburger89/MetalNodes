@@ -256,4 +256,26 @@ actor CountingFailingCompiler: ShaderCompiling {
         #expect(await c.generations.count == 2)
         #expect(m.generatedSource.contains("half4 metalNodesShader("))
     }
+
+    @Test func copySwiftSnippetWritesPlainTextOnlyForStitchableTargets() throws {
+        let pb = MemoryPasteboard()
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler(), pasteboard: pb)
+        #expect(!m.copySwiftSnippet())
+        var s = m.document.settings; s.target = .stitchable(.colorEffect); s.exportName = "demo"
+        m.apply(.setSettings(s))
+        #expect(m.copySwiftSnippet())
+        let text = String(decoding: try #require(pb.read(type: "public.utf8-plain-text")), as: UTF8.self)
+        #expect(text.contains("ShaderLibrary.demo("))
+    }
+
+    @Test func exportFilesFollowTheDocumentTarget() throws {
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler())
+        #expect(try m.exportFiles().map(\.name) == ["metalNodesShader.metal"])
+        var s = m.document.settings; s.target = .stitchable(.layerEffect)
+        m.apply(.setSettings(s))
+        #expect(try m.exportFiles().map(\.name) == ["metalNodesShader.metal", "metalNodesShader.swift"])
+        let before = m.exportRequest
+        m.requestExport()
+        #expect(m.exportRequest == before + 1)
+    }
 }

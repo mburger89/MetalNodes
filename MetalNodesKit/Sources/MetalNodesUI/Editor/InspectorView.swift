@@ -7,6 +7,7 @@ public struct InspectorView: View {
     @State private var titleDraft = ""
     @State private var widthDraft = ""
     @State private var heightDraft = ""
+    @State private var exportNameDraft = ""
 
     public init(model: EditorModel) { self.model = model }
 
@@ -134,6 +135,31 @@ public struct InspectorView: View {
                 .toggleStyle(.switch)
             Text("Fast math relaxes NaN/Inf handling for speed. Off keeps IEEE semantics; changing it recompiles.")
                 .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            Divider()
+            Text("Output").font(.headline)
+            Picker("Target", selection: Binding(get: { s.target }, set: { t in var n = s; n.target = t; model.apply(.setSettings(n)) })) {
+                ForEach(OutputTarget.all, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.menu)
+            HStack {
+                Text("Export name").font(.caption)
+                TextField("metalNodesShader", text: $exportNameDraft)
+                    .onAppear { exportNameDraft = s.exportName }
+                    .onChange(of: model.document.settings.exportName) { _, n in exportNameDraft = n }
+                    .onSubmit { var n = s; n.exportName = StitchableCodegen.sanitizedName(exportNameDraft); exportNameDraft = n.exportName; model.apply(.setSettings(n)) }
+            }
+            HStack {
+                Button("Copy Swift snippet") { _ = model.copySwiftSnippet() }
+                    .disabled(s.target.stitchableKind == nil)
+                #if os(macOS)
+                Button("Export…") { model.requestExport() }
+                #endif
+            }
+            .controlSize(.small)
+            if s.target.stitchableKind != nil {
+                Text("Preview renders the same function through a fragment wrapper. Export writes the .metal file and a .swift extension with the ShaderLibrary call in argument order.")
+                    .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            }
         }
         .textFieldStyle(.roundedBorder)
     }

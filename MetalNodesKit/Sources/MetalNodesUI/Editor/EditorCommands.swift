@@ -20,6 +20,11 @@ public struct EditorCommands: Commands {
     public init() {}
 
     public var body: some Commands {
+        CommandGroup(after: .saveItem) {
+            Button("Export Shader…") { model?.requestExport() }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(model == nil)
+        }
         // Undo/Redo, Delete, and the View menu's bare-key shortcuts are gated on `canvasHasFocus`
         // (rather than always enabled) so that, while a node parameter `TextField` is focused
         // (canvas is not), these menu key equivalents go disabled and let the field editor's own
