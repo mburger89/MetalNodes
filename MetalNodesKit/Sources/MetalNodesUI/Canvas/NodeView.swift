@@ -56,7 +56,7 @@ struct NodeView: View {
                 VStack(spacing: 2) {
                     ForEach(def.inputs, id: \.name) { d in
                         SocketView(type: resolved?.inputTypes[d.name] ?? concrete(d.type), dimmed: dragType != nil)
-                            .socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
+                            .scaleEffect(0.6).socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
                     }
                 }
             }
@@ -66,7 +66,7 @@ struct NodeView: View {
                 VStack(spacing: 2) {
                     ForEach(def.outputs, id: \.name) { d in
                         SocketView(type: resolved?.outputTypes[d.name] ?? concrete(d.type), dimmed: dragType != nil)
-                            .socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
+                            .scaleEffect(0.6).socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
                     }
                 }
             }

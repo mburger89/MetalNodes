@@ -175,8 +175,11 @@ public struct GraphCanvasView: View {
                 return DraculaTheme.wireDefault.color
             }
             let compact = transform.zoom < Self.lodZoom
-            ForEach(NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
-                                              registry: model.registry, margin: Self.cullMargin), id: \.id) { node in
+            let visible = viewport == .zero
+                ? model.document.root.nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+                : NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
+                                            registry: model.registry, margin: Self.cullMargin)
+            ForEach(visible, id: \.id) { node in
                 if case .builtin(let defID) = node.kind, let def = model.registry[defID] {
                     NodeView(node: node, def: def, resolved: model.resolvedTypes[node.id],
                              graph: model.document.root,
