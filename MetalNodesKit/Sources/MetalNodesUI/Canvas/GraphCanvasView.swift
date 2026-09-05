@@ -12,6 +12,10 @@ struct PendingWire: Equatable {
     var point: CGPoint
 }
 
+/// What a drag that started on the background is doing. Decided on the first change and then
+/// latched for the rest of the drag — see `GraphCanvasView.backgroundDrag`.
+enum BackgroundDragMode { case pan, wire, marquee }
+
 public struct GraphCanvasView: View {
     let model: EditorModel
     @State private var transform = CanvasTransform()
@@ -26,8 +30,9 @@ public struct GraphCanvasView: View {
     /// so a zero-movement ⌥-click doesn't leave invisible copies stacked on the originals.
     @State private var pendingDuplicate = false
     @State private var pendingWire: PendingWire?
-    /// A wire started by `backgroundDrag` (press on a socket's outboard half — see `socketUnderPress`).
-    @State private var backgroundWiring = false
+    /// Latched for the duration of one background drag, so releasing or pressing space midway
+    /// cannot switch a live wire drag or marquee into a pan (and strand its transaction).
+    @State private var dragMode: BackgroundDragMode?
     @State private var viewport: CGSize = .zero
     @FocusState private var canvasFocused: Bool
     /// Why the chooser is open: where to place, and (for a wire drop) what to auto-wire.
@@ -354,38 +359,58 @@ public struct GraphCanvasView: View {
         DragGesture(minimumDistance: 0)
             .onChanged { g in
                 canvasFocused = true
-                if spaceHeld {
-                    if panOrigin == nil { panOrigin = transform.pan }
-                    transform.pan = CGSize(width: panOrigin!.width + g.translation.width, height: panOrigin!.height + g.translation.height)
-                    return
+                let mode = dragMode ?? beginBackgroundDrag(g)
+                dragMode = mode
+                switch mode {
+                case .pan:
+                    let o = panOrigin ?? transform.pan
+                    transform.pan = CGSize(width: o.width + g.translation.width, height: o.height + g.translation.height)
+                case .wire:
+                    pendingWire?.point = transform.toCanvas(g.location)
+                case .marquee:
+                    let p = transform.toCanvas(g.location), s = marqueeStart ?? p
+                    marquee = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
                 }
-                let p = transform.toCanvas(g.location)
-                if backgroundWiring { pendingWire?.point = p; return }
-                if marqueeStart == nil, let hit = socketUnderPress(atScreen: g.startLocation) {
-                    beginWire(from: hit.ref, isInput: hit.isInput)
-                    if pendingWire != nil { backgroundWiring = true; pendingWire?.point = p; return }
-                }
-                if marqueeStart == nil { marqueeStart = transform.toCanvas(g.startLocation) }
-                let s = marqueeStart!
-                marquee = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
             }
             .onEnded { g in
-                defer { panOrigin = nil; marqueeStart = nil; marquee = nil }
-                if panOrigin != nil { model.viewState.cameras[.root] = transform.camera; return }
-                if backgroundWiring { backgroundWiring = false; endWire(at: transform.toCanvas(g.location)); return }
-                let moved = abs(g.translation.width) >= 4 || abs(g.translation.height) >= 4
-                if moved, let m = marquee {
-                    let hit = NodeGeometry.nodes(in: model.document.root, intersecting: m, registry: model.registry)
-                    model.select(nodes: hit, mode: InputModifiers.shiftHeld ? .add : .replace)
-                } else if let last = lastClick, Date.now.timeIntervalSince(last.time) < 0.4,
-                          hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
-                    lastClick = nil
-                    openChooser(atScreen: g.location, wire: nil)
-                } else {
-                    click(at: transform.toCanvas(g.location))
-                    lastClick = (time: .now, point: g.location)
+                defer { dragMode = nil; panOrigin = nil; marqueeStart = nil; marquee = nil }
+                switch dragMode {
+                case .pan:
+                    model.viewState.cameras[.root] = transform.camera
+                case .wire:
+                    // Ends the wire whatever the space key is doing now — a latched wire drag
+                    // must always reach `endWire`, which closes its transaction.
+                    endWire(at: transform.toCanvas(g.location))
+                case .marquee, nil:                       // nil: pressed and released without a change
+                    let moved = abs(g.translation.width) >= 4 || abs(g.translation.height) >= 4
+                    if moved, let m = marquee {
+                        let hit = NodeGeometry.nodes(in: model.document.root, intersecting: m, registry: model.registry)
+                        model.select(nodes: hit, mode: InputModifiers.shiftHeld ? .add : .replace)
+                    } else if let last = lastClick, Date.now.timeIntervalSince(last.time) < 0.4,
+                              hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
+                        lastClick = nil
+                        openChooser(atScreen: g.location, wire: nil)
+                    } else {
+                        click(at: transform.toCanvas(g.location))
+                        lastClick = (time: .now, point: g.location)
+                    }
                 }
             }
+    }
+
+    /// Chooses what this background drag is, once, from the state at the press: space held → pan;
+    /// a socket under the press that actually starts a wire → wire; otherwise marquee.
+    private func beginBackgroundDrag(_ g: DragGesture.Value) -> BackgroundDragMode {
+        if spaceHeld {
+            panOrigin = transform.pan
+            return .pan
+        }
+        if let hit = socketUnderPress(atScreen: g.startLocation) {
+            beginWire(from: hit.ref, isInput: hit.isInput)
+            if pendingWire != nil { return .wire }
+        }
+        marqueeStart = transform.toCanvas(g.startLocation)
+        return .marquee
     }
 
     /// Sockets are centred on their node's edge, and hit-testing stops at the node's frame, so a
