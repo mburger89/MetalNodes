@@ -26,6 +26,10 @@ import Foundation
         #expect(StitchableCodegen.sanitizedName("9lives") == "_9lives")
         #expect(StitchableCodegen.sanitizedName("   ") == "metalNodesShader")
         #expect(StitchableCodegen.sanitizedName("") == "metalNodesShader")
+        // A name that lands on a Swift or MSL keyword would not compile in either file.
+        #expect(StitchableCodegen.sanitizedName("default") == "default_")
+        #expect(StitchableCodegen.sanitizedName("fragment") == "fragment_")
+        #expect(StitchableCodegen.sanitizedName("Default") == "Default")
     }
 
     @Test func argumentsAreMouseThenSlotsInLayoutOrderWithScalarsAsFloat() {

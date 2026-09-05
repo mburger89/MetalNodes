@@ -4,13 +4,23 @@ import Foundation
 public enum StitchableCodegen {
     public static let defaultName = "metalNodesShader"
 
-    /// `raw` reduced to a C identifier; empty/blank → `defaultName`.
+    /// Words that cannot name the generated function in Swift or in MSL.
+    static let reservedNames: Set<String> = [
+        "default", "for", "class", "switch", "struct", "enum", "func", "return", "if", "else",
+        "while", "do", "in", "is", "as", "let", "var", "import", "extension", "protocol",
+        "static", "public", "private", "internal", "case", "break", "continue", "where",
+        "self", "Self", "true", "false", "nil", "half", "float", "int", "bool",
+        "kernel", "vertex", "fragment", "constant", "device", "thread", "texture", "sampler", "bundle",
+    ]
+
+    /// `raw` reduced to a C identifier; empty/blank → `defaultName`. A reserved word gains a `_`.
     public static func sanitizedName(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return defaultName }
         var s = String(trimmed.unicodeScalars.map { ($0.properties.isAlphabetic || ("0"..."9").contains($0) || $0 == "_") ? Character($0) : "_" })
         if let first = s.first, ("0"..."9").contains(first) { s = "_" + s }
-        return s.isEmpty ? defaultName : s
+        guard !s.isEmpty else { return defaultName }
+        return reservedNames.contains(s) ? s + "_" : s
     }
 
     public struct Argument: Sendable, Hashable {
