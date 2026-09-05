@@ -1040,6 +1040,12 @@ extension whose parameters are named after the node title + parameter label
 (camel-cased, de-duplicated), in argument order, calling
 `.colorEffect(ShaderLibrary.NAME(.float2(size), .float(time), .float2(mouse), …))`
 (`distortionEffect`/`layerEffect` take `maxSampleOffset: .zero`).
+`Shader.Argument` has no vector-taking overload, so the Swift call spells a
+vector slot by component — `.float2(v.x, v.y)`, `.float3(v.x, v.y, v.z)`,
+`.float4(v.x, v.y, v.z, v.w)`. A `color` slot is a `half4` parameter (that is
+what SwiftUI's `.color(_:)` passes, premultiplied), read as `float4(NAME)`
+inside the function; the preview keeps it as a `float4` in `Uniforms` and
+narrows explicitly at the call, since MSL has no implicit vector conversion.
 
 ### 19.5 Library additions (27)
 
