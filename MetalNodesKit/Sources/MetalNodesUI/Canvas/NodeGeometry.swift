@@ -6,7 +6,10 @@ import MetalNodesCore
 enum NodeGeometry {
     static let width: CGFloat = 190
     static let headerHeight: CGFloat = 26
+    /// Row pitch: `NodeView`'s 16 pt of row content plus the body `VStack`'s 6 pt spacing.
     static let rowHeight: CGFloat = 22
+    static let rowSpacing: CGFloat = 6
+    /// `NodeView`'s body inset, top and bottom.
     static let bodyPadding: CGFloat = 16
 
     static func estimatedSize(for def: NodeDef) -> CGSize {
@@ -21,6 +24,31 @@ enum NodeGeometry {
     static func frame(for node: NodeInstance, registry: NodeRegistry) -> CGRect? {
         guard case .builtin(let id) = node.kind, let def = registry[id] else { return nil }
         return frame(for: node, def: def)
+    }
+
+    /// Where `NodeView` puts `ref`'s socket dot, in canvas coordinates, computed rather than
+    /// measured. `SocketAnchorKey` only reports sockets that are actually rendered, so a culled
+    /// node (or one below the LOD zoom) has no measured anchor; this is the fallback that keeps
+    /// its wires drawn and hit-testable (spec §18.9, "wires always draw").
+    ///
+    /// Mirrors `NodeView`'s expanded layout exactly: below the header and the 8 pt body inset it
+    /// stacks one `rowHeight` row per input, then per param, then per output, each row's
+    /// `rowHeight - rowSpacing` of content centred in its pitch. `NodeView.inputRow` offsets its
+    /// socket by `-8 - SocketView.size / 2`, exactly cancelling the inset and half the dot, so
+    /// the dot's centre sits on the node's left edge; `outputRow` mirrors it onto the right edge.
+    static func socketAnchor(for ref: SocketRef, in graph: Graph, registry: NodeRegistry) -> CGPoint? {
+        guard let node = graph.nodes[ref.node], case .builtin(let defID) = node.kind,
+              let def = registry[defID] else { return nil }
+        func centreY(row: Int) -> CGFloat {
+            node.position.y + headerHeight + bodyPadding / 2 + CGFloat(row) * rowHeight + (rowHeight - rowSpacing) / 2
+        }
+        if let i = def.inputs.firstIndex(where: { $0.name == ref.socket }) {
+            return CGPoint(x: node.position.x, y: centreY(row: i))
+        }
+        if let i = def.outputs.firstIndex(where: { $0.name == ref.socket }) {
+            return CGPoint(x: node.position.x + width, y: centreY(row: def.inputs.count + def.params.count + i))
+        }
+        return nil
     }
 
     static func nodes(in graph: Graph, intersecting rect: CGRect, registry: NodeRegistry) -> Set<NodeID> {

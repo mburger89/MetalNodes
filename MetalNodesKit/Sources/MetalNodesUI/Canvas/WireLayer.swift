@@ -40,20 +40,27 @@ enum WireGeometry {
 struct WireLayer: View {
     let graph: Graph
     let anchors: [SocketRef: CGPoint]
+    let registry: NodeRegistry
     var selected: SocketRef? = nil
     var pending: PendingWire? = nil
     let color: (SocketRef) -> Color
 
+    /// Measured where the socket is on screen, computed where it is not: a culled node reports no
+    /// anchor, and a wire with one endpoint off screen must still be drawn (spec §18.9).
+    private func anchor(_ ref: SocketRef) -> CGPoint? {
+        anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: graph, registry: registry)
+    }
+
     var body: some View {
         Canvas { ctx, _ in
             for (to, from) in graph.inputs where to != selected {
-                guard let a = anchors[from], let b = anchors[to] else { continue }
+                guard let a = anchor(from), let b = anchor(to) else { continue }
                 ctx.stroke(WireGeometry.path(from: a, to: b), with: .color(color(from)), lineWidth: 2)
             }
-            if let to = selected, let from = graph.inputs[to], let a = anchors[from], let b = anchors[to] {
+            if let to = selected, let from = graph.inputs[to], let a = anchor(from), let b = anchor(to) {
                 ctx.stroke(WireGeometry.path(from: a, to: b), with: .color(DraculaTheme.selection.color), lineWidth: 3.5)
             }
-            if let p = pending, let a = anchors[p.source] {
+            if let p = pending, let a = anchor(p.source) {
                 ctx.stroke(WireGeometry.path(from: a, to: p.point),
                            with: .color(DraculaTheme.token(for: p.type).color.opacity(0.85)), lineWidth: 2)
             }

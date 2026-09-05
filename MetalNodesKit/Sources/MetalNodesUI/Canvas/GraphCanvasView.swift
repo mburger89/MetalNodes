@@ -184,7 +184,8 @@ public struct GraphCanvasView: View {
 
     private var content: some View {
         ZStack(alignment: .topLeading) {
-            WireLayer(graph: model.document.root, anchors: anchors, selected: model.selectedWire, pending: pendingWire) { from in
+            WireLayer(graph: model.document.root, anchors: anchors, registry: model.registry,
+                      selected: model.selectedWire, pending: pendingWire) { from in
                 if let t = model.resolvedTypes[from.node]?.outputTypes[from.socket] {
                     return DraculaTheme.token(for: t).color
                 }
@@ -443,10 +444,16 @@ public struct GraphCanvasView: View {
         return (ref, def.input(named: ref.socket) != nil)
     }
 
+    /// The socket's measured anchor, or the computed one when it was not rendered (culled node) —
+    /// the same fallback `WireLayer` draws with, so every drawn wire is also clickable.
+    private func anchor(_ ref: SocketRef) -> CGPoint? {
+        anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: model.document.root, registry: model.registry)
+    }
+
     private func click(at p: CGPoint) {
         var best: (SocketRef, CGFloat)?
         for (to, from) in model.document.root.inputs {
-            guard let a = anchors[from], let b = anchors[to] else { continue }
+            guard let a = anchor(from), let b = anchor(to) else { continue }
             let d = WireGeometry.distance(from: p, wireFrom: a, to: b)
             if d <= Self.wireHitDistance / transform.zoom && (best == nil || d < best!.1) { best = (to, d) }
         }

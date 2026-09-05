@@ -59,6 +59,27 @@ import MetalNodesCore
         #expect(all.count == 11)                                                       // zoomed out, everything fits
     }
 
+    /// Synthesised anchors stand in for sockets that were never rendered (a culled node), so they
+    /// must land where `NodeView` would have put them. Derived from its layout constants: the
+    /// body starts below the 26 pt header, is inset by 8 pt, and stacks one 22 pt row per input,
+    /// then per param, then per output, each row's 16 pt of content centred in its pitch — so row
+    /// *i* is centred at 26 + 8 + 22·i + 8. `NodeView.inputRow` offsets its socket by
+    /// `-8 - SocketView.size / 2` from the padded row edge, which puts the dot exactly on the
+    /// node's left edge; `outputRow` mirrors that onto the right edge.
+    @Test func synthesizedSocketAnchorsMatchNodeViewLayout() {
+        let doc = ShaderDocument.sample()
+        // Separate XYZ at (220, 0): input "v" is row 0, outputs x/y/z are rows 1…3 (no params).
+        let sep = doc.root.nodes.values.first { $0.kind == .builtin("vector.separate") }!
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "v"), in: doc.root, registry: reg) == CGPoint(x: 220, y: 42))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "y"), in: doc.root, registry: reg) == CGPoint(x: 410, y: 86))
+        // Math at (220, 200): inputs a/b are rows 0…1, the "op" param is row 2, output "out" is row 3.
+        let mul = doc.root.nodes.values.first { $0.kind == .builtin("math.math") && $0.params["op"] == .enumCase("multiply") }!
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "b"), in: doc.root, registry: reg) == CGPoint(x: 220, y: 264))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "out"), in: doc.root, registry: reg) == CGPoint(x: 410, y: 308))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "nope"), in: doc.root, registry: reg) == nil)
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(NodeID(), "v"), in: doc.root, registry: reg) == nil)
+    }
+
     /// A node dragged past the cull margin must keep rendering: its `NodeView` owns the drag
     /// gesture, so tearing it down cancels the gesture without `onEnded` and strands the open
     /// transaction (the canvas passes the in-flight node ids as `keeping`).
