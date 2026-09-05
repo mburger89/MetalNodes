@@ -41,6 +41,16 @@ public struct EditorView: View {
         VStack(spacing: 8) {
             PreviewView(state: model.preview, device: device)
                 .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    GeometryReader { geo in
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                if case .active(let p) = phase { setMouse(p, in: geo.size) }
+                            }
+                            .gesture(DragGesture(minimumDistance: 0).onChanged { g in setMouse(g.location, in: geo.size) })
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(DraculaToken.surface.color))
             HStack {
@@ -71,6 +81,11 @@ public struct EditorView: View {
             InspectorView(model: model)
         }
         .padding(10)
+    }
+
+    private func setMouse(_ p: CGPoint, in size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        model.preview.mouse = SIMD2(Float(min(max(p.x / size.width, 0), 1)), Float(1 - min(max(p.y / size.height, 0), 1)))
     }
 
     private func rangeBinding(lower: Bool) -> Binding<Float> {
