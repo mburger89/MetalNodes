@@ -20,8 +20,23 @@ public enum StitchableKind: String, Sendable, CaseIterable, Codable {
     case colorEffect, distortionEffect, layerEffect
 }
 
-/// What the generated program is for. Only `.fragment` is implemented before M3.
-public enum OutputTarget: Sendable, Hashable {
+/// What the generated program is for.
+public enum OutputTarget: Sendable, Hashable, Codable {
     case fragment
     case stitchable(StitchableKind)
+
+    public static let all: [OutputTarget] = [.fragment, .stitchable(.colorEffect), .stitchable(.distortionEffect), .stitchable(.layerEffect)]
+
+    public var title: String {
+        switch self {
+        case .fragment: "Fragment (preview)"
+        case .stitchable(.colorEffect): "SwiftUI Color Effect"
+        case .stitchable(.distortionEffect): "SwiftUI Distortion Effect"
+        case .stitchable(.layerEffect): "SwiftUI Layer Effect"
+        }
+    }
+
+    public var stitchableKind: StitchableKind? {
+        if case .stitchable(let k) = self { return k } else { return nil }
+    }
 }

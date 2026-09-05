@@ -24,17 +24,23 @@ public struct DocumentSettings: Sendable, Hashable {
     public var timeMode: TimeMode = .wallClock
     /// Metal fast-math for every compiled shader (spec §18.1). Part of the pipeline cache key.
     public var fastMath: Bool = true
+    /// What the document exports as (spec §19). Fragment preview is always available regardless.
+    public var target: OutputTarget = .fragment
+    /// The name given to the exported SwiftUI stitchable function / Swift symbol.
+    public var exportName: String = "metalNodesShader"
     public init() {}
 }
 
 extension DocumentSettings: Codable {
-    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath }
+    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         previewSize = try c.decodeIfPresent(CGSize.self, forKey: .previewSize) ?? CGSize(width: 512, height: 512)
         timeMode = try c.decodeIfPresent(TimeMode.self, forKey: .timeMode) ?? .wallClock
         fastMath = try c.decodeIfPresent(Bool.self, forKey: .fastMath) ?? true
+        target = try c.decodeIfPresent(OutputTarget.self, forKey: .target) ?? .fragment
+        exportName = try c.decodeIfPresent(String.self, forKey: .exportName) ?? "metalNodesShader"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -42,6 +48,8 @@ extension DocumentSettings: Codable {
         try c.encode(previewSize, forKey: .previewSize)
         try c.encode(timeMode, forKey: .timeMode)
         try c.encode(fastMath, forKey: .fastMath)
+        try c.encode(target, forKey: .target)
+        try c.encode(exportName, forKey: .exportName)
     }
 }
 

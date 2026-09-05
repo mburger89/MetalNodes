@@ -64,4 +64,22 @@ import Testing
         #expect(ParamValue.enumCase("add").socketType == nil)
         #expect(ParamValue.asset(nil).socketType == nil)
     }
+
+    @Test func sysPlaceholdersMustNameASystemValue() {
+        let ok = NodeDef(id: "t.ok", title: "ok", category: .input,
+                         outputs: [SocketDecl(name: "o", type: .concrete(.float2))],
+                         body: .template("{out.o} = {sys.uv} + {sys.mouse};"))
+        #expect(throws: Never.self) { try NodeRegistry([ok]) }
+        let bad = NodeDef(id: "t.bad", title: "bad", category: .input,
+                          outputs: [SocketDecl(name: "o", type: .concrete(.float))],
+                          body: .template("{out.o} = {sys.frame};"))
+        #expect(throws: RegistryError.unknownPlaceholder(def: "t.bad", placeholder: "sys.frame")) { try NodeRegistry([bad]) }
+    }
+
+    @Test func paramsCanBeHiddenFromTheNodeBody() {
+        let p = ParamDecl(name: "pos1", kind: .value(.float, range: 0...1), defaultValue: .float(0.5), showsInBody: false)
+        #expect(!p.showsInBody)
+        #expect(ParamDecl(name: "x", kind: .value(.float, range: nil), defaultValue: .float(0)).showsInBody)
+        #expect(NodeDef(id: "t.dot", title: "Dot", category: .utility, body: .template(""), style: .dot).style == .dot)
+    }
 }

@@ -42,28 +42,17 @@ public enum ShaderGenerator {
 
         let emitted = Emitter.emit(order: order, graph: doc.root, registry: registry, resolved: resolved)
 
-        var src = ""
-        src += "#include <metal_stdlib>\nusing namespace metal;\n\n"
-        src += emitted.layout.mslStruct + "\n\n"   // mslStruct ends with "};" (no newline)
-        src += "struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n\n"
-        for f in MSLStdlib.resolve(emitted.requiredStdlib) { src += f.source + "\n\n" }
-        src += "fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n"
-        src += "                           constant Uniforms &u [[buffer(0)]]) {\n"
-        let bodyStart = src.components(separatedBy: "\n").count   // 1-based line of first body line
-        var map = LineMap()
+        var builder = SourceBuilder()
+        builder.add("#include <metal_stdlib>\nusing namespace metal;\n")
+        builder.add(emitted.layout.mslStruct + "\n")
+        builder.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
+        for f in MSLStdlib.resolve(emitted.requiredStdlib) { builder.add(f.source + "\n") }
+        builder.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
         for (i, line) in emitted.bodyLines.enumerated() {
-            src += "    " + line + "\n"
-            if let owner = emitted.lineOwners[i] {
-                let n = bodyStart + i
-                if let last = map.entries.last, last.node == owner, last.range.upperBound == n - 1 {
-                    map.entries[map.entries.count - 1] = LineMap.Entry(range: last.range.lowerBound...n, node: owner)
-                } else {
-                    map.entries.append(LineMap.Entry(range: n...n, node: owner))
-                }
-            }
+            builder.add("    " + line, owner: emitted.lineOwners[i])
         }
-        src += "}\n"
-        return GeneratedShader(source: src, layout: emitted.layout, lineMap: map, resolved: resolved,
+        builder.add("}")
+        return GeneratedShader(source: builder.text, layout: emitted.layout, lineMap: builder.map, resolved: resolved,
                                fragmentFunctionName: fragmentFunctionName, target: target)
     }
 }
