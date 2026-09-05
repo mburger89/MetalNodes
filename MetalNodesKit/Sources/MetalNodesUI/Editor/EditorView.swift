@@ -21,8 +21,12 @@ public struct EditorView: View {
             .focusedSceneValue(\.editorModel, model)
             .onChange(of: model.exportRequest) { _, _ in
                 #if os(macOS)
-                do { exportError = ExportPanelMac.run(files: try model.exportFiles()) }
-                catch { exportError = "The graph has errors; fix them before exporting." }
+                // A modal panel must not run inside SwiftUI's update transaction (it returns
+                // immediately without showing); hop to the next main-actor turn first.
+                Task { @MainActor in
+                    do { exportError = ExportPanelMac.run(files: try model.exportFiles()) }
+                    catch { exportError = "The graph has errors; fix them before exporting." }
+                }
                 #endif
             }
             .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
