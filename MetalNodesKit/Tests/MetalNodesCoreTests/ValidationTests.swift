@@ -78,8 +78,8 @@ import Testing
         #expect(d.contains { $0.node == n.id && $0.socket == "x" })
     }
 
-    @Test func stitchableTargetIsRejectedUntilM3() {
-        #expect(errors(ShaderDocument.sample().root, target: .stitchable(.colorEffect)).contains { $0.contains("not yet supported") })
+    @Test func stitchableTargetsValidateLikeFragment() {
+        #expect(errors(ShaderDocument.sample().root, target: .stitchable(.colorEffect)).isEmpty)
     }
 
     @Test func unknownEnumCaseIsRejected() {
