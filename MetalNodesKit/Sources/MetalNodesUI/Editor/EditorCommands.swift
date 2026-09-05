@@ -11,8 +11,9 @@ public extension FocusedValues {
     }
 }
 
-/// Edit / View menu items routed to the focused editor (spec §18.6). Cut/Copy/Paste are the
-/// standard items, routed to the canvas via onCut/onCopy/onPasteCommand; Duplicate is a custom item here.
+/// Edit / View menu items routed to the focused editor (spec §18.6). Cut/Copy/Paste/Delete/Select All
+/// are the standard items, routed to the canvas via onCommand/onPasteCommand/onDeleteCommand;
+/// Duplicate is a custom item here, and the zoom items join the standard View menu.
 public struct EditorCommands: Commands {
     @FocusedValue(\.editorModel) private var model
 
@@ -36,11 +37,9 @@ public struct EditorCommands: Commands {
             Button("Duplicate") { model?.duplicateSelection() }
                 .keyboardShortcut("d", modifiers: .command)
                 .disabled(!(model?.canvasHasFocus ?? false) || !(model?.canCopy ?? false))
-            Button("Delete") { model?.deleteSelection() }
-                .keyboardShortcut(.delete, modifiers: [])
-                .disabled(!(model?.canvasHasFocus ?? false) || ((model?.selection.isEmpty ?? true) && model?.selectedWire == nil))
         }
-        CommandMenu("View") {
+        CommandGroup(after: .sidebar) {
+            Divider()
             Button("Zoom to Fit") { model?.requestCanvas(.fitAll) }
                 .keyboardShortcut(.home, modifiers: [])
                 .disabled(!(model?.canvasHasFocus ?? false))
