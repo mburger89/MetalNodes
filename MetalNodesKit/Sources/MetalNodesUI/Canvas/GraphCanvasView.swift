@@ -140,8 +140,11 @@ public struct GraphCanvasView: View {
             // parameter `TextField` gets first crack at Delete/Select All — see EditorCommands.
             .onDeleteCommand { model.deleteSelection() }
             .onCommand(#selector(NSResponder.selectAll(_:))) { model.selectAll() }
-            .onCutCommand { model.cutSelection(); return [] }
-            .onCopyCommand { model.copySelection(); return [] }
+            // Not onCut/onCopyCommand: those clear the pasteboard and write the handler's item
+            // providers afterwards, which wipes a direct write — and a promised custom UTI never
+            // resolves to bytes. Handling the responder selectors keeps our own write in place.
+            .onCommand(#selector(NSText.cut(_:))) { model.cutSelection() }
+            .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
             .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste() }
             #endif
         }

@@ -106,4 +106,16 @@ import MetalNodesRender
         #expect(m.document.root.nodes.count == 11)
         #expect(!m.canUndo)
     }
+
+    @Test func clipboardDataIsWhatCopyWritesAndNilWithoutASelection() throws {
+        let pb = MemoryPasteboard()
+        let m = model(pb)
+        #expect(m.clipboardData() == nil)
+        m.selectAll()
+        let direct = try JSONDecoder().decode(GraphClipboard.self, from: try #require(m.clipboardData()))
+        m.copySelection()
+        let written = try JSONDecoder().decode(GraphClipboard.self, from: try #require(pb.read(type: EditorModel.pasteboardType)))
+        #expect(Set(written.nodes.map(\.id)) == Set(direct.nodes.map(\.id)))
+        #expect(written.nodes.count == m.document.root.nodes.count)
+    }
 }

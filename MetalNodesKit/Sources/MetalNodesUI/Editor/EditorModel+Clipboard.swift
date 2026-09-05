@@ -6,12 +6,14 @@ extension EditorModel {
     public var canCopy: Bool { !selection.isEmpty }
     public var canPaste: Bool { pasteboard.read(type: Self.pasteboardType) != nil }
 
+    /// The selection encoded as the `pasteboardType` payload, or nil when nothing is selected.
+    public func clipboardData() -> Data? {
+        guard canCopy else { return nil }
+        return try? JSONEncoder().encode(GraphClipboard.extract(selection, from: document.root))
+    }
+
     public func copySelection() {
-        guard canCopy else { return }
-        let clip = GraphClipboard.extract(selection, from: document.root)
-        if let data = try? JSONEncoder().encode(clip) {
-            pasteboard.write(data, type: Self.pasteboardType)
-        }
+        if let data = clipboardData() { pasteboard.write(data, type: Self.pasteboardType) }
     }
 
     public func cutSelection() {
