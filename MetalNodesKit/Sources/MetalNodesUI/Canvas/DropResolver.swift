@@ -44,6 +44,16 @@ enum DropResolver {
         return nil
     }
 
+    /// The closest socket anchor within `radius` of `point`, or nil.
+    static func socket(near point: CGPoint, within radius: CGFloat, anchors: [SocketRef: CGPoint]) -> SocketRef? {
+        var best: (SocketRef, CGFloat)?
+        for (ref, a) in anchors {
+            let d = hypot(a.x - point.x, a.y - point.y)
+            if d <= radius, d < (best?.1 ?? .infinity) { best = (ref, d) }
+        }
+        return best?.0
+    }
+
     static func resolve(point: CGPoint, source: SocketRef, dragType: SocketType, anchors: [SocketRef: CGPoint],
                         graph: Graph, registry: NodeRegistry, resolved: [NodeID: ResolvedNode]) -> DropTarget {
         var best: (SocketRef, CGFloat)?

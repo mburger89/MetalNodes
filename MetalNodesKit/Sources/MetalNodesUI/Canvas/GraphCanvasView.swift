@@ -26,6 +26,8 @@ public struct GraphCanvasView: View {
     /// so a zero-movement ⌥-click doesn't leave invisible copies stacked on the originals.
     @State private var pendingDuplicate = false
     @State private var pendingWire: PendingWire?
+    /// A wire started by `backgroundDrag` (press on a socket's outboard half — see `socketUnderPress`).
+    @State private var backgroundWiring = false
     @State private var viewport: CGSize = .zero
     @FocusState private var canvasFocused: Bool
     /// Why the chooser is open: where to place, and (for a wire drop) what to auto-wire.
@@ -346,6 +348,11 @@ public struct GraphCanvasView: View {
                     return
                 }
                 let p = transform.toCanvas(g.location)
+                if backgroundWiring { pendingWire?.point = p; return }
+                if marqueeStart == nil, let hit = socketUnderPress(atScreen: g.startLocation) {
+                    beginWire(from: hit.ref, isInput: hit.isInput)
+                    if pendingWire != nil { backgroundWiring = true; pendingWire?.point = p; return }
+                }
                 if marqueeStart == nil { marqueeStart = transform.toCanvas(g.startLocation) }
                 let s = marqueeStart!
                 marquee = CGRect(x: min(s.x, p.x), y: min(s.y, p.y), width: abs(p.x - s.x), height: abs(p.y - s.y))
@@ -353,6 +360,7 @@ public struct GraphCanvasView: View {
             .onEnded { g in
                 defer { panOrigin = nil; marqueeStart = nil; marquee = nil }
                 if panOrigin != nil { model.viewState.cameras[.root] = transform.camera; return }
+                if backgroundWiring { backgroundWiring = false; endWire(at: transform.toCanvas(g.location)); return }
                 let moved = abs(g.translation.width) >= 4 || abs(g.translation.height) >= 4
                 if moved, let m = marquee {
                     let hit = NodeGeometry.nodes(in: model.document.root, intersecting: m, registry: model.registry)
@@ -366,6 +374,18 @@ public struct GraphCanvasView: View {
                     lastClick = (time: .now, point: g.location)
                 }
             }
+    }
+
+    /// Sockets are centred on their node's edge, and hit-testing stops at the node's frame, so a
+    /// press on a socket's outboard half reaches the background gesture instead of `SocketView`'s
+    /// drag. Resolve it against the socket anchors so the wire still starts. Not in compact LOD
+    /// (no socket drags there, by design).
+    private func socketUnderPress(atScreen p: CGPoint) -> (ref: SocketRef, isInput: Bool)? {
+        guard transform.zoom >= Self.lodZoom,
+              let ref = DropResolver.socket(near: transform.toCanvas(p), within: SocketView.hitSize / 2 / transform.zoom, anchors: anchors),
+              let node = model.document.root.nodes[ref.node],
+              case .builtin(let defID) = node.kind, let def = model.registry[defID] else { return nil }
+        return (ref, def.input(named: ref.socket) != nil)
     }
 
     private func click(at p: CGPoint) {

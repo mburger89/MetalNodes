@@ -64,4 +64,14 @@ import MetalNodesCore
         let none = DropResolver.firstCompatibleInput(on: mix.id, for: .texture, graph: doc.root, registry: reg, resolved: resolved)
         #expect(none == nil)
     }
+
+    @Test func socketNearPointPicksTheClosestAnchorWithinRadiusOnly() {
+        let sep = node("vector.separate")
+        let x = SocketRef(sep.id, "x"), y = SocketRef(sep.id, "y")
+        let ax = anchors[x]!
+        // 8 pt outboard of x, 22 pt rows: x is closest and inside a 10 pt radius; y is not.
+        #expect(DropResolver.socket(near: CGPoint(x: ax.x + 8, y: ax.y), within: 10, anchors: anchors) == x)
+        #expect(DropResolver.socket(near: CGPoint(x: ax.x, y: ax.y + 12), within: 10, anchors: anchors) == y)
+        #expect(DropResolver.socket(near: CGPoint(x: ax.x + 11, y: ax.y), within: 10, anchors: anchors) == nil)
+    }
 }
