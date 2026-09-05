@@ -24,11 +24,14 @@ public struct EditorCommands: Commands {
         // (rather than always enabled) so that, while a node parameter `TextField` is focused
         // (canvas is not), these menu key equivalents go disabled and let the field editor's own
         // Delete/⌘Z handling see the keystroke instead of the menu intercepting it first.
+        // The titles name the step ("Undo Move"): `commitUndo` sets an action name on every group,
+        // and `UndoManager` composes the menu title from it. Reading `canUndo`/`canRedo` in the
+        // same body is what re-evaluates these — they touch `undoStackVersion` (spec §18.6).
         CommandGroup(replacing: .undoRedo) {
-            Button("Undo") { model?.undo() }
+            Button(model?.undoManager.undoMenuItemTitle ?? "Undo") { model?.undo() }
                 .keyboardShortcut("z", modifiers: .command)
                 .disabled(!((model?.canUndo ?? false) && (model?.canvasHasFocus ?? false)))
-            Button("Redo") { model?.redo() }
+            Button(model?.undoManager.redoMenuItemTitle ?? "Redo") { model?.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!((model?.canRedo ?? false) && (model?.canvasHasFocus ?? false)))
         }

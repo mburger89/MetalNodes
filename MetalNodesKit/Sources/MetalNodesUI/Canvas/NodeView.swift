@@ -28,12 +28,28 @@ struct NodeView: View {
     static let width: CGFloat = NodeGeometry.width
 
     var body: some View {
+        Group {
+            if def.style == .dot { dotBody } else { standardBody }
+        }
+    }
+
+    /// The outline colour: an error wins over the selection, which wins over the plain border.
+    /// The selection glow (the shadow) is unaffected, so an errored selected node still reads as
+    /// selected (spec §19.5).
+    private var outlineColor: Color {
+        hasError ? DraculaTheme.error.color : (isSelected ? DraculaTheme.selection.color : DraculaToken.background.color)
+    }
+
+    private var outlineWidth: CGFloat { hasError || isSelected ? 2 : 1 }
+
+    private var standardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if !compact {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(def.inputs, id: \.name) { inputRow($0) }
-                    ForEach(def.params, id: \.name) { param in
+                    // Params marked `showsInBody == false` are inspector-only (spec §19.5).
+                    ForEach(def.params.filter(\.showsInBody), id: \.name) { param in
                         ParamControl(label: param.label, kind: param.kind,
                                      value: node.params[param.name] ?? param.defaultValue,
                                      onChange: { onChange(.setParam(node.id, param.name, $0)) },
@@ -46,11 +62,44 @@ struct NodeView: View {
         }
         .frame(width: Self.width)
         .background(RoundedRectangle(cornerRadius: 8).fill(DraculaToken.surface.color))
-        .overlay(RoundedRectangle(cornerRadius: 8)
-            .stroke(isSelected ? DraculaTheme.selection.color : DraculaToken.background.color, lineWidth: isSelected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(outlineColor, lineWidth: outlineWidth))
         .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 6, y: isSelected ? 0 : 3)
         .contentShape(Rectangle())
         .onTapGesture { onSelect(InputModifiers.selectionMode()) }
+    }
+
+    /// Reroute: a 24 × 24 dot in its resolved output type's colour, with the input anchored on the
+    /// left edge and the output on the right. The `SocketView`s are invisible but present, so the
+    /// anchors are still reported and socket drags still start from them exactly as on a standard
+    /// node (spec §19.5).
+    private var dotBody: some View {
+        let type = resolved?.outputTypes[def.outputs.first?.name ?? ""] ?? .float
+        return ZStack {
+            Circle().fill(DraculaToken.surface.color)
+            Circle().fill(DraculaTheme.token(for: type).color).padding(6)
+            Circle().stroke(outlineColor, lineWidth: outlineWidth)
+            if let i = def.inputs.first {
+                let inType = resolved?.inputTypes[i.name] ?? concrete(i.type)
+                SocketView(type: inType, dimmed: dragType.map { !DropResolver.compatible($0, inType) } ?? false)
+                    .opacity(0.001)
+                    .socketAnchor(SocketRef(node.id, i.name))
+                    .gesture(socketDrag(SocketRef(node.id, i.name), isInput: true))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .offset(x: -SocketView.size / 2)
+            }
+            if let o = def.outputs.first {
+                SocketView(type: type, dimmed: dragType != nil)
+                    .opacity(0.001)
+                    .socketAnchor(SocketRef(node.id, o.name))
+                    .gesture(socketDrag(SocketRef(node.id, o.name), isInput: false))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .offset(x: SocketView.size / 2)
+            }
+        }
+        .frame(width: NodeGeometry.dotSize, height: NodeGeometry.dotSize)
+        .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 4, y: isSelected ? 0 : 2)
+        .contentShape(Circle())
+        .gesture(headerDrag)
     }
 
     private var header: some View {
@@ -62,6 +111,12 @@ struct NodeView: View {
                             .scaleEffect(0.6).socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
                     }
                 }
+            }
+            if hasError {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(DraculaTheme.error.color)
+                    .accessibilityLabel("Error")
             }
             Text(node.customTitle ?? def.title).font(.caption.weight(.semibold)).lineLimit(1)
             Spacer()
@@ -86,37 +141,41 @@ struct NodeView: View {
         .foregroundStyle(DraculaToken.background.color)
         .background(DraculaTheme.token(for: def.category).color, in: UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
-                .onChanged { g in
-                    if !dragging {
-                        dragging = true
-                        wasSelectedAtStart = isSelected
-                        let mode = InputModifiers.selectionMode()
-                        // An already-selected node stays selected as-is (⌘-drag must not toggle it
-                        // out of the selection before the drag snapshots origins); only an unselected
-                        // node needs onSelect to establish/extend the selection before the drag starts.
-                        if !isSelected { onSelect(mode) }
-                        onDragBegan()
-                    }
-                    onDrag(g.translation)
+        .gesture(headerDrag)
+    }
+
+    /// Moving the node: on a standard node this lives on the header, on a `.dot` node the whole
+    /// dot is the handle — the same gesture either way.
+    private var headerDrag: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
+            .onChanged { g in
+                if !dragging {
+                    dragging = true
+                    wasSelectedAtStart = isSelected
+                    let mode = InputModifiers.selectionMode()
+                    // An already-selected node stays selected as-is (⌘-drag must not toggle it
+                    // out of the selection before the drag snapshots origins); only an unselected
+                    // node needs onSelect to establish/extend the selection before the drag starts.
+                    if !isSelected { onSelect(mode) }
+                    onDragBegan()
                 }
-                .onEnded { g in
-                    let wasDragging = dragging
-                    dragging = false
-                    if wasDragging { onDragEnded() }
-                    if abs(g.translation.width) < 1 && abs(g.translation.height) < 1, wasSelectedAtStart {
-                        let mode = InputModifiers.selectionMode()
-                        // A click (no movement) on an already-selected node collapses the selection to it.
-                        if mode == .replace {
-                            onSelect(.replace)
-                        } else if mode == .toggle {
-                            // ⌘-drag moves the selection; ⌘-click (no movement) still toggles.
-                            onSelect(.toggle)
-                        }
+                onDrag(g.translation)
+            }
+            .onEnded { g in
+                let wasDragging = dragging
+                dragging = false
+                if wasDragging { onDragEnded() }
+                if abs(g.translation.width) < 1 && abs(g.translation.height) < 1, wasSelectedAtStart {
+                    let mode = InputModifiers.selectionMode()
+                    // A click (no movement) on an already-selected node collapses the selection to it.
+                    if mode == .replace {
+                        onSelect(.replace)
+                    } else if mode == .toggle {
+                        // ⌘-drag moves the selection; ⌘-click (no movement) still toggles.
+                        onSelect(.toggle)
                     }
                 }
-        )
+            }
     }
 
     private func inputRow(_ decl: SocketDecl) -> some View {

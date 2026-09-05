@@ -11,10 +11,18 @@ enum NodeGeometry {
     static let rowSpacing: CGFloat = 6
     /// `NodeView`'s body inset, top and bottom.
     static let bodyPadding: CGFloat = 16
+    /// A `.dot` node (Reroute) is square and has no header or body (spec §19.5).
+    static let dotSize: CGFloat = 24
+
+    /// Rows `NodeView` actually lays out: params with `showsInBody == false` live in the
+    /// inspector only, so they take no vertical space here (spec §19.5).
+    static func bodyRows(_ def: NodeDef) -> Int {
+        def.inputs.count + def.params.filter(\.showsInBody).count + def.outputs.count
+    }
 
     static func estimatedSize(for def: NodeDef) -> CGSize {
-        let rows = def.inputs.count + def.params.count + def.outputs.count
-        return CGSize(width: width, height: headerHeight + bodyPadding + CGFloat(rows) * rowHeight)
+        if def.style == .dot { return CGSize(width: dotSize, height: dotSize) }
+        return CGSize(width: width, height: headerHeight + bodyPadding + CGFloat(bodyRows(def)) * rowHeight)
     }
 
     static func frame(for node: NodeInstance, def: NodeDef) -> CGRect {
@@ -36,9 +44,21 @@ enum NodeGeometry {
     /// `rowHeight - rowSpacing` of content centred in its pitch. `NodeView.inputRow` offsets its
     /// socket by `-8 - SocketView.size / 2`, exactly cancelling the inset and half the dot, so
     /// the dot's centre sits on the node's left edge; `outputRow` mirrors it onto the right edge.
+    ///
+    /// A `.dot` node has no rows: its single input sits on the left edge's centre and its single
+    /// output on the right edge's, matching `NodeView.dotBody`.
     static func socketAnchor(for ref: SocketRef, in graph: Graph, registry: NodeRegistry) -> CGPoint? {
         guard let node = graph.nodes[ref.node], case .builtin(let defID) = node.kind,
               let def = registry[defID] else { return nil }
+        if def.style == .dot {
+            if def.input(named: ref.socket) != nil {
+                return CGPoint(x: node.position.x, y: node.position.y + dotSize / 2)
+            }
+            if def.output(named: ref.socket) != nil {
+                return CGPoint(x: node.position.x + dotSize, y: node.position.y + dotSize / 2)
+            }
+            return nil
+        }
         func centreY(row: Int) -> CGFloat {
             node.position.y + headerHeight + bodyPadding / 2 + CGFloat(row) * rowHeight + (rowHeight - rowSpacing) / 2
         }
@@ -46,7 +66,8 @@ enum NodeGeometry {
             return CGPoint(x: node.position.x, y: centreY(row: i))
         }
         if let i = def.outputs.firstIndex(where: { $0.name == ref.socket }) {
-            return CGPoint(x: node.position.x + width, y: centreY(row: def.inputs.count + def.params.count + i))
+            let above = def.inputs.count + def.params.filter(\.showsInBody).count
+            return CGPoint(x: node.position.x + width, y: centreY(row: above + i))
         }
         return nil
     }
@@ -75,12 +96,21 @@ enum NodeGeometry {
     /// ever calling `onEnded` and the drag's undo transaction stays open. Kept ids join the same
     /// UUID order rather than being appended, so z-order does not shift when a node leaves the
     /// viewport.
+    ///
+    /// `onTop` (the selection) draws last — the canvas renders this array in order, so the
+    /// selected nodes end up above the rest. `EditorModel.node(at:)` sorts the same way, keeping
+    /// hit-testing and draw order in agreement (spec §19.6).
     static func visibleNodes(in graph: Graph, transform: CanvasTransform, viewport: CGSize,
                              registry: NodeRegistry, margin: CGFloat = 200,
-                             keeping: Set<NodeID> = []) -> [NodeInstance] {
+                             keeping: Set<NodeID> = [], onTop: Set<NodeID> = []) -> [NodeInstance] {
         let rect = transform.visibleRect(viewport: viewport).insetBy(dx: -margin, dy: -margin)
         return graph.nodes.values
             .filter { n in keeping.contains(n.id) || frame(for: n, registry: registry)?.intersects(rect) == true }
-            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+            .sorted { drawOrder($0, onTop: onTop) < drawOrder($1, onTop: onTop) }
+    }
+
+    /// The canvas's z-order key: `onTop` nodes last, then stable UUID order.
+    static func drawOrder(_ node: NodeInstance, onTop: Set<NodeID>) -> (Int, String) {
+        (onTop.contains(node.id) ? 1 : 0, node.id.raw.uuidString)
     }
 }

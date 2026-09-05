@@ -156,7 +156,9 @@ public struct GraphCanvasView: View {
             // resolves to bytes. Handling the responder selectors keeps our own write in place.
             .onCommand(#selector(NSText.cut(_:))) { model.cutSelection() }
             .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-            .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste() }
+            // At the pointer (spec §18.4). `hoverLocation` is the last position inside the viewport
+            // and falls back to its centre once the pointer leaves, so a menu paste lands centred.
+            .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste(at: transform.toCanvas(hoverLocation)) }
             #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
@@ -193,11 +195,15 @@ public struct GraphCanvasView: View {
             }
             let compact = transform.zoom < Self.lodZoom
             let errors = model.errorNodes
+            // The selection draws last, so a node dragged over its neighbours stays on top —
+            // `EditorModel.node(at:)` orders hit-testing to match (spec §19.6).
+            let onTop = model.selection
             let visible = viewport == .zero
-                ? model.document.root.nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+                ? model.document.root.nodes.values
+                    .sorted { NodeGeometry.drawOrder($0, onTop: onTop) < NodeGeometry.drawOrder($1, onTop: onTop) }
                 : NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
                                             registry: model.registry, margin: Self.cullMargin,
-                                            keeping: nodesInFlight)
+                                            keeping: nodesInFlight, onTop: onTop)
             ForEach(visible, id: \.id) { node in
                 if case .builtin(let defID) = node.kind, let def = model.registry[defID] {
                     NodeView(node: node, def: def, resolved: model.resolvedTypes[node.id],

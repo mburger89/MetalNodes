@@ -61,4 +61,12 @@ import CoreGraphics
         let data = try JSONEncoder().encode(clip)
         #expect(try JSONDecoder().decode(GraphClipboard.self, from: data) == clip)
     }
+
+    @Test func decodingToleratesMissingOptionalKeys() throws {
+        let json = #"{"nodes":[],"edges":[]}"#
+        let clip = try JSONDecoder().decode(GraphClipboard.self, from: Data(json.utf8))
+        #expect(clip.formatVersion == 1)
+        #expect(clip.sourceOrigin == .zero)
+        #expect(clip.stickies.isEmpty && clip.frames.isEmpty && clip.definitions.isEmpty)
+    }
 }
