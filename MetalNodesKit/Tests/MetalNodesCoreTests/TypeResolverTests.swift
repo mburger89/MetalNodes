@@ -88,4 +88,32 @@ import Testing
         #expect(r.nodes[sepID]?.inputTypes["v"] == .float3)
         #expect(r.nodes[sepID]?.outputTypes["x"] == .float)
     }
+
+    @Test func genericKeepsAnExactlyMatchingSourceType() throws {
+        // A pass-through allowing color AND float4 must keep `color` as `color`, not widen to float4.
+        let reroute = NodeDef(id: "t.pass", title: "Pass", category: .utility,
+                              inputs: [SocketDecl(name: "in", type: .generic("T"), default: .value(.float(0)))],
+                              outputs: [SocketDecl(name: "out", type: .generic("T"))],
+                              generics: ["T": [.float, .float2, .float3, .float4, .color, .int, .bool]],
+                              body: .template("{out.out} = {in.in};"))
+        let reg = try NodeRegistry(BuiltinNodes.all + [reroute])
+        let c = NodeInstance(kind: .builtin("input.color"))
+        let p = NodeInstance(kind: .builtin("t.pass"))
+        var g = Graph(); g.nodes[c.id] = c; g.nodes[p.id] = p
+        g.connect(SocketRef(c.id, "out"), to: SocketRef(p.id, "in"))
+        let (nodes, diags) = TypeResolver.resolve(g, registry: reg, order: [c.id, p.id])
+        #expect(diags.isEmpty)
+        #expect(nodes[p.id]?.outputTypes["out"] == .color)
+    }
+
+    @Test func mixedSourceTypesStillWiden() throws {
+        // float + float3 into Math → float3, unchanged behaviour.
+        let f = NodeInstance(kind: .builtin("input.float")), v = NodeInstance(kind: .builtin("vector.combine"))
+        let m = NodeInstance(kind: .builtin("math.math"))
+        var g = Graph(); for n in [f, v, m] { g.nodes[n.id] = n }
+        g.connect(SocketRef(f.id, "out"), to: SocketRef(m.id, "a"))
+        g.connect(SocketRef(v.id, "out"), to: SocketRef(m.id, "b"))
+        let (nodes, _) = TypeResolver.resolve(g, registry: .builtin, order: [f.id, v.id, m.id])
+        #expect(nodes[m.id]?.outputTypes["out"] == .float3)
+    }
 }

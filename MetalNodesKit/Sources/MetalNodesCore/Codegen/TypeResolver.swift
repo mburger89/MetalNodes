@@ -20,13 +20,15 @@ public enum TypeResolver {
             var generics: [String: SocketType] = [:]
             for (name, allowed) in def.generics {
                 let s = allowed.sorted { ($0.componentCount ?? 0) < ($1.componentCount ?? 0) }
-                var maxCount: Int? = nil
+                var sources: [SocketType] = []
                 for decl in def.inputs where decl.type == .generic(name) {
                     guard let src = graph.inputs[SocketRef(id, decl.name)],
                           let srcType = resolved[src.node]?.outputTypes[src.socket] else { continue }
-                    maxCount = max(maxCount ?? 0, srcType.componentCount ?? 0)
+                    sources.append(srcType)
                 }
-                if let n = maxCount {
+                if let first = sources.first, sources.allSatisfy({ $0 == first }), allowed.contains(first) {
+                    generics[name] = first                       // spec §19.5: exact match wins
+                } else if let n = sources.map({ $0.componentCount ?? 0 }).max() {
                     generics[name] = s.first { ($0.componentCount ?? 0) >= n } ?? s.last ?? .float
                 } else {
                     generics[name] = s.contains(.float) ? .float : (s.first ?? .float)
