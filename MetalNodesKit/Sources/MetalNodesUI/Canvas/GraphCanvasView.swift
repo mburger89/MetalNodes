@@ -192,6 +192,7 @@ public struct GraphCanvasView: View {
                 return DraculaTheme.wireDefault.color
             }
             let compact = transform.zoom < Self.lodZoom
+            let errors = model.errorNodes
             let visible = viewport == .zero
                 ? model.document.root.nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
                 : NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
@@ -203,6 +204,9 @@ public struct GraphCanvasView: View {
                              graph: model.document.root,
                              isSelected: model.selection.contains(node.id),
                              compact: compact,
+                             isViewed: model.viewer?.node == node.id,
+                             hasError: errors.contains(node.id),
+                             onViewerToggle: { if let ref = model.firstOutput(of: node.id) { model.toggleViewer(ref) } },
                              onChange: { model.apply($0) },
                              onSelect: { mode in canvasFocused = true; model.select(node.id, mode: mode) },
                              onDragBegan: { beginNodeDrag() },

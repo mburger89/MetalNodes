@@ -8,6 +8,9 @@ struct NodeView: View {
     let graph: Graph
     let isSelected: Bool
     var compact = false
+    var isViewed = false
+    var hasError = false
+    var onViewerToggle: () -> Void = {}
     let onChange: (DocumentChange) -> Void
     let onSelect: (SelectionMode) -> Void
     let onDragBegan: () -> Void
@@ -62,6 +65,13 @@ struct NodeView: View {
             }
             Text(node.customTitle ?? def.title).font(.caption.weight(.semibold)).lineLimit(1)
             Spacer()
+            Image(systemName: isViewed ? "circle.circle.fill" : "circle.circle")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isViewed ? DraculaTheme.viewerFlag.color : DraculaToken.background.color.opacity(0.55))
+                .padding(3)
+                .contentShape(Rectangle())
+                .highPriorityGesture(TapGesture().onEnded { onViewerToggle() })
+                .accessibilityLabel(isViewed ? "Clear viewer" : "View this node")
             if compact {
                 VStack(spacing: 2) {
                     ForEach(def.outputs, id: \.name) { d in

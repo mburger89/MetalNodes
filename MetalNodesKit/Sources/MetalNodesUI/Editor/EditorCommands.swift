@@ -46,6 +46,10 @@ public struct EditorCommands: Commands {
             Button("Zoom to Selection") { model?.requestCanvas(.fitSelection) }
                 .keyboardShortcut("f", modifiers: [])
                 .disabled(!(model?.canvasHasFocus ?? false))
+            Divider()
+            Button("Toggle Viewer") { model?.toggleViewerOnSelection() }
+                .keyboardShortcut("v", modifiers: [.command, .shift])
+                .disabled(!(model?.canvasHasFocus ?? false) || (model?.selection.count ?? 0) != 1)
         }
     }
 }

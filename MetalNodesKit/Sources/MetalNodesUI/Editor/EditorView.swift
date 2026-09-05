@@ -52,11 +52,35 @@ public struct EditorView: View {
                     .foregroundStyle(DraculaToken.muted.color)
             }
             .controlSize(.small)
+            if let v = model.viewer {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.circle.fill").foregroundStyle(DraculaTheme.viewerFlag.color)
+                    Text("Viewing \(model.socketLabel(v))").font(.caption).lineLimit(1)
+                    if model.viewedType == .float || model.viewedType == .int {
+                        TextField("Min", value: rangeBinding(lower: true), format: .number.precision(.fractionLength(2))).frame(width: 56)
+                        TextField("Max", value: rangeBinding(lower: false), format: .number.precision(.fractionLength(2))).frame(width: 56)
+                    }
+                    Spacer()
+                    Button("Clear") { model.setViewer(nil) }
+                }
+                .controlSize(.small)
+                .textFieldStyle(.roundedBorder)
+            }
             diagnosticsList
             Divider()
             InspectorView(model: model)
         }
         .padding(10)
+    }
+
+    private func rangeBinding(lower: Bool) -> Binding<Float> {
+        Binding(
+            get: { lower ? model.preview.viewerRange.lowerBound : model.preview.viewerRange.upperBound },
+            set: { x in
+                let r = model.preview.viewerRange
+                let lo = lower ? x : r.lowerBound, hi = lower ? r.upperBound : x
+                model.preview.viewerRange = lo...max(hi, lo + 0.0001)
+            })
     }
 
     private var diagnosticsList: some View {

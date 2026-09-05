@@ -72,6 +72,26 @@ public struct InspectorView: View {
                              onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
             }
 
+            if !def.outputs.isEmpty {
+                Divider()
+                ForEach(def.outputs, id: \.name) { decl in
+                    let ref = SocketRef(id, decl.name)
+                    let viewed = model.viewer == ref
+                    HStack {
+                        Text(decl.label).font(.caption)
+                        Text((resolved?.outputTypes[decl.name] ?? decl.type.concreteOrFloat).rawValue)
+                            .font(.caption2.monospaced()).foregroundStyle(DraculaToken.muted.color)
+                        Spacer()
+                        Button { model.toggleViewer(ref) } label: {
+                            Image(systemName: viewed ? "circle.circle.fill" : "circle.circle")
+                                .foregroundStyle(viewed ? DraculaTheme.viewerFlag.color : DraculaToken.muted.color)
+                        }
+                        .buttonStyle(.plain)
+                        .help(viewed ? "Clear viewer" : "View \(decl.label)")
+                    }
+                }
+            }
+
             let diags = model.diagnostics.filter { $0.node == id }
             if !diags.isEmpty {
                 Divider()
