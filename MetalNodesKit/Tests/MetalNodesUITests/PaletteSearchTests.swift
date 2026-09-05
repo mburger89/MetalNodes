@@ -23,8 +23,9 @@ import MetalNodesCore
 
     @Test func idMatchesSurfaceLast() {
         let r = PaletteSearch.filter("vector", in: all).map(\.id)
-        // No title contains "vector"; ids do — all three vector nodes, sorted by title.
-        #expect(r == ["vector.combine", "vector.length", "vector.separate"])
+        // "Vector 2"/"Vector 3" titles prefix-match first; the vector.* ids surface after, sorted by title.
+        #expect(r == ["input.float2", "input.float3",
+                      "vector.combine", "vector.dot", "vector.length", "vector.normalize", "vector.rotate2d", "vector.separate"])
     }
 
     @Test func caseInsensitive() {
