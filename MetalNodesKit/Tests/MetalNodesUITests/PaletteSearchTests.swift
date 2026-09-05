@@ -45,4 +45,9 @@ import MetalNodesCore
         let data = try JSONEncoder().encode(t)
         #expect(try JSONDecoder().decode(NodeDefTransfer.self, from: data).defID == "noise.value")
     }
+
+    @Test func categoryDisplayNamesUppercaseTheAcronym() {
+        #expect(NodeCategory.sdf.displayName == "SDF")
+        #expect(NodeCategory.noise.displayName == "Noise")
+    }
 }

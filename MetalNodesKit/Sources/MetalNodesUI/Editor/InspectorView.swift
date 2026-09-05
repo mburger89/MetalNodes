@@ -35,7 +35,7 @@ public struct InspectorView: View {
             HStack {
                 Text(node.customTitle ?? def.title).font(.headline)
                 Spacer()
-                Text(def.category.rawValue.capitalized).font(.caption2)
+                Text(def.category.displayName).font(.caption2)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(DraculaTheme.token(for: def.category).color.opacity(0.25))
                     .clipShape(Capsule())
