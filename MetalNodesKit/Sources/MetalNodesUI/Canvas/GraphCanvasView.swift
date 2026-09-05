@@ -101,7 +101,9 @@ public struct GraphCanvasView: View {
             .onKeyPress(.delete) { model.deleteSelection(); return .handled }
             .onKeyPress(.deleteForward) { model.deleteSelection(); return .handled }
             .onKeyPress(.escape) {
-                if pendingWire != nil { pendingWire = nil; model.endTransaction() } else { model.clearSelection() }
+                // Cancel, not commit: a re-drag has already applied its `.disconnect`, and Escape
+                // must put that wire back rather than register it as an undo step (spec §18.5).
+                if pendingWire != nil { pendingWire = nil; model.cancelTransaction() } else { model.clearSelection() }
                 return .handled
             }
             .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
@@ -136,9 +138,13 @@ public struct GraphCanvasView: View {
                 model.addNode(defID: t.defID, at: CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2))
                 return true
             }
-            .popover(item: $chooser, attachmentAnchor: .rect(.rect(CGRect(origin: chooser?.screenPoint ?? .zero, size: CGSize(width: 1, height: 1)))), arrowEdge: .top) { c in
+            // The binding's setter is also how the popover reports a dismissal we did not ask for
+            // (a click outside), so `dismissChooser` — not just `onCancel` — is what abandons a
+            // wire drop's still-open transaction.
+            .popover(item: Binding(get: { chooser }, set: { if $0 == nil { dismissChooser() } else { chooser = $0 } }),
+                     attachmentAnchor: .rect(.rect(CGRect(origin: chooser?.screenPoint ?? .zero, size: CGSize(width: 1, height: 1)))), arrowEdge: .top) { c in
                 let defs = c.wire.map { w in model.registry.all.filter { PaletteSearch.acceptsInput(of: w.type, $0) } } ?? model.registry.all
-                NodeSearchPopover(defs: defs, onPick: { def in place(def, for: c) }, onCancel: { chooser = nil })
+                NodeSearchPopover(defs: defs, onPick: { def in place(def, for: c) }, onCancel: { dismissChooser() })
             }
             #if os(macOS)
             // Responder-chain commands (rather than menu key equivalents) so a focused node
@@ -319,17 +325,21 @@ public struct GraphCanvasView: View {
     private func endWire(at p: CGPoint) {
         guard let w = pendingWire else { return }
         pendingWire = nil
-        defer { model.endTransaction() }
         switch DropResolver.resolve(point: p, source: w.source, dragType: w.type, anchors: anchors,
                                     graph: model.document.root, registry: model.registry, resolved: model.resolvedTypes) {
         case .socket(let input):
             model.connectIfCompatible(w.source, to: input)
+            model.endTransaction()
         case .node(let id):
             if let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
                                                              registry: model.registry, resolved: model.resolvedTypes) {
                 model.connectIfCompatible(w.source, to: input)
             }
+            model.endTransaction()
         case .empty:
+            // The drag's transaction stays open across the chooser: picking commits the node and
+            // the connection into that one step, dismissing abandons it — which is what rolls a
+            // re-drag's `.disconnect` back (see `place` and `dismissChooser`).
             openChooser(atScreen: transform.toScreen(p), wire: (w.source, w.type))
         }
     }
@@ -341,16 +351,24 @@ public struct GraphCanvasView: View {
     }
 
     private func place(_ def: NodeDef, for c: Chooser) {
-        chooser = nil
-        model.beginTransaction("Add Node")
-        defer { model.endTransaction() }
+        chooser = nil                                   // not through `dismissChooser`: this commits
+        model.beginTransaction("Add Node")              // joins a wire drop's open transaction
         let origin = CGPoint(x: c.canvasPoint.x - NodeGeometry.width / 2, y: c.canvasPoint.y - NodeGeometry.headerHeight / 2)
-        guard let id = model.addNode(defID: def.id, at: origin) else { return }
-        if let w = c.wire,
+        if let id = model.addNode(defID: def.id, at: origin), let w = c.wire,
            let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
                                                          registry: model.registry, resolved: model.resolvedTypes) {
             model.connectIfCompatible(w.source, to: input)
         }
+        model.endTransaction()
+        if c.wire != nil { model.endTransaction() }      // and closes it, as one undo step
+    }
+
+    /// Closes the chooser without placing anything. A chooser opened by a wire drop still owns
+    /// that drag's transaction, so dismissing it cancels: a re-drag's `.disconnect` is rolled
+    /// back instead of being registered as an undo step (spec §18.5).
+    private func dismissChooser() {
+        if chooser?.wire != nil { model.cancelTransaction() }
+        chooser = nil
     }
 
     // MARK: Background: marquee / pan / click

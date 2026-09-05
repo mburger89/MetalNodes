@@ -28,6 +28,18 @@ extension EditorModel {
         commitUndo(before: before, name: transactionName)
     }
 
+    /// Abandons the open transaction: the document goes back to the snapshot and nothing is
+    /// registered with the undo manager. Nested calls unwind one level; the outermost restores.
+    /// Used by the cancel paths of a re-drag, whose `.disconnect` has already been applied
+    /// (spec §18.5) — `apply(.restore(_:))` deliberately registers nothing of its own.
+    public func cancelTransaction() {
+        guard transactionDepth > 0 else { return }
+        transactionDepth -= 1
+        guard transactionDepth == 0, let before = transactionSnapshot else { return }
+        transactionSnapshot = nil
+        apply(.restore(before))
+    }
+
     /// No-op while a gesture transaction is open (spec §18.3): undoing mid-gesture would race
     /// the transaction's eventual `commitUndo`.
     public func undo() {

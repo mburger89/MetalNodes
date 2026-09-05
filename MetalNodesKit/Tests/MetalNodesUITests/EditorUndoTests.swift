@@ -129,6 +129,43 @@ import MetalNodesRender
         #expect(m.canvasHasFocus)
     }
 
+    /// The cancel paths of a re-drag (Escape, dismissing the wire-drop chooser): the "Rewire"
+    /// transaction has already applied its `.disconnect`, and cancelling must put the wire back
+    /// without leaving an undo step behind (spec §18.5, "Escape cancels").
+    @Test func cancelTransactionRestoresSnapshotAndRegistersNothing() {
+        let m = model()
+        let original = m.document
+        let out = node(m, "output.fragment")
+        let source = m.document.root.source(feeding: SocketRef(out.id, "color"))
+        #expect(source != nil)
+        m.beginTransaction("Rewire")
+        m.apply(.disconnect(SocketRef(out.id, "color")))
+        #expect(m.document.root.source(feeding: SocketRef(out.id, "color")) == nil)
+        m.cancelTransaction()
+        #expect(!m.isInTransaction)
+        #expect(m.document == original)
+        #expect(m.document.root.source(feeding: SocketRef(out.id, "color")) == source)
+        #expect(!m.canUndo)                       // nothing registered at all
+    }
+
+    @Test func nestedCancelUnwindsOneLevelAndTheOutermostRestores() {
+        let m = model()
+        let original = m.document
+        let uv = node(m, "input.uv")
+        m.beginTransaction("Outer")
+        m.beginTransaction("Inner")
+        m.apply(.moveNodes([uv.id: CGPoint(x: 7, y: 7)]))
+        m.cancelTransaction()                     // closes Inner only: the edit stands
+        #expect(m.isInTransaction)
+        #expect(m.document.root.nodes[uv.id]?.position == CGPoint(x: 7, y: 7))
+        m.cancelTransaction()                     // closes Outer: back to the snapshot
+        #expect(!m.isInTransaction)
+        #expect(m.document == original)
+        #expect(!m.canUndo)
+        m.cancelTransaction()                     // unbalanced extra cancel is ignored
+        #expect(m.document == original)
+    }
+
     @Test func restoreNeverRegistersAnUndoStep() {
         let m = model()
         var doc = m.document
