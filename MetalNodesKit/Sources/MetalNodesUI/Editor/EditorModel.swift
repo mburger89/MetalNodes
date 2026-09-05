@@ -93,6 +93,8 @@ public final class EditorModel {
     }
 
     private func perform(_ change: DocumentChange) {
+        // Set by a case that is topology for a reason `changeClass` cannot see on its own.
+        var recompile = false
         switch change {
         case .moveNodes(let positions):
             for (id, p) in positions { document.root.nodes[id]?.position = p }
@@ -113,6 +115,9 @@ public final class EditorModel {
             for n in nodes { document.root.nodes[n.id] = n }
             for e in edges { document.root.connect(e.from, to: e.to) }
         case .setSettings(let s):
+            // Spec §18.2: settings are cosmetic unless `fastMath` flips — that one is part of the
+            // pipeline cache key, so it needs a rebuild; preview size and time mode do not.
+            recompile = s.fastMath != document.settings.fastMath
             document.settings = s
         case .restore(let doc):
             document = doc
@@ -130,8 +135,9 @@ public final class EditorModel {
                 preview.uniforms = img
             }
         case .topology:
-            scheduleCompile()
+            recompile = true
         }
+        if recompile { scheduleCompile() }
     }
 
     /// Selection may only reference nodes that exist (spec §18.3).

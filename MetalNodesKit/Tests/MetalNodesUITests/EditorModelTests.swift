@@ -48,6 +48,32 @@ actor WarningCompiler: ShaderCompiling {
         #expect(DocumentChange.removeNodes([id]).changeClass == .topology)
         #expect(DocumentChange.setTitle(id, "x").changeClass == .cosmetic)
         #expect(DocumentChange.insert(nodes: [], edges: []).changeClass == .topology)
+        // Settings are cosmetic on their own; `apply` upgrades a `fastMath` flip to a recompile,
+        // which needs the previous settings (spec §18.2) — see the two tests below.
+        #expect(DocumentChange.setSettings(DocumentSettings()).changeClass == .cosmetic)
+    }
+
+    @Test func fastMathChangeRecompiles() async {
+        let c = RecordingCompiler()
+        let m = model(c); m.start(); await m.awaitIdle()
+        var s = m.document.settings; s.fastMath = false
+        m.apply(.setSettings(s))
+        await m.awaitIdle()
+        #expect(m.document.settings.fastMath == false)
+        #expect(await c.generations.count == 2)
+        #expect(await c.fastMathFlags == [true, false])
+    }
+
+    @Test func previewSizeOnlyChangeDoesNotRecompile() async {
+        let c = RecordingCompiler()
+        let m = model(c); m.start(); await m.awaitIdle()
+        var s = m.document.settings
+        s.previewSize = CGSize(width: 256, height: 256)
+        s.timeMode = .fixedRate
+        m.apply(.setSettings(s))
+        await m.awaitIdle()
+        #expect(m.document.settings.previewSize == CGSize(width: 256, height: 256))
+        #expect(await c.generations.count == 1)
     }
 
     @Test func removeNodesPrunesSelectionAndDropsWires() async {
