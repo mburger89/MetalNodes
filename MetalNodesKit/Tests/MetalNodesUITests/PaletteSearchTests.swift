@@ -11,7 +11,7 @@ import MetalNodesCore
         #expect(r.count == all.count)
         #expect(r.first?.category == .input)
         let g = PaletteSearch.grouped(r)
-        #expect(g.map(\.category) == [.input, .math, .vector, .noise, .output])   // no sdf/color/utility in M1's library
+        #expect(g.map(\.category) == [.input, .math, .vector, .sdf, .noise, .output])   // no color/utility yet
         #expect(g.allSatisfy { !$0.defs.isEmpty })
     }
 

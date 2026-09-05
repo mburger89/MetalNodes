@@ -12,6 +12,8 @@ import Testing
             "input.float2", "input.float3", "input.int", "input.bool", "input.mouse",
             "math.clamp", "math.step", "math.maprange",
             "vector.dot", "vector.normalize", "vector.rotate2d",
+            "sdf.circle", "sdf.box", "sdf.union", "sdf.subtract",
+            "noise.perlin", "noise.simplex", "noise.voronoi", "noise.fbm",
         ]
         #expect(ids == expected)
     }

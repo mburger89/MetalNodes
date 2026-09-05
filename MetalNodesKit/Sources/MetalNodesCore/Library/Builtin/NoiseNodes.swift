@@ -1,0 +1,37 @@
+import Foundation
+
+extension BuiltinNodes {
+    static let noise: [NodeDef] = [
+        NodeDef(id: "noise.value", title: "Value Noise", category: .noise,
+                inputs: [SocketDecl(name: "uv", type: .concrete(.float2), default: .uv),
+                         SocketDecl(name: "scale", type: .concrete(.float), default: .value(.float(4)), range: 0.1...32)],
+                outputs: [SocketDecl(name: "out", label: "Value", type: .concrete(.float))],
+                requires: ["valueNoise"],
+                body: .template("{out.out} = mn_valueNoise({in.uv} * {in.scale});")),
+        NodeDef(id: "noise.perlin", title: "Perlin Noise", category: .noise,
+                inputs: [SocketDecl(name: "uv", type: .concrete(.float2), default: .uv),
+                         SocketDecl(name: "scale", type: .concrete(.float), default: .value(.float(4)), range: 0.1...32)],
+                outputs: [SocketDecl(name: "out", label: "Value", type: .concrete(.float))],
+                requires: ["perlin"],
+                body: .template("{out.out} = mn_perlin({in.uv} * {in.scale});")),
+        NodeDef(id: "noise.simplex", title: "Simplex Noise", category: .noise,
+                inputs: [SocketDecl(name: "uv", type: .concrete(.float2), default: .uv),
+                         SocketDecl(name: "scale", type: .concrete(.float), default: .value(.float(4)), range: 0.1...32)],
+                outputs: [SocketDecl(name: "out", label: "Value", type: .concrete(.float))],
+                requires: ["simplex"],
+                body: .template("{out.out} = mn_simplex({in.uv} * {in.scale});")),
+        NodeDef(id: "noise.voronoi", title: "Voronoi", category: .noise,
+                inputs: [SocketDecl(name: "uv", type: .concrete(.float2), default: .uv),
+                         SocketDecl(name: "scale", type: .concrete(.float), default: .value(.float(4)), range: 0.1...32)],
+                outputs: [SocketDecl(name: "out", label: "Distance", type: .concrete(.float))],
+                requires: ["voronoi"],
+                body: .template("{out.out} = mn_voronoi({in.uv} * {in.scale});")),
+        NodeDef(id: "noise.fbm", title: "Fbm", category: .noise,
+                inputs: [SocketDecl(name: "uv", type: .concrete(.float2), default: .uv),
+                         SocketDecl(name: "scale", type: .concrete(.float), default: .value(.float(4)), range: 0.1...32)],
+                outputs: [SocketDecl(name: "out", label: "Value", type: .concrete(.float))],
+                params: [ParamDecl(name: "octaves", kind: .value(.int, range: 1...8), defaultValue: .int(5))],
+                requires: ["fbm"],
+                body: .template("{out.out} = mn_fbm({in.uv} * {in.scale}, {param.octaves});")),
+    ]
+}

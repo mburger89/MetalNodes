@@ -50,4 +50,28 @@ import Foundation
         #expect(def.requires == ["rotate2d"])
         #expect(MSLStdlib.functions["rotate2d"]?.source.contains("float2 mn_rotate2d(float2 v, float angle, float2 center)") == true)
     }
+
+    @Test func sdfAndNoiseNodesExistWithFloatOutputs() {
+        for id in ["sdf.circle", "sdf.box", "sdf.union", "sdf.subtract", "noise.perlin", "noise.simplex", "noise.voronoi", "noise.fbm"] {
+            #expect(reg[id]?.outputs.first?.type == .concrete(.float), "\(id)")
+        }
+        #expect(reg["sdf.circle"]?.category == .sdf)
+    }
+
+    @Test func fbmOctavesIsAnIntUniformReadInsideTheLoop() throws {
+        let f = NodeInstance(kind: .builtin("noise.fbm")), out = NodeInstance(kind: .builtin("output.fragment"))
+        var d = ShaderDocument(); d.root.nodes[f.id] = f; d.root.nodes[out.id] = out
+        d.root.connect(SocketRef(f.id, "out"), to: SocketRef(out.id, "color"))
+        let s = try ShaderGenerator.generate(d)
+        #expect(s.layout.field(for: ParamPath(node: f.id, param: "octaves"))?.type == .int)
+        #expect(s.source.contains("mn_fbm(in.uv * u.p"))
+        #expect(s.source.contains("float mn_fbm(float2 p, int octaves)"))
+        #expect(MSLStdlib.resolve(["fbm"]).map(\.name) == ["hash21", "valueNoise", "fbm"])
+    }
+
+    @Test func stdlibDependenciesResolveForEveryNoise() {
+        #expect(MSLStdlib.resolve(["perlin"]).map(\.name) == ["hash22", "perlin"])
+        #expect(MSLStdlib.resolve(["voronoi"]).map(\.name) == ["hash22", "voronoi"])
+        #expect(MSLStdlib.resolve(["simplex"]).map(\.name) == ["mod289_2", "mod289_3", "permute3", "simplex"])
+    }
 }
