@@ -56,7 +56,7 @@ public struct InspectorView: View {
                     HStack {
                         Text(decl.label).font(.caption)
                         Spacer()
-                        Text("← \(sourceLabel(src))").font(.caption).foregroundStyle(DraculaToken.muted.color)
+                        Text("← \(model.socketLabel(src))").font(.caption).foregroundStyle(DraculaToken.muted.color)
                     }
                 } else if case .value(let dflt) = decl.default {
                     let type = resolved?.inputTypes[decl.name] ?? (decl.type.concreteOrFloat)
@@ -83,11 +83,6 @@ public struct InspectorView: View {
         } else {
             Text("Unknown node").foregroundStyle(DraculaToken.muted.color)
         }
-    }
-
-    private func sourceLabel(_ src: SocketRef) -> String {
-        guard let n = model.document.root.nodes[src.node], case .builtin(let d) = n.kind else { return src.socket }
-        return "\(n.customTitle ?? model.registry[d]?.title ?? d).\(src.socket)"
     }
 
     // MARK: Document

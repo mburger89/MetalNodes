@@ -82,4 +82,14 @@ import MetalNodesCore
         #expect(readFloat(img, shader.layout.field(for: ParamPath(node: noise.id, param: "scale"))!.offset) == 6)
         #expect(readFloat(img, shader.layout.field(for: ParamPath(node: tint.id, param: "value"))!.offset + 12) == 1)
     }
+
+    @Test func viewerRangeWritesOnlyWhenTheLayoutHasIt() {
+        var plain = UniformImage(layout: UniformLayoutBuilder.build([]))
+        plain.setViewerRange(0.2...0.8)                       // must not trap
+        var viewer = UniformImage(layout: UniformLayoutBuilder.build([], reserved: UniformLayoutBuilder.viewerReserved))
+        viewer.setViewerRange(0.25...0.75)
+        let lo = viewer.layout.reserved("viewerMin").offset, hi = viewer.layout.reserved("viewerMax").offset
+        #expect(viewer.bytes[lo..<lo + 4].withUnsafeBytes { $0.load(as: Float.self) } == 0.25)
+        #expect(viewer.bytes[hi..<hi + 4].withUnsafeBytes { $0.load(as: Float.self) } == 0.75)
+    }
 }
