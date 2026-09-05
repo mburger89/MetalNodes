@@ -8,6 +8,7 @@ public struct InspectorView: View {
     @State private var widthDraft = ""
     @State private var heightDraft = ""
     @State private var exportNameDraft = ""
+    @FocusState private var exportNameFocused: Bool
 
     public init(model: EditorModel) { self.model = model }
 
@@ -144,15 +145,18 @@ public struct InspectorView: View {
             HStack {
                 Text("Export name").font(.caption)
                 TextField("metalNodesShader", text: $exportNameDraft)
+                    .focused($exportNameFocused)
                     .onAppear { exportNameDraft = s.exportName }
                     .onChange(of: model.document.settings.exportName) { _, n in exportNameDraft = n }
-                    .onSubmit { var n = s; n.exportName = StitchableCodegen.sanitizedName(exportNameDraft); exportNameDraft = n.exportName; model.apply(.setSettings(n)) }
+                    .onChange(of: exportNameFocused) { _, focused in if !focused { commitExportName() } }
+                    .onSubmit { commitExportName() }
             }
             HStack {
-                Button("Copy Swift snippet") { _ = model.copySwiftSnippet() }
+                // Both actions read `settings.exportName`, so an uncommitted edit must land first.
+                Button("Copy Swift snippet") { commitExportName(); _ = model.copySwiftSnippet() }
                     .disabled(s.target.stitchableKind == nil)
                 #if os(macOS)
-                Button("Export…") { model.requestExport() }
+                Button("Export…") { commitExportName(); model.requestExport() }
                 #endif
             }
             .controlSize(.small)
@@ -166,6 +170,18 @@ public struct InspectorView: View {
 
     private func clampedDimension(_ v: CGFloat) -> Int {
         v.isFinite ? Int(min(max(v, 16), 8192)) : 512
+    }
+
+    /// Sanitises the draft and applies it. A no-op when it already matches, so it is safe to call
+    /// from the buttons, from `onSubmit`, and on focus loss.
+    private func commitExportName() {
+        let name = StitchableCodegen.sanitizedName(exportNameDraft)
+        exportNameDraft = name
+        let s = model.document.settings
+        guard name != s.exportName else { return }
+        var n = s
+        n.exportName = name
+        model.apply(.setSettings(n))
     }
 
     private func commitPreviewSize() {

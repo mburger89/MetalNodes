@@ -7,6 +7,8 @@ public struct EditorView: View {
     let model: EditorModel
     let device: MTLDevice
     @State private var exportError: String?
+    /// A panel is on screen; a second request must not stack another one behind it.
+    @State private var exporting = false
 
     public init(model: EditorModel, device: MTLDevice) {
         self.model = model
@@ -24,6 +26,9 @@ public struct EditorView: View {
                 // A modal panel must not run inside SwiftUI's update transaction (it returns
                 // immediately without showing); hop to the next main-actor turn first.
                 Task { @MainActor in
+                    guard !exporting else { return }
+                    exporting = true
+                    defer { exporting = false }
                     do { exportError = ExportPanelMac.run(files: try model.exportFiles()) }
                     catch { exportError = "The graph has errors; fix them before exporting." }
                 }

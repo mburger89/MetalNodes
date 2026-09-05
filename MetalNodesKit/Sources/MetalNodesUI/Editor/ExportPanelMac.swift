@@ -43,6 +43,12 @@ enum ExportPanelMac {
         panel.prompt = "Export"
         panel.message = "Choose a folder for \(metal.name) and \(swift.name)."
         guard panel.runModal() == .OK, let dir = panel.url else { return nil }
+        // An open panel grants the folder, so nothing warns about replacing what is already there
+        // the way a save panel would — ask before clobbering.
+        let existing = [metal.name, swift.name].filter {
+            FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
+        }
+        if !existing.isEmpty, !confirmReplace(existing) { return nil }
         do {
             try metal.contents.write(to: dir.appendingPathComponent(metal.name), atomically: true, encoding: .utf8)
             try swift.contents.write(to: dir.appendingPathComponent(swift.name), atomically: true, encoding: .utf8)
@@ -50,6 +56,19 @@ enum ExportPanelMac {
         } catch {
             return error.localizedDescription
         }
+    }
+
+    /// True when the user chose Replace.
+    private static func confirmReplace(_ names: [String]) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Replace existing files?"
+        alert.informativeText = names.count == 1
+            ? "“\(names[0])” already exists in this folder. Replacing it overwrites its current contents."
+            : "\(names.joined(separator: " and ")) already exist in this folder. Replacing them overwrites their current contents."
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
 #endif
