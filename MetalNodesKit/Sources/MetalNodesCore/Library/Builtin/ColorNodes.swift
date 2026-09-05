@@ -1,0 +1,48 @@
+import Foundation
+
+extension BuiltinNodes {
+    static let color: [NodeDef] = [
+        NodeDef(id: "color.ramp", title: "Color Ramp", category: .color,
+                inputs: [SocketDecl(name: "fac", label: "Factor", type: .concrete(.float), default: .value(.float(0.5)), range: 0...1)],
+                outputs: [SocketDecl(name: "out", type: .concrete(.color))],
+                params: [ParamDecl(name: "stops", kind: .enumeration(["2", "3", "4"]), defaultValue: .enumCase("2")),
+                         ParamDecl(name: "col0", label: "Color 1", kind: .value(.color, range: 0...1), defaultValue: .float4(.init(0, 0, 0, 1)), showsInBody: false),
+                         ParamDecl(name: "pos1", label: "Position 2", kind: .value(.float, range: 0...1), defaultValue: .float(0.5), showsInBody: false),
+                         ParamDecl(name: "col1", label: "Color 2", kind: .value(.color, range: 0...1), defaultValue: .float4(.init(1, 1, 1, 1)), showsInBody: false),
+                         ParamDecl(name: "pos2", label: "Position 3", kind: .value(.float, range: 0...1), defaultValue: .float(0.75), showsInBody: false),
+                         ParamDecl(name: "col2", label: "Color 3", kind: .value(.color, range: 0...1), defaultValue: .float4(.init(1, 0.5, 0, 1)), showsInBody: false),
+                         ParamDecl(name: "col3", label: "Color 4", kind: .value(.color, range: 0...1), defaultValue: .float4(.init(1, 1, 0, 1)), showsInBody: false)],
+                requires: ["ramp3", "ramp4"],
+                body: .variants(param: "stops", [
+                    "2": "{out.out} = mix({param.col0}, {param.col1}, saturate({in.fac}));",
+                    "3": "{out.out} = mn_ramp3({in.fac}, {param.col0}, {param.pos1}, {param.col1}, {param.col2});",
+                    "4": "{out.out} = mn_ramp4({in.fac}, {param.col0}, {param.pos1}, {param.col1}, {param.pos2}, {param.col2}, {param.col3});",
+                ])),
+        NodeDef(id: "color.hsv2rgb", title: "HSV to RGB", category: .color,
+                inputs: [SocketDecl(name: "hsv", label: "HSV", type: .concrete(.float3), default: .value(.float3(.init(0, 1, 1))), range: 0...1)],
+                outputs: [SocketDecl(name: "out", label: "RGB", type: .concrete(.float3))],
+                requires: ["hsv2rgb"],
+                body: .template("{out.out} = mn_hsv2rgb({in.hsv});")),
+        NodeDef(id: "color.rgb2hsv", title: "RGB to HSV", category: .color,
+                inputs: [SocketDecl(name: "rgb", label: "RGB", type: .concrete(.float3), default: .value(.float3(.init(1, 1, 1))), range: 0...1)],
+                outputs: [SocketDecl(name: "out", label: "HSV", type: .concrete(.float3))],
+                requires: ["rgb2hsv"],
+                body: .template("{out.out} = mn_rgb2hsv({in.rgb});")),
+        NodeDef(id: "color.invert", title: "Invert", category: .color,
+                inputs: [SocketDecl(name: "c", label: "Color", type: .concrete(.color), default: .value(.float4(.init(1, 1, 1, 1))), range: 0...1)],
+                outputs: [SocketDecl(name: "out", type: .concrete(.color))],
+                body: .template("{out.out} = float4(1.0 - ({in.c}).rgb, ({in.c}).a);")),
+        NodeDef(id: "color.mixcolor", title: "Mix Color", category: .color,
+                inputs: [SocketDecl(name: "a", type: .concrete(.color), default: .value(.float4(.init(0, 0, 0, 1))), range: 0...1),
+                         SocketDecl(name: "b", type: .concrete(.color), default: .value(.float4(.init(1, 1, 1, 1))), range: 0...1),
+                         SocketDecl(name: "fac", label: "Factor", type: .concrete(.float), default: .value(.float(0.5)), range: 0...1)],
+                outputs: [SocketDecl(name: "out", type: .concrete(.color))],
+                params: [ParamDecl(name: "mode", kind: .enumeration(["mix", "add", "multiply", "screen"]), defaultValue: .enumCase("mix"))],
+                body: .variants(param: "mode", [
+                    "mix": "{out.out} = mix({in.a}, {in.b}, {in.fac});",
+                    "add": "{out.out} = float4(({in.a}).rgb + ({in.b}).rgb * {in.fac}, ({in.a}).a);",
+                    "multiply": "{out.out} = float4(mix(({in.a}).rgb, ({in.a}).rgb * ({in.b}).rgb, {in.fac}), ({in.a}).a);",
+                    "screen": "{out.out} = float4(mix(({in.a}).rgb, 1.0 - (1.0 - ({in.a}).rgb) * (1.0 - ({in.b}).rgb), {in.fac}), ({in.a}).a);",
+                ])),
+    ]
+}

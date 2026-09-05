@@ -18,5 +18,5 @@ public enum BuiltinNodes {
                 body: .template("return {in.color};")),
     ]
 
-    public static let all: [NodeDef] = input + math + vector + sdf + noise + output
+    public static let all: [NodeDef] = input + math + vector + sdf + noise + color + utility + output
 }

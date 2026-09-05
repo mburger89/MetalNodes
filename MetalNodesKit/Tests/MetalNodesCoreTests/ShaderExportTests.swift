@@ -40,7 +40,7 @@ import Foundation
         #expect(names == ["mouse", "speedValue", "mathB"])
     }
 
-    @Test(.disabled("needs Task 6/8 library nodes")) func swiftSnippetGoldenForColorEffect() throws {
+    @Test func swiftSnippetGoldenForColorEffect() throws {
         var d = ShaderDocument()
         let i = NodeInstance(kind: .builtin("input.int"), params: ["value": .int(3)])
         let b = NodeInstance(kind: .builtin("input.bool"))
@@ -80,7 +80,7 @@ import Foundation
         #expect(l.contains("layerEffect(ShaderLibrary.glow("))
     }
 
-    @Test(.disabled("needs Task 6/8 library nodes")) func boolAndColorArgumentsAreConverted() throws {
+    @Test func boolAndColorArgumentsAreConverted() throws {
         var d = ShaderDocument()
         let b = NodeInstance(kind: .builtin("input.bool")), c = NodeInstance(kind: .builtin("input.color"))
         let out = NodeInstance(kind: .builtin("output.fragment"))

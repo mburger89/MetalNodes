@@ -47,5 +47,5 @@ public enum MSLStdlib {
         """),
     ]
 
-    private static let all: [MSLFunction] = core + vector + sdf + noise
+    private static let all: [MSLFunction] = core + vector + sdf + noise + color
 }
