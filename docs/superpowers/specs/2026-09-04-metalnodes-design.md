@@ -938,3 +938,152 @@ round-trip, `fastMath` in the cache key, LRU eviction, `CompileLine`
 severity parsing, marquee/frame intersection math, zoom-to-fit math, wire
 hit-testing distance, drop resolution order (pure function over anchors).
 Views verified by build plus the manual checklist in the plan's last task.
+
+---
+
+## 19. M3 addendum — library, viewer, stitchable target, error mapping (added 2026-09-04)
+
+Binding mechanics for milestone M3, in the same spirit as §18. Where this
+section and an earlier one disagree, this section wins for M3.
+
+### 19.1 Scope and order
+
+1. **Codegen environment** — templates stop spelling `u.time` / `in.uv`;
+   they use `{sys.uv}`, `{sys.time}`, `{sys.resolution}`, `{sys.mouse}`, and
+   the emitter substitutes per target. Uniform reads go through the same
+   environment (`u.p0` for the fragment target, a bare argument name for a
+   stitchable function).
+2. **Viewer flag** (§9.3) — a second program from the same graph, always a
+   *fragment* program for the preview, terminating at the flagged output.
+3. **Stitchable target** (§9.5) — `colorEffect`, `distortionEffect`,
+   `layerEffect`; preview wrapper; export of `.metal` + `.swift`.
+4. **Library to the v1 set** — 27 new definitions (40 total), see 19.5.
+5. **Error mapping** (§9.4) — diagnostics already carry `NodeID`; nodes
+   with an error get a red outline and badge.
+6. **Carry-overs from M2** — paste at the cursor, selected nodes draw on top,
+   no recompile when the generated source is unchanged, Undo menu titles
+   carry the action name, tolerant clipboard decoding.
+
+Decisions taken with the user for M3: constants ship as **separate nodes**
+(Float, Vector 2, Vector 3, Color, Integer, Boolean — the type resolver only
+infers from connected inputs); **Texture Sample is deferred to M5** with
+package persistence; **Color Ramp has up to 4 stops**, edited in the
+inspector; export is a **File ▸ Export Shader…** save panel writing both
+files side by side, plus "Copy Swift snippet" in the inspector.
+
+### 19.2 Emit environment
+
+```swift
+struct EmitEnvironment: Sendable {
+    var uniform: @Sendable (UniformField) -> String   // how a slot is read
+    var sys: [String: String]                          // uv, time, resolution, mouse
+}
+```
+
+| Target | `uniform(p0: float)` | `uniform(p3: int)` | `uniform(p4: bool)` | `sys.uv` | `sys.time` | `sys.resolution` | `sys.mouse` |
+|---|---|---|---|---|---|---|---|
+| fragment (and viewer) | `u.p0` | `u.p3` | `bool(u.p4)` | `in.uv` | `u.time` | `u.resolution` | `u.mouse` |
+| stitchable function | `p0` | `int(p3)` | `bool(p4)` | `uv` | `time` | `size` | `mouse` |
+
+SwiftUI's `Shader.Argument` has no integer or boolean form, so int/bool
+uniforms are `float` arguments cast on read. `uv` inside a stitchable
+function is `float2(position.x / size.x, 1.0 - position.y / size.y)` — the
+same bottom-left convention as the fragment target.
+
+The registry rejects any `{sys.x}` whose name is not one of the four.
+
+### 19.3 Viewer
+
+- `generate(doc, target:, viewer: SocketRef?)`. A valid viewer (node exists,
+  socket is one of its outputs) replaces the terminal: the topological order
+  starts from the viewed node (DCE as usual) and the program ends with a wrap
+  of that output's variable per the §9.3 table. `float` and `int` map through
+  two extra reserved uniforms `viewerMin`, `viewerMax` (sorted with the
+  others, present only in viewer programs):
+  `return float4(float3(saturate((v - u.viewerMin) / max(u.viewerMax - u.viewerMin, 1e-6))), 1.0);`
+- A viewer program is always a fragment program regardless of
+  `settings.target`; export never passes a viewer.
+- An invalid viewer (node or socket gone) is cleared before generation —
+  `EditorModel` prunes it exactly as it prunes the selection.
+- Setting the viewer is a view-state change (no undo) that schedules a
+  compile. The range control (min/max) is transient preview state, written
+  into the uniform image every frame, so dragging it never recompiles.
+- UI: a green ◉ badge in every node header toggles the viewer on the node's
+  **first** output; the inspector's output rows each carry a ◉ to pick any
+  output; View ▸ Toggle Viewer (⌘⇧V) acts on the single selected node. The
+  preview pane shows "Viewing *Node*.*socket*" with Clear, and Min/Max fields
+  when the viewed type is `float` or `int`.
+
+### 19.4 Stitchable target
+
+Signatures (`NAME` = `settings.exportName` sanitised to an identifier,
+default `metalNodesShader`; `…args` = `float2 mouse` followed by one argument
+per user uniform slot **in layout order**, int/bool as `float`):
+
+| Kind | Export signature | Return |
+|---|---|---|
+| colorEffect | `[[stitchable]] half4 NAME(float2 position, half4 currentColor, float2 size, float time, …args)` | `return half4(color);` |
+| distortionEffect | `[[stitchable]] float2 NAME(float2 position, float2 size, float time, …args)` | `return float2(color.x, 1.0 - color.y) * size;` — the Fragment Output's `color.xy` is the **source uv** (a plain UV → Output graph is the identity) |
+| layerEffect | `[[stitchable]] half4 NAME(float2 position, SwiftUI::Layer layer, float2 size, float time, …args)` | as colorEffect; `layer` is unused until Texture Sample lands (M5) |
+
+`GeneratedShader.source` is the **preview** program: the same function
+*without* `[[stitchable]]`-only dependencies (no `SwiftUI::Layer` parameter,
+no `<SwiftUI/SwiftUI_Metal.h>`), plus a fragment `shaderMain` that computes
+`position = float2(in.uv.x, 1.0 - in.uv.y) * u.resolution` and calls the
+function with values read from `Uniforms`; a distortion preview returns
+`float4(result / u.resolution, 0.0, 1.0)`. `GeneratedShader.exportSource`
+is the file to ship (nil for the fragment target). Switching `settings.target`
+is a topology change.
+
+Export writes `NAME.metal` and `NAME.swift`; the Swift file is a `View`
+extension whose parameters are named after the node title + parameter label
+(camel-cased, de-duplicated), in argument order, calling
+`.colorEffect(ShaderLibrary.NAME(.float2(size), .float(time), .float2(mouse), …))`
+(`distortionEffect`/`layerEffect` take `maxSampleOffset: .zero`).
+
+### 19.5 Library additions (27)
+
+| Category | Definitions |
+|---|---|
+| Input | `input.float2` Vector 2, `input.float3` Vector 3, `input.int` Integer, `input.bool` Boolean, `input.mouse` Mouse (position, from the preview's pointer, bottom-left normalised) |
+| Math | `math.clamp`, `math.step`, `math.maprange` (all generic over float/float2/float3/float4, scalar edges cast with `{type.T}`) |
+| Vector | `vector.dot` (→ float), `vector.normalize`, `vector.rotate2d` (uv, angle, center → `mn_rotate2d`) |
+| SDF | `sdf.circle`, `sdf.box` (`mn_sdBox`), `sdf.union` (`min`), `sdf.subtract` (`max(a, -b)`) — all `float` distances in uv space |
+| Noise | `noise.perlin`, `noise.simplex`, `noise.voronoi` (distance to nearest feature point), `noise.fbm` (`octaves` int param 1…8, on value noise) — all `mn_` stdlib, all remapped to 0…1 |
+| Color | `color.ramp` (stops enum 2/3/4 as a variant; `col0…col3` and `pos1`, `pos2` value params hidden from the node body; endpoints fixed at 0 and 1), `color.hsv2rgb`, `color.rgb2hsv`, `color.invert`, `color.mixcolor` (mode variants mix/add/multiply/screen, alpha from `a`) |
+| Utility | `utility.reroute` (generic pass-through drawn as a **dot**, `NodeStyle.dot`, 24 × 24), `utility.compare` (op variants less/greater/equal/notEqual → `bool`, equal within 1e-4), `utility.switch` (`cond ? a : b`, generic) |
+
+Kept as XYZ (float3) rather than the table's XYZW: `vector.combine`,
+`vector.separate`. Multi-statement bodies that need temporaries go through a
+stdlib function rather than a template, so two instances never collide on a
+local name.
+
+Two `NodeDef` additions: `style: NodeStyle` (`.standard` / `.dot`) and
+`ParamDecl.showsInBody` (default true; false hides the control from the node
+body, the inspector still shows it). `NodeGeometry` counts only body-visible
+params.
+
+Generic resolution gains one rule: if every connected input of a generic is
+the **same** type and that type is in the allowed set, use it exactly (so a
+`color` through a Reroute stays `color`); otherwise widen as before.
+
+### 19.6 Error mapping
+
+`EditorModel.errorNodes` = nodes named by an error-severity diagnostic. Such a
+node draws a 2 pt `red` outline (selection glow still applies) and a red
+`exclamationmark.circle.fill` at the leading edge of its header; the inspector
+already lists the messages. Warnings do not outline.
+
+### 19.7 Testing (adds to §14 and §18.10)
+
+- Golden viewer programs for every viewable socket type (one constant node
+  per type, viewer on it).
+- Golden stitchable export + preview for the §14 small document, all three
+  kinds; the layer export contains `SwiftUI::Layer` and the preview does not.
+- Swift snippet golden with an int and a bool slot (both emitted as `.float`).
+- Real-device smoke: every node, every variant of every `.variants` node,
+  every viewer type, every stitchable kind's preview.
+- `xcrun -sdk macosx metal -c NAME.metal` on an exported file (integration
+  script step; `[[stitchable]]` is not exercised by the runtime compiler).
+- Model: viewer toggle/prune schedules exactly one compile; unchanged source
+  skips the compile; `settings.target` change recompiles.
