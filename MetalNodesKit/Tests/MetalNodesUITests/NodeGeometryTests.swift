@@ -35,4 +35,20 @@ import MetalNodesCore
         #expect(all.maxX == 1290)   // out node at x 1100 + width 190
         #expect(NodeGeometry.bounds(of: [NodeID](), in: doc.root, registry: reg) == nil)
     }
+
+    @Test func visibleNodesCullByViewportWithMargin() {
+        let doc = ShaderDocument.sample()
+        // Viewport 400×300 at zoom 1 looking at the origin: uv(0,0), time(0,160), speed(0,280), sep(220,0), mul(220,200) intersect
+        // the 200 pt-expanded rect; out(1100,200) does not.
+        let t = CanvasTransform(pan: .zero, zoom: 1)
+        let vis = NodeGeometry.visibleNodes(in: doc.root, transform: t, viewport: CGSize(width: 400, height: 300), registry: reg, margin: 200)
+        let ids = Set(vis.map(\.id))
+        let out = doc.root.nodes.values.first { $0.kind == .builtin("output.fragment") }!
+        let uv = doc.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
+        #expect(ids.contains(uv.id))
+        #expect(!ids.contains(out.id))
+        #expect(vis.map(\.id.raw.uuidString) == vis.map(\.id.raw.uuidString).sorted())   // stable order
+        let all = NodeGeometry.visibleNodes(in: doc.root, transform: CanvasTransform(pan: .zero, zoom: 0.15), viewport: CGSize(width: 400, height: 300), registry: reg, margin: 200)
+        #expect(all.count == 11)                                                       // zoomed out, everything fits
+    }
 }

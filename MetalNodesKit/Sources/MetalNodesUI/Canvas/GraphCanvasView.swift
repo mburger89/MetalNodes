@@ -43,6 +43,8 @@ public struct GraphCanvasView: View {
 
     static let contentSize: CGFloat = 4000
     static let wireHitDistance: CGFloat = 6
+    static let lodZoom: CGFloat = 0.4
+    static let cullMargin: CGFloat = 200
 
     public init(model: EditorModel) { self.model = model }
 
@@ -172,11 +174,14 @@ public struct GraphCanvasView: View {
                 }
                 return DraculaTheme.wireDefault.color
             }
-            ForEach(Array(model.document.root.nodes.values), id: \.id) { node in
+            let compact = transform.zoom < Self.lodZoom
+            ForEach(NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
+                                              registry: model.registry, margin: Self.cullMargin), id: \.id) { node in
                 if case .builtin(let defID) = node.kind, let def = model.registry[defID] {
                     NodeView(node: node, def: def, resolved: model.resolvedTypes[node.id],
                              graph: model.document.root,
                              isSelected: model.selection.contains(node.id),
+                             compact: compact,
                              onChange: { model.apply($0) },
                              onSelect: { mode in canvasFocused = true; model.select(node.id, mode: mode) },
                              onDragBegan: { beginNodeDrag() },

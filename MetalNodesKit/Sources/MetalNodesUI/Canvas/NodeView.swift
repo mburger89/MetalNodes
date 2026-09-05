@@ -51,9 +51,25 @@ struct NodeView: View {
     }
 
     private var header: some View {
-        HStack {
-            Text(node.customTitle ?? def.title).font(.caption.weight(.semibold))
+        HStack(spacing: 4) {
+            if compact {
+                VStack(spacing: 2) {
+                    ForEach(def.inputs, id: \.name) { d in
+                        SocketView(type: resolved?.inputTypes[d.name] ?? concrete(d.type), dimmed: dragType != nil)
+                            .socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
+                    }
+                }
+            }
+            Text(node.customTitle ?? def.title).font(.caption.weight(.semibold)).lineLimit(1)
             Spacer()
+            if compact {
+                VStack(spacing: 2) {
+                    ForEach(def.outputs, id: \.name) { d in
+                        SocketView(type: resolved?.outputTypes[d.name] ?? concrete(d.type), dimmed: dragType != nil)
+                            .socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
+                    }
+                }
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
