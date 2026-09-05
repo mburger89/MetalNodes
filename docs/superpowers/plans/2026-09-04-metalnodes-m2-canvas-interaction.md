@@ -3819,3 +3819,5 @@ The report lists, per check, observed / not observed and what the screenshot sho
 ## What the next plan (M3) starts from
 
 `OutputTarget.stitchable` exists in Core but validation rejects it; `EditorViewState.viewer` is ready for the viewer flag; `Diagnostic.node` is populated from compiler lines, so error mapping onto nodes is a view change; `PaletteView`'s "My Functions" section is the M4 hook; `GraphClipboard.definitions/stickies/frames` are carried but empty.
+
+Execution record (2026-09-04): all 16 tasks done on `m2-canvas`, 178 tests, warning-free; rulings, deferred minors and the human-only manual checks are listed in `docs/superpowers/specs/2026-09-04-metalnodes-handoff.md` §9.
