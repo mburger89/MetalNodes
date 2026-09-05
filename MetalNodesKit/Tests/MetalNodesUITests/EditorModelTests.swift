@@ -257,6 +257,31 @@ actor CountingFailingCompiler: ShaderCompiling {
         #expect(m.generatedSource.contains("half4 metalNodesShader("))
     }
 
+    /// The export name is the stitchable function's name, so it is baked into the generated source.
+    @Test func renamingUnderAStitchableTargetRecompiles() async {
+        let c = RecordingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        var s = m.document.settings; s.target = .stitchable(.colorEffect)
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 2)
+
+        s = m.document.settings; s.exportName = "aurora"
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 3)
+        #expect(m.generatedSource.contains("half4 aurora("))
+    }
+
+    @Test func renamingUnderTheFragmentTargetDoesNotRecompile() async {
+        let c = RecordingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        #expect(await c.generations.count == 1)
+        var s = m.document.settings; s.exportName = "aurora"
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 1)
+    }
+
     @Test func copySwiftSnippetWritesPlainTextOnlyForStitchableTargets() throws {
         let pb = MemoryPasteboard()
         let m = EditorModel(document: .sample(), compiler: RecordingCompiler(), pasteboard: pb)

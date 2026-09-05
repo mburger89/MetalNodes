@@ -124,7 +124,11 @@ public final class EditorModel {
         case .setSettings(let s):
             // Spec §18.2: settings are cosmetic unless `fastMath` or `target` flips — both are
             // part of what gets compiled, so they need a rebuild; preview size and time mode do not.
-            recompile = s.fastMath != document.settings.fastMath || s.target != document.settings.target
+            // Under a stitchable target `exportName` also names the generated function, so a rename
+            // changes the source too (spec §19.4).
+            recompile = s.fastMath != document.settings.fastMath
+                || s.target != document.settings.target
+                || (s.target.stitchableKind != nil && s.exportName != document.settings.exportName)
             document.settings = s
         case .restore(let doc):
             document = doc

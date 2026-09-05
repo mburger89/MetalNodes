@@ -19,9 +19,10 @@ public enum DocumentChange: Sendable {
     /// Undo/redo only. Bypasses transactions; never registers an undo of its own.
     case restore(ShaderDocument)
 
-    /// Spec §18.2. `.setSettings` is topology only when `fastMath` flips, and this cannot see the
-    /// previous settings to tell — so it classifies as cosmetic and `EditorModel.perform` compares
-    /// against the current document and schedules the recompile itself.
+    /// Spec §18.2. `.setSettings` is topology only when `fastMath`, `target`, or — under a
+    /// stitchable target — `exportName` changes, and this cannot see the previous settings to tell
+    /// — so it classifies as cosmetic and `EditorModel.perform` compares against the current
+    /// document and schedules the recompile itself.
     public var changeClass: ChangeClass {
         switch self {
         case .moveNodes, .setTitle, .setSettings: .cosmetic
