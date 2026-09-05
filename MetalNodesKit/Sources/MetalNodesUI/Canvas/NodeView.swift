@@ -68,6 +68,10 @@ struct NodeView: View {
         .onTapGesture { onSelect(InputModifiers.selectionMode()) }
     }
 
+    /// The dot's two socket grabs are narrowed from the standard 20 pt: at that size they meet in
+    /// the middle of the 24 pt body and leave only ~4 pt of it free to start a move.
+    static let dotSocketHitSize: CGFloat = 8
+
     /// Reroute: a 24 × 24 dot in its resolved output type's colour, with the input anchored on the
     /// left edge and the output on the right. The `SocketView`s are invisible but present, so the
     /// anchors are still reported and socket drags still start from them exactly as on a standard
@@ -80,7 +84,7 @@ struct NodeView: View {
             Circle().stroke(outlineColor, lineWidth: outlineWidth)
             if let i = def.inputs.first {
                 let inType = resolved?.inputTypes[i.name] ?? concrete(i.type)
-                SocketView(type: inType, dimmed: dragType.map { !DropResolver.compatible($0, inType) } ?? false)
+                SocketView(type: inType, dimmed: dragType.map { !DropResolver.compatible($0, inType) } ?? false, hitSize: Self.dotSocketHitSize)
                     .opacity(0.001)
                     .socketAnchor(SocketRef(node.id, i.name))
                     .gesture(socketDrag(SocketRef(node.id, i.name), isInput: true))
@@ -88,7 +92,7 @@ struct NodeView: View {
                     .offset(x: -SocketView.size / 2)
             }
             if let o = def.outputs.first {
-                SocketView(type: type, dimmed: dragType != nil)
+                SocketView(type: type, dimmed: dragType != nil, hitSize: Self.dotSocketHitSize)
                     .opacity(0.001)
                     .socketAnchor(SocketRef(node.id, o.name))
                     .gesture(socketDrag(SocketRef(node.id, o.name), isInput: false))
@@ -120,13 +124,16 @@ struct NodeView: View {
             }
             Text(node.customTitle ?? def.title).font(.caption.weight(.semibold)).lineLimit(1)
             Spacer()
-            Image(systemName: isViewed ? "circle.circle.fill" : "circle.circle")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(isViewed ? DraculaTheme.viewerFlag.color : DraculaToken.background.color.opacity(0.55))
-                .padding(3)
-                .contentShape(Rectangle())
-                .highPriorityGesture(TapGesture().onEnded { onViewerToggle() })
-                .accessibilityLabel(isViewed ? "Clear viewer" : "View this node")
+            // Nothing to view on an output-only node (spec §19.3): no badge.
+            if !def.outputs.isEmpty {
+                Image(systemName: isViewed ? "circle.circle.fill" : "circle.circle")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(isViewed ? DraculaTheme.viewerFlag.color : DraculaToken.background.color.opacity(0.55))
+                    .padding(3)
+                    .contentShape(Rectangle())
+                    .highPriorityGesture(TapGesture().onEnded { onViewerToggle() })
+                    .accessibilityLabel(isViewed ? "Clear viewer" : "View this node")
+            }
             if compact {
                 VStack(spacing: 2) {
                     ForEach(def.outputs, id: \.name) { d in
