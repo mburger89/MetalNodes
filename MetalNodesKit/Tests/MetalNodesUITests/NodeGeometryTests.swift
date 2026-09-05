@@ -58,4 +58,23 @@ import MetalNodesCore
         let all = NodeGeometry.visibleNodes(in: doc.root, transform: CanvasTransform(pan: .zero, zoom: 0.15), viewport: CGSize(width: 400, height: 300), registry: reg, margin: 200)
         #expect(all.count == 11)                                                       // zoomed out, everything fits
     }
+
+    /// A node dragged past the cull margin must keep rendering: its `NodeView` owns the drag
+    /// gesture, so tearing it down cancels the gesture without `onEnded` and strands the open
+    /// transaction (the canvas passes the in-flight node ids as `keeping`).
+    @Test func visibleNodesKeepInFlightNodesAlive() {
+        let doc = ShaderDocument.sample()
+        let t = CanvasTransform(pan: .zero, zoom: 1)
+        let vp = CGSize(width: 400, height: 300)
+        let out = doc.root.nodes.values.first { $0.kind == .builtin("output.fragment") }!   // culled at this viewport
+        let uv = doc.root.nodes.values.first { $0.kind == .builtin("input.uv") }!           // already visible
+        let plain = NodeGeometry.visibleNodes(in: doc.root, transform: t, viewport: vp, registry: reg, margin: 200)
+        let kept = NodeGeometry.visibleNodes(in: doc.root, transform: t, viewport: vp, registry: reg, margin: 200,
+                                             keeping: [out.id, uv.id])
+        #expect(kept.map(\.id).contains(out.id))
+        #expect(kept.count == plain.count + 1)                                             // uv is not duplicated
+        #expect(kept.map(\.id.raw.uuidString) == kept.map(\.id.raw.uuidString).sorted())   // still stable z-order
+        #expect(NodeGeometry.visibleNodes(in: doc.root, transform: t, viewport: vp, registry: reg, margin: 200,
+                                          keeping: [NodeID()]).count == plain.count)       // unknown id is ignored
+    }
 }

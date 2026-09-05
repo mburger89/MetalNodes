@@ -41,11 +41,18 @@ enum NodeGeometry {
     }
 
     /// Nodes whose frame intersects the viewport (in canvas units) grown by `margin`, in stable UUID order.
+    ///
+    /// `keeping` survives culling regardless: a node whose `NodeView` owns a live gesture (a header
+    /// drag, a socket drag) must not be torn down mid-gesture, or SwiftUI cancels the gesture without
+    /// ever calling `onEnded` and the drag's undo transaction stays open. Kept ids join the same
+    /// UUID order rather than being appended, so z-order does not shift when a node leaves the
+    /// viewport.
     static func visibleNodes(in graph: Graph, transform: CanvasTransform, viewport: CGSize,
-                             registry: NodeRegistry, margin: CGFloat = 200) -> [NodeInstance] {
+                             registry: NodeRegistry, margin: CGFloat = 200,
+                             keeping: Set<NodeID> = []) -> [NodeInstance] {
         let rect = transform.visibleRect(viewport: viewport).insetBy(dx: -margin, dy: -margin)
         return graph.nodes.values
-            .filter { n in frame(for: n, registry: registry)?.intersects(rect) == true }
+            .filter { n in keeping.contains(n.id) || frame(for: n, registry: registry)?.intersects(rect) == true }
             .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
     }
 }

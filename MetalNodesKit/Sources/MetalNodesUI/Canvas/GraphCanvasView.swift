@@ -183,7 +183,8 @@ public struct GraphCanvasView: View {
             let visible = viewport == .zero
                 ? model.document.root.nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
                 : NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
-                                            registry: model.registry, margin: Self.cullMargin)
+                                            registry: model.registry, margin: Self.cullMargin,
+                                            keeping: nodesInFlight)
             ForEach(visible, id: \.id) { node in
                 if case .builtin(let defID) = node.kind, let def = model.registry[defID] {
                     NodeView(node: node, def: def, resolved: model.resolvedTypes[node.id],
@@ -212,6 +213,14 @@ public struct GraphCanvasView: View {
             }
         }
         .coordinateSpace(.named("canvas"))
+    }
+
+    /// Nodes whose `NodeView` is running a gesture right now: the dragged selection and, for a
+    /// socket drag, the wire's source node. Culling must not remove them (see `visibleNodes`).
+    private var nodesInFlight: Set<NodeID> {
+        var ids = Set(dragOrigins.keys)
+        if let w = pendingWire { ids.insert(w.source.node) }
+        return ids
     }
 
     private var marqueeOverlay: some View {
