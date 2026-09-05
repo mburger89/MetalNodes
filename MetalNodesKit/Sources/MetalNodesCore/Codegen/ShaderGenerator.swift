@@ -85,9 +85,42 @@ public enum ShaderGenerator {
                                fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: viewer)
     }
 
-    /// Stub until T4: a stitchable target still previews as a fragment program.
     private static func assembleStitchable(_ doc: ShaderDocument, kind: StitchableKind, order: [NodeID], terminal: NodeID,
-                                            resolved: [NodeID: ResolvedNode], registry: NodeRegistry) -> GeneratedShader {
-        assembleFragment(doc, order: order, terminal: terminal, viewer: nil, resolved: resolved, registry: registry)
+                                           resolved: [NodeID: ResolvedNode], registry: NodeRegistry) -> GeneratedShader {
+        let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
+        let emitted = Emitter.emit(order: order, graph: doc.root, registry: registry, resolved: resolved, env: .stitchableFunction)
+        let args = StitchableCodegen.arguments(layout: emitted.layout)
+        let color = emitted.inputExpressions[terminal]?["color"] ?? "float4(0.0, 0.0, 0.0, 1.0)"
+        let stdlib = MSLStdlib.resolve(emitted.requiredStdlib)
+
+        func function(into b: inout SourceBuilder, forExport: Bool) {
+            b.add(StitchableCodegen.signature(kind: kind, name: name, args: args, forExport: forExport) + " {")
+            b.add("    float2 uv = float2(position.x / size.x, 1.0 - position.y / size.y);")
+            for (i, line) in emitted.bodyLines.enumerated() where emitted.lineOwners[i] != terminal {
+                b.add("    " + line, owner: emitted.lineOwners[i])
+            }
+            b.add("    " + StitchableCodegen.returnStatement(kind: kind, color: color), owner: terminal)
+            b.add("}")
+        }
+
+        var export = SourceBuilder()
+        export.add("#include <metal_stdlib>" + (kind == .layerEffect ? "\n#include <SwiftUI/SwiftUI_Metal.h>" : "") + "\nusing namespace metal;\n")
+        for f in stdlib { export.add(f.source + "\n") }
+        function(into: &export, forExport: true)
+
+        var preview = SourceBuilder()
+        preview.add("#include <metal_stdlib>\nusing namespace metal;\n")
+        preview.add(emitted.layout.mslStruct + "\n")
+        preview.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
+        for f in stdlib { preview.add(f.source + "\n") }
+        function(into: &preview, forExport: false)
+        preview.add("")
+        preview.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
+        for l in StitchableCodegen.previewBody(kind: kind, name: name, args: args) { preview.add("    " + l) }
+        preview.add("}")
+
+        return GeneratedShader(source: preview.text, layout: emitted.layout, lineMap: preview.map, resolved: resolved,
+                               fragmentFunctionName: fragmentFunctionName, target: .stitchable(kind),
+                               viewer: nil, exportSource: export.text, functionName: name)
     }
 }
