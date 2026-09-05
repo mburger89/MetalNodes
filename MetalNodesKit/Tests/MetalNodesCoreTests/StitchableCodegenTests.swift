@@ -30,12 +30,14 @@ import Foundation
 
     @Test func argumentsAreMouseThenSlotsInLayoutOrderWithScalarsAsFloat() {
         let a = NodeID(), b = NodeID()
-        let layout = UniformLayoutBuilder.build([(ParamPath(node: a, param: "i"), .int), (ParamPath(node: b, param: "v"), .float3), (ParamPath(node: a, param: "f"), .bool)])
+        let layout = UniformLayoutBuilder.build([(ParamPath(node: a, param: "i"), .int), (ParamPath(node: b, param: "v"), .float3), (ParamPath(node: a, param: "f"), .bool), (ParamPath(node: b, param: "c"), .color)])
         let args = StitchableCodegen.arguments(layout: layout)
-        #expect(args.map(\.name) == ["mouse", "p0", "p1", "p2"])       // float3 sorts first (alignment 16)
-        #expect(args.map(\.mslType) == ["float2", "float3", "float", "float"])
+        #expect(args.map(\.name) == ["mouse", "p0", "p1", "p2", "p3"])  // float3/color sort first (alignment 16)
+        // `.color(_:)` arrives as a premultiplied half4; int/bool have no Shader.Argument and travel as float.
+        #expect(args.map(\.mslType) == ["float2", "float3", "half4", "float", "float"])
         #expect(args[0].field == nil)
         #expect(args[1].field?.type == .float3)
+        #expect(args[2].field?.type == .color)
     }
 
     @Test func colorEffectExportGolden() throws {
@@ -96,8 +98,11 @@ import Foundation
         let out = NodeInstance(kind: .builtin("output.fragment"))
         var d = ShaderDocument(); d.root.nodes[out.id] = out
         let s = try ShaderGenerator.generate(d, target: .stitchable(.colorEffect))
-        #expect(s.exportSource!.contains("float4 p0)"))
-        #expect(s.exportSource!.contains("return half4(p0);"))
+        // The Output's `color` input is a `.color` slot, so it arrives as SwiftUI's premultiplied half4.
+        #expect(s.exportSource!.contains("half4 p0)"))
+        #expect(s.exportSource!.contains("return half4(float4(p0));"))
+        // The preview keeps it in the float4 `Uniforms` slot and narrows at the call.
+        #expect(s.source.contains("half4(u.p0)"))
     }
 
     @Test func lineMapCoversTheStitchableBody() throws {

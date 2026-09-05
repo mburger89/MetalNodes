@@ -22,6 +22,9 @@ import Testing
         #expect(env.uniform(field("p0", .float)) == "p0")
         #expect(env.uniform(field("p3", .int)) == "int(p3)")
         #expect(env.uniform(field("p4", .bool)) == "bool(p4)")
+        // SwiftUI passes `.color(_:)` as a premultiplied half4, so a colour argument is widened on read.
+        #expect(env.uniform(field("p5", .color)) == "float4(p5)")
+        #expect(env.uniform(field("p6", .float4)) == "p6")
         #expect(env.sys["uv"] == "uv")
         #expect(env.sys["resolution"] == "size")
         #expect(env.sys["mouse"] == "mouse")

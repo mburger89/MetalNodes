@@ -20,12 +20,14 @@ public enum StitchableCodegen {
         public let field: UniformField?
     }
 
-    /// `float2 mouse`, then every user slot in layout order; int/bool travel as `float` (spec §19.2).
+    /// `float2 mouse`, then every user slot in layout order; int/bool travel as `float` and
+    /// `color` arrives as the premultiplied `half4` SwiftUI's `.color(_:)` passes (spec §19.2, §19.4).
     public static func arguments(layout: UniformLayout) -> [Argument] {
         var out = [Argument(name: "mouse", mslType: "float2", field: nil)]
         for f in layout.fields where f.path != nil {
             let t: String = switch f.type {
             case .int, .bool: "float"
+            case .color: "half4"
             default: f.type.mslName
             }
             out.append(Argument(name: f.name, mslType: t, field: f))
@@ -54,7 +56,12 @@ public enum StitchableCodegen {
 
     /// Body of the preview's `shaderMain`, calling the function with values read from `Uniforms`.
     static func previewBody(kind: StitchableKind, name: String, args: [Argument]) -> [String] {
-        let call = args.map { a in a.field == nil ? "u.mouse" : "u.\(a.name)" }.joined(separator: ", ")
+        // MSL has no implicit conversion between vector types, so the `float4` a colour slot occupies
+        // in `Uniforms` needs an explicit narrowing to the `half4` the function declares.
+        let call = args.map { a in
+            guard let f = a.field else { return "u.mouse" }
+            return f.type == .color ? "half4(u.\(a.name))" : "u.\(a.name)"
+        }.joined(separator: ", ")
         var lines = ["float2 position = float2(in.uv.x, 1.0 - in.uv.y) * u.resolution;"]
         switch kind {
         case .colorEffect:

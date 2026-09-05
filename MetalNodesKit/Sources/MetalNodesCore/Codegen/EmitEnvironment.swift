@@ -19,12 +19,14 @@ public struct EmitEnvironment: Sendable {
         sys: ["uv": "in.uv", "time": "u.time", "resolution": "u.resolution", "mouse": "u.mouse"])
 
     /// Inside a stitchable function: uniforms are arguments named after their slots; SwiftUI has
-    /// no int/bool `Shader.Argument`, so those arrive as `float` and are cast on read.
+    /// no int/bool `Shader.Argument`, so those arrive as `float` and are cast on read, and
+    /// `.color(_:)` arrives as a premultiplied `half4` that is widened to `float4`.
     public static let stitchableFunction = EmitEnvironment(
         uniform: { f in
             switch f.type {
             case .bool: "bool(\(f.name))"
             case .int: "int(\(f.name))"
+            case .color: "float4(\(f.name))"
             default: f.name
             }
         },
