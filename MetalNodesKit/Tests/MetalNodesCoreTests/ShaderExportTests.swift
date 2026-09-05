@@ -70,6 +70,108 @@ import Foundation
         #expect(snippet == expected)
     }
 
+    /// `Shader.Argument` has no vector-taking overload — vectors must be spelled component-wise.
+    @Test func swiftSnippetSpellsVectorSlotsByComponent() throws {
+        var d = ShaderDocument()
+        let f2 = NodeInstance(kind: .builtin("input.float2"))
+        let f3 = NodeInstance(kind: .builtin("input.float3"))
+        let s2 = NodeInstance(kind: .builtin("vector.separate"))
+        let s3 = NodeInstance(kind: .builtin("vector.separate"))
+        let m = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("add")])
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [f2, f3, s2, s3, m, out] { d.root.nodes[n.id] = n }
+        d.root.connect(SocketRef(f2.id, "out"), to: SocketRef(s2.id, "v"))
+        d.root.connect(SocketRef(f3.id, "out"), to: SocketRef(s3.id, "v"))
+        d.root.connect(SocketRef(s2.id, "x"), to: SocketRef(m.id, "a"))
+        d.root.connect(SocketRef(s3.id, "x"), to: SocketRef(m.id, "b"))
+        d.root.connect(SocketRef(m.id, "out"), to: SocketRef(out.id, "color"))
+        d.settings.target = .stitchable(.colorEffect); d.settings.exportName = "vec"
+        let s = try ShaderGenerator.generate(d, target: d.settings.target)
+        let snippet = ShaderExport.swiftSnippet(for: s, kind: .colorEffect, document: d, registry: .builtin)
+        #expect(snippet.contains("vector3Value: SIMD3<Float>"))
+        #expect(snippet.contains("vector2Value: SIMD2<Float>"))
+        // Layout order is alignment-descending, so float3 (16) precedes float2 (8): the float3 line
+        // carries the comma and the float2 line is last.
+        #expect(snippet.contains("            .float3(vector3Value.x, vector3Value.y, vector3Value.z),    // Vector 3 \u{00B7} Value\n"))
+        #expect(snippet.contains("            .float2(vector2Value.x, vector2Value.y)    // Vector 2 \u{00B7} Value\n"))
+    }
+
+    /// The snippet must type-check against the real `Shader.Argument` overloads.
+    @Test func generatedSwiftTypechecksWhenSwiftcIsAvailable() throws {
+        guard xcrunSucceeds(["swiftc", "--version"]) else { return }
+        let sdk = capture(["--show-sdk-path", "--sdk", "macosx"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sdk, !sdk.isEmpty else { return }
+
+        var d = ShaderDocument()
+        let f = NodeInstance(kind: .builtin("input.float"))
+        let i = NodeInstance(kind: .builtin("input.int"))
+        let b = NodeInstance(kind: .builtin("input.bool"))
+        let c = NodeInstance(kind: .builtin("input.color"))
+        let f2 = NodeInstance(kind: .builtin("input.float2"))
+        let f3 = NodeInstance(kind: .builtin("input.float3"))
+        let m = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("add")])
+        let s2 = NodeInstance(kind: .builtin("vector.separate"))
+        let s3 = NodeInstance(kind: .builtin("vector.separate"))
+        let comb = NodeInstance(kind: .builtin("vector.combine"))
+        let sw = NodeInstance(kind: .builtin("utility.switch"))
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [f, i, b, c, f2, f3, m, s2, s3, comb, sw, out] { d.root.nodes[n.id] = n }
+        d.root.connect(SocketRef(f.id, "out"), to: SocketRef(m.id, "a"))
+        d.root.connect(SocketRef(i.id, "out"), to: SocketRef(m.id, "b"))
+        d.root.connect(SocketRef(f2.id, "out"), to: SocketRef(s2.id, "v"))
+        d.root.connect(SocketRef(f3.id, "out"), to: SocketRef(s3.id, "v"))
+        d.root.connect(SocketRef(m.id, "out"), to: SocketRef(comb.id, "x"))
+        d.root.connect(SocketRef(s2.id, "x"), to: SocketRef(comb.id, "y"))
+        d.root.connect(SocketRef(s3.id, "x"), to: SocketRef(comb.id, "z"))
+        d.root.connect(SocketRef(b.id, "out"), to: SocketRef(sw.id, "cond"))
+        d.root.connect(SocketRef(c.id, "out"), to: SocketRef(sw.id, "a"))
+        d.root.connect(SocketRef(comb.id, "out"), to: SocketRef(sw.id, "b"))
+        d.root.connect(SocketRef(sw.id, "out"), to: SocketRef(out.id, "color"))
+        d.settings.target = .stitchable(.colorEffect); d.settings.exportName = "everySlot"
+
+        let s = try ShaderGenerator.generate(d, target: d.settings.target)
+        let types = Set(StitchableCodegen.arguments(layout: s.layout).compactMap { $0.field?.type })
+        #expect(types == [.float, .float2, .float3, .color, .int, .bool])
+        let snippet = ShaderExport.swiftSnippet(for: s, kind: .colorEffect, document: d, registry: .builtin)
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-swift-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("everySlot.swift")
+        try snippet.write(to: url, atomically: true, encoding: .utf8)
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = ["swiftc", "-typecheck", "-sdk", sdk, "-target", "arm64-apple-macos26.0", url.path]
+        let err = Pipe(); p.standardError = err; p.standardOutput = FileHandle.nullDevice
+        try p.run()
+        let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        #expect(p.terminationStatus == 0, "\(log)")
+    }
+
+    private func xcrunSucceeds(_ args: [String]) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = args
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    private func capture(_ args: [String]) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = args
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     @Test func distortionAndLayerSnippetsPassMaxSampleOffset() throws {
         let d = doc(.distortionEffect)
         let s = try ShaderGenerator.generate(d, target: d.settings.target)

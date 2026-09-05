@@ -58,9 +58,11 @@ public enum ShaderExport {
             let comment = "    // " + commentLabel(for: f, document: document, registry: registry)
             switch f.type {
             case .float: params.append("\(n): Float"); calls.append((".float(\(n))", comment))
-            case .float2: params.append("\(n): SIMD2<Float>"); calls.append((".float2(\(n))", comment))
-            case .float3: params.append("\(n): SIMD3<Float>"); calls.append((".float3(\(n))", comment))
-            case .float4: params.append("\(n): SIMD4<Float>"); calls.append((".float4(\(n))", comment))
+            // `Shader.Argument` has no vector-taking overload: `.floatN` takes N scalar components
+            // (the only `.float2(_:)` overloads take CGPoint/CGSize), so spell them out.
+            case .float2: params.append("\(n): SIMD2<Float>"); calls.append((".float2(\(n).x, \(n).y)", comment))
+            case .float3: params.append("\(n): SIMD3<Float>"); calls.append((".float3(\(n).x, \(n).y, \(n).z)", comment))
+            case .float4: params.append("\(n): SIMD4<Float>"); calls.append((".float4(\(n).x, \(n).y, \(n).z, \(n).w)", comment))
             case .color: params.append("\(n): Color"); calls.append((".color(\(n))", comment))
             case .int: params.append("\(n): Int"); calls.append((".float(Float(\(n)))", comment))
             case .bool: params.append("\(n): Bool"); calls.append((".float(\(n) ? 1 : 0)", comment))
