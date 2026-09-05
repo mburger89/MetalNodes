@@ -2570,3 +2570,5 @@ grep -rln 'import AppKit' MetalNodesKit/Sources --include='*.swift' | xargs grep
 ## What the next plan (M4: groups) starts from
 
 `GroupDefinition`/`GraphPath`/`editingStack` exist; `EmitEnvironment` is where a group function's `constant Uniforms &u` parameter and per-instance slot naming (`ParamPath.instancePath`) plug in; `PaletteView`'s "My Functions" section is the hook; `NodeStyle` can grow a `.group` header style; `NodeKind.group/groupInput/groupOutput` are refused by `GraphValidator` today — that guard is the first thing M4 removes. Deferred from M3: Texture Sample and `layerEffect`'s `layer.sample` (M5 with assets), `UTExportedTypeDeclarations` for the two pasteboard UTIs (needs an Info.plist), ⌘Z inside a focused text field, a numeric readout for int viewers.
+
+Execution record (2026-09-05): all 14 tasks done on `m3-library-viewer`, 247 tests, warning-free; rulings, deferred minors and the human-only checks are in `docs/superpowers/specs/2026-09-04-metalnodes-handoff.md` §10.

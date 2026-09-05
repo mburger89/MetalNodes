@@ -35,11 +35,13 @@ The checklist stands at:
     development on branch m0-m1-foundation; merged to main as PR #1 (1085254).
 11. M2 plan ..................................... DONE — docs/superpowers/plans/
     2026-09-04-metalnodes-m2-canvas-interaction.md (16 tasks), approved by the user.
-12. Execute M2 .................................. DONE — 34 commits on branch m2-canvas
-    (in place); 178 tests green, warning-free; final whole-branch review + one fix
-    wave + scoped re-review clean. See §9 for rulings and what M3 starts from.
-13. Next ........................................ finish the branch (user previously chose
-    push + PR), then plan M3 (SwiftUI [[stitchable]] target + the §9 carry-overs).
+12. Execute M2 .................................. DONE — PR #2 (m2-canvas → main), open.
+13. M3 plan + execution ......................... DONE — docs/superpowers/plans/
+    2026-09-04-metalnodes-m3-library-viewer-stitchable.md (14 tasks) on branch
+    m3-library-viewer (off m2-canvas): 22 commits, 247 tests, warning-free; final review
+    + one fix wave + re-review clean. See §10.
+14. Next ........................................ finish the M3 branch (PR on top of #2, or
+    rebase onto main once #2 merges), then plan M4 (groups).
 ```
 
 **Terminal state is path-bound.** After the user approves, the *only* skill to
@@ -237,3 +239,21 @@ section 1 in chat and have the full file in their editor.
 **Manual checks a human still needs to do once** (the automation tool cannot deliver these events): palette drag-in, ⌥-drag duplicate, ⌘-scroll zoom direction, Escape in the chooser / to cancel a wire, pinch zoom.
 
 **What M3 starts from** (in addition to the plan's own tail note): paste at the cursor (⌘V at hover point); skip the recompile on undo when generated source is unchanged (`.restore` is topology per spec table); new nodes render behind neighbours (z-order by UUID — sort selected/newest last); Undo menu title without the action name; ⌘Z inside a text field never reaches the field editor (menu item disabled while the canvas is unfocused); `UTExportedTypeDeclarations` missing for `com.maxburger.metalnodes.nodedef` / `.graph`; `GraphClipboard` decoding not tolerant of missing keys; inspector/canvas `onEditing` asymmetry; `socketUnderPress` classifies input vs output by name; `Graph.remove(node:)` / `GraphClipboard.size` unused in product code.
+
+---
+
+## 10. M3 record (library, viewer, stitchable target, error mapping; branch `m3-library-viewer`)
+
+**Rulings made during execution:**
+
+- Task 1: reserved(_:) body kept unchanged (brief showed only new members) — accepted.
+- Task 6: PaletteSearchTests.idMatchesSurfaceLast re-asserted with the exact new order (new titles change the result) — accepted; `#expect(_, "\(def.id)")` comment fix accepted.
+- Task 7: PaletteSearchTests category-order assertion now includes .sdf (true consequence) — accepted.
+- Task 11: two-node cycle used for the hand check (DropResolver refuses self-connections) — accepted. minors (deferred): dot drag strip is ~4 pt between the two 20 pt socket hit areas (shrink socket hit size for .dot in a follow-up).
+- Task 12: two-file export uses an NSOpenPanel folder picker (powerbox grant is per selected URL; a sibling write beside an NSSavePanel result fails under the sandbox) — accepted; minor (deferred): folder path overwrites silently; ExportPanel
+- 51:Final review (opus, 8a9f584..c2bb568): 1 Critical — Swift snippet uses `.float2(SIMD2)` etc. which Shader.Argument lacks (only component overloads / CGPoint / CGSize); 3 Important — `.color` slots declared float4 but SwiftUI passes `.col
+- Final review: 1 Critical (the Swift snippet spelled vector `Shader.Argument`s with overloads that do not exist — now component-wise `.float2(v.x, v.y)`, with a golden and a `swiftc -typecheck` toolchain-gated test) and 3 Important (colour slots are `half4` parameters read as `float4(name)`; the Reroute dot's socket hit areas shrink to 8 pt so its centre drags; folder export confirms before overwriting) fixed in one wave, plus reserved-word export names, export name committed before Copy/Export, `exportName` regenerating under a stitchable target, an export re-entrancy guard, and no ◉ on output-less nodes. MSL has no implicit `float4`→`half4` conversion: the preview wrapper narrows explicitly.
+
+**Not verifiable on this Mac** (needs a human): the exported `.metal` has never been compiled by the real Metal compiler — the Metal toolchain is not installed (`xcodebuild -downloadComponent MetalToolchain`); the `ShaderExportTests` toolchain-gated test then runs automatically. Also: dragging a Reroute dot (fixed by geometry, not observed), and dropping an export into a real SwiftUI view with a colour + vector uniform.
+
+**What M4 (groups) starts from** — deferred from the M3 review: the compile-skip path keeps generation diagnostics after a failed compile until the source changes; Export is a silent no-op on iPad; nodes not upstream of the terminal have no resolved types (a dangling Reroute shows the `float` colour); the layer-effect help text should say the layer is not sampled yet; the Swift snippet should mention adding the `.metal` to the app target; `drawOrder` allocates `uuidString`s per comparison; pbxproj key order; unwired generic inputs resolved to `color` through a sibling default to `(0,0,0,0)`; `ExportPanelMac` untested (AppKit); ⌘Z inside a text field, `UTExportedTypeDeclarations`, `layer.sample`/Texture Sample (M5) carry over from M2.
