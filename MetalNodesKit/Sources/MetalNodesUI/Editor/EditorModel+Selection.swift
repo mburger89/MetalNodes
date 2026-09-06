@@ -24,7 +24,10 @@ extension EditorModel {
         pruneSelection()
     }
 
-    public func selectAll() { select(nodes: Set(document.root.nodes.keys), mode: .replace) }
+    /// The selection minus pseudo-nodes — what copy, cut, delete and group may act on (spec §20.8).
+    public var editableSelection: Set<NodeID> { selection.filter { shape(of: $0)?.isPseudo != true } }
+
+    public func selectAll() { select(nodes: Set(graph.nodes.keys), mode: .replace) }
 
     public func clearSelection() {
         selection = []
@@ -38,8 +41,8 @@ extension EditorModel {
             apply(.disconnect(wire))
             return
         }
-        guard !selection.isEmpty else { return }
-        let ids = selection
+        let ids = editableSelection
+        guard !ids.isEmpty else { return }
         selection = []
         apply(.removeNodes(ids))
     }
@@ -49,7 +52,7 @@ extension EditorModel {
         guard !selection.isEmpty else { return }
         var moves: [NodeID: CGPoint] = [:]
         for id in selection {
-            guard let p = document.root.nodes[id]?.position else { continue }
+            guard let p = graph.nodes[id]?.position else { continue }
             moves[id] = CGPoint(x: p.x + delta.width, y: p.y + delta.height)
         }
         beginTransaction("Move")
@@ -58,19 +61,19 @@ extension EditorModel {
     }
 
     public func frame(of id: NodeID) -> CGRect? {
-        guard let n = document.root.nodes[id] else { return nil }
+        guard let n = graph.nodes[id] else { return nil }
         return NodeGeometry.frame(for: n, registry: registry)
     }
 
-    public var selectionBounds: CGRect? { NodeGeometry.bounds(of: selection, in: document.root, registry: registry) }
-    public var contentBounds: CGRect? { NodeGeometry.bounds(of: document.root.nodes.keys, in: document.root, registry: registry) }
+    public var selectionBounds: CGRect? { NodeGeometry.bounds(of: selection, in: graph, registry: registry) }
+    public var contentBounds: CGRect? { NodeGeometry.bounds(of: graph.nodes.keys, in: graph, registry: registry) }
 
     /// Topmost node under a canvas point. "Topmost" is the last in the canvas's draw order —
     /// the selection above everything else, then UUID order — so hit-testing agrees with what
     /// is actually drawn on top (spec §19.6).
     public func node(at point: CGPoint) -> NodeID? {
         let onTop = selection
-        return document.root.nodes.values
+        return graph.nodes.values
             .sorted { NodeGeometry.drawOrder($0, onTop: onTop) < NodeGeometry.drawOrder($1, onTop: onTop) }
             .last { NodeGeometry.frame(for: $0, registry: registry)?.contains(point) == true }?
             .id

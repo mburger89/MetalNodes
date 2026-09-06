@@ -3,13 +3,15 @@ import CoreGraphics
 import MetalNodesCore
 
 extension EditorModel {
-    public var canCopy: Bool { !selection.isEmpty }
+    public var canCopy: Bool { !editableSelection.isEmpty }
     public var canPaste: Bool { pasteboard.read(type: Self.pasteboardType) != nil }
 
-    /// The selection encoded as the `pasteboardType` payload, or nil when nothing is selected.
+    /// The selection encoded as the `pasteboardType` payload — with the definitions it references
+    /// (spec §20.7) — or nil when nothing copyable is selected.
     public func clipboardData() -> Data? {
-        guard canCopy else { return nil }
-        return try? JSONEncoder().encode(GraphClipboard.extract(selection, from: document.root))
+        let clip = GraphClipboard.extract(selection, from: graph, document: document)
+        guard !clip.nodes.isEmpty else { return nil }
+        return try? JSONEncoder().encode(clip)
     }
 
     public func copySelection() {
@@ -36,7 +38,7 @@ extension EditorModel {
     @discardableResult
     public func duplicateSelection(offset: CGSize = CGSize(width: 24, height: 24)) -> Set<NodeID> {
         guard canCopy else { return [] }
-        let clip = GraphClipboard.extract(selection, from: document.root)
+        let clip = GraphClipboard.extract(selection, from: graph, document: document)
         let origin = CGPoint(x: clip.sourceOrigin.x + offset.width, y: clip.sourceOrigin.y + offset.height)
         return insert(clip, at: origin, undoName: "Duplicate")
     }
@@ -45,7 +47,7 @@ extension EditorModel {
         let (nodes, edges) = clip.materialize(at: origin)
         let ids = Set(nodes.map(\.id))
         beginTransaction(undoName)
-        apply(.insert(nodes: nodes, edges: edges))
+        apply(.insert(nodes: nodes, edges: edges, definitions: clip.definitions))
         endTransaction()
         select(nodes: ids, mode: .replace)
         return ids

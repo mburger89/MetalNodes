@@ -12,10 +12,10 @@ extension EditorModel {
 
     public func toggleViewer(_ ref: SocketRef) { setViewer(viewState.viewer == ref ? nil : ref) }
 
-    /// The node's first declared output, the socket the header badge and ⌘⇧V act on.
+    /// The node's first declared output, the socket the header badge and ⌘⇧V act on. Resolves
+    /// document-wide, so it also works on a node inside a definition (spec §20.3).
     public func firstOutput(of id: NodeID) -> SocketRef? {
-        guard let n = document.root.nodes[id], case .builtin(let defID) = n.kind,
-              let first = registry[defID]?.outputs.first else { return nil }
+        guard let first = shape(of: id)?.outputs.first else { return nil }
         return SocketRef(id, first.name)
     }
 
@@ -29,11 +29,22 @@ extension EditorModel {
         return resolvedTypes[v.node]?.outputTypes[v.socket]
     }
 
-    /// Clears a viewer whose socket no longer exists. Returns true if it did.
+    /// Clears a viewer the editor can no longer generate. Returns true if it did.
+    ///
+    /// Two ways to lose one: the socket is gone from the document, or — for a viewer inside a
+    /// definition — the editor no longer has a route to it. Codegen reaches such a node only
+    /// through the editing stack or the definition opened from the palette (spec §20.5), so once
+    /// the active path leaves that definition (typically because an instance on the stack was
+    /// deleted, which `pruneEditingStack` truncates) the viewer has nothing to render through.
     @discardableResult
     func pruneViewer() -> Bool {
-        guard let v = viewState.viewer, !GraphValidator.isValidViewer(v, in: document.root, registry: registry) else { return false }
-        viewState.viewer = nil
-        return true
+        pruneEditingStack()
+        guard let v = viewState.viewer else { return false }
+        guard let location = document.node(v.node), GraphValidator.isValidViewer(v, in: document, registry: registry),
+              location.path == .root || location.path == activePath else {
+            viewState.viewer = nil
+            return true
+        }
+        return false
     }
 }

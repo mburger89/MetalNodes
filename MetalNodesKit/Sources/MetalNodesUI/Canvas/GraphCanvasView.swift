@@ -170,8 +170,10 @@ public struct GraphCanvasView: View {
             let rect: CGRect?
             switch req {
             case .place(let defID):
-                let centre = transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2))
-                model.addNode(defID: defID, at: CGPoint(x: centre.x - NodeGeometry.width / 2, y: centre.y - NodeGeometry.headerHeight / 2))
+                model.addNode(defID: defID, at: placementPoint)
+                return
+            case .placeGroup(let id):
+                model.addInstance(of: id, at: placementPoint)
                 return
             case .fitAll: rect = model.contentBounds
             case .fitSelection: rect = model.selectionBounds ?? model.contentBounds
@@ -180,6 +182,13 @@ public struct GraphCanvasView: View {
             transform = CanvasTransform.fitting(r, in: viewport, padding: 40)
             model.viewState.cameras[.root] = transform.camera
         }
+    }
+
+    /// Where a palette double-click drops a node: the viewport's centre, offset so the node's
+    /// header — not its top-left corner — lands there.
+    private var placementPoint: CGPoint {
+        let centre = transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2))
+        return CGPoint(x: centre.x - NodeGeometry.width / 2, y: centre.y - NodeGeometry.headerHeight / 2)
     }
 
     // MARK: Content
