@@ -5,7 +5,8 @@ import Testing
     let reg = NodeRegistry.builtin
 
     private func errors(_ g: Graph, target: OutputTarget = .fragment) -> [String] {
-        GraphValidator.validate(g, registry: reg, target: target).filter { $0.severity == .error }.map(\.message)
+        var doc = ShaderDocument(); doc.root = g
+        return GraphValidator.validate(document: doc, registry: reg, target: target).filter { $0.severity == .error }.map(\.message)
     }
 
     @Test func sampleDocumentIsValid() {
@@ -22,7 +23,8 @@ import Testing
         var g = Graph()
         let a = NodeInstance(kind: .builtin("output.fragment")), b = NodeInstance(kind: .builtin("output.fragment"))
         g.nodes[a.id] = a; g.nodes[b.id] = b
-        let d = GraphValidator.validate(g, registry: reg, target: .fragment)
+        var doc = ShaderDocument(); doc.root = g
+        let d = GraphValidator.validate(document: doc, registry: reg, target: .fragment)
         #expect(d.filter { $0.message.contains("only one") }.count == 1)
     }
 
@@ -31,13 +33,6 @@ import Testing
         g.nodes[NodeID()] = NodeInstance(kind: .builtin("nope.nope"))
         g.nodes[NodeID()] = NodeInstance(kind: .builtin("output.fragment"))
         #expect(errors(g).contains { $0.contains("nope.nope") })
-    }
-
-    @Test func groupsAreNotYetSupported() {
-        var g = Graph()
-        g.nodes[NodeID()] = NodeInstance(kind: .group(GroupID()))
-        g.nodes[NodeID()] = NodeInstance(kind: .builtin("output.fragment"))
-        #expect(errors(g).contains { $0.contains("group") })
     }
 
     @Test func danglingWireEndpoints() {
@@ -60,7 +55,8 @@ import Testing
         g.connect(SocketRef(a.id, "out"), to: SocketRef(b.id, "a"))
         g.connect(SocketRef(b.id, "out"), to: SocketRef(a.id, "a"))
         g.connect(SocketRef(b.id, "out"), to: SocketRef(out.id, "color"))
-        let d = GraphValidator.validate(g, registry: reg, target: .fragment)
+        var doc = ShaderDocument(); doc.root = g
+        let d = GraphValidator.validate(document: doc, registry: reg, target: .fragment)
         #expect(d.contains { $0.message.contains("cycle") && $0.node != nil })
     }
 
@@ -74,7 +70,8 @@ import Testing
         let n = NodeInstance(kind: .builtin("t.req")), out = NodeInstance(kind: .builtin("output.fragment"))
         g.nodes[n.id] = n; g.nodes[out.id] = out
         g.connect(SocketRef(n.id, "out"), to: SocketRef(out.id, "color"))
-        let d = GraphValidator.validate(g, registry: r, target: .fragment)
+        var doc = ShaderDocument(); doc.root = g
+        let d = GraphValidator.validate(document: doc, registry: r, target: .fragment)
         #expect(d.contains { $0.node == n.id && $0.socket == "x" })
     }
 
@@ -88,7 +85,8 @@ import Testing
         let out = NodeInstance(kind: .builtin("output.fragment"))
         g.nodes[m.id] = m; g.nodes[out.id] = out
         g.connect(SocketRef(m.id, "out"), to: SocketRef(out.id, "color"))
-        let d = GraphValidator.validate(g, registry: reg, target: .fragment)
+        var doc = ShaderDocument(); doc.root = g
+        let d = GraphValidator.validate(document: doc, registry: reg, target: .fragment)
         #expect(d.contains { $0.severity == .error && $0.node == m.id && $0.socket == "op" })
     }
 }

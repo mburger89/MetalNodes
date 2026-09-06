@@ -8,13 +8,13 @@ public struct ResolvedNode: Sendable, Hashable {
 }
 
 public enum TypeResolver {
-    public static func resolve(_ graph: Graph, registry: NodeRegistry, order: [NodeID])
+    public static func resolve(_ graph: Graph, path: GraphPath, document doc: ShaderDocument, registry: NodeRegistry, order: [NodeID])
         -> (nodes: [NodeID: ResolvedNode], diagnostics: [Diagnostic]) {
         var resolved: [NodeID: ResolvedNode] = [:]
         var diags: [Diagnostic] = []
 
         for id in order {
-            guard let inst = graph.nodes[id], case .builtin(let defID) = inst.kind, let def = registry[defID] else { continue }
+            guard let inst = graph.nodes[id], let def = doc.shape(of: inst, in: path, registry: registry) else { continue }
 
             // 1. Resolve each generic from the connected inputs that use it.
             var generics: [String: SocketType] = [:]
@@ -58,5 +58,11 @@ public enum TypeResolver {
             }
         }
         return (resolved, diags)
+    }
+
+    /// Root-only convenience for existing callers.
+    public static func resolve(_ graph: Graph, registry: NodeRegistry, order: [NodeID]) -> (nodes: [NodeID: ResolvedNode], diagnostics: [Diagnostic]) {
+        var d = ShaderDocument(); d.root = graph
+        return resolve(graph, path: .root, document: d, registry: registry, order: order)
     }
 }

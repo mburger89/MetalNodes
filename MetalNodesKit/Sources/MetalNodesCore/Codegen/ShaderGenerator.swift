@@ -34,24 +34,24 @@ public enum ShaderGenerator {
 
     /// Validation and type diagnostics without generating. Never throws.
     public static func diagnostics(_ doc: ShaderDocument, target: OutputTarget, registry: NodeRegistry) -> [Diagnostic] {
-        let structural = GraphValidator.validate(doc.root, registry: registry, target: target)
+        let structural = GraphValidator.validate(document: doc, registry: registry, target: target)
         if structural.contains(where: { $0.severity == .error }) { return structural }
         guard let terminal = GraphValidator.terminal(in: doc.root) else { return structural }
         let order = TopoSort.order(doc.root, from: terminal)
-        return structural + TypeResolver.resolve(doc.root, registry: registry, order: order).diagnostics
+        return structural + TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order).diagnostics
     }
 
     public static func generate(_ doc: ShaderDocument, target: OutputTarget = .fragment, viewer: SocketRef? = nil,
                                 registry: NodeRegistry = .builtin) throws(GenerationError) -> GeneratedShader {
-        let structural = GraphValidator.validate(doc.root, registry: registry, target: target)
+        let structural = GraphValidator.validate(document: doc, registry: registry, target: target)
         if structural.contains(where: { $0.severity == .error }) { throw .invalid(structural) }
-        if let v = viewer, !GraphValidator.isValidViewer(v, in: doc.root, registry: registry) {
+        if let v = viewer, !GraphValidator.isValidViewer(v, in: doc, registry: registry) {
             throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: v.node, socket: v.socket)])
         }
         let terminal = GraphValidator.terminal(in: doc.root)!
         let start = viewer?.node ?? terminal
         let order = TopoSort.order(doc.root, from: start)
-        let (resolved, typeDiags) = TypeResolver.resolve(doc.root, registry: registry, order: order)
+        let (resolved, typeDiags) = TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order)
         if !typeDiags.isEmpty { throw .invalid(structural + typeDiags) }
 
         // A viewer is a preview concept: always a fragment program (spec §19.3).
