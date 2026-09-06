@@ -64,8 +64,20 @@ public struct ImageChooserPadHost: ViewModifier {
             }
             .onChange(of: chooser.photos.isPresented) { _, presented in
                 // `PhotosPicker` has no cancel callback: a dismissal with nothing loading is the
-                // user backing out, and the awaiting `choose(from:)` has to be resumed.
-                if !presented, !loadingPhoto { chooser.photos.resolve(nil) }
+                // user backing out, and the awaiting `choose(from:)` has to be resumed. But a pick
+                // sets `photoItem` and `isPresented` in the same dismissal, and SwiftUI gives no
+                // ordering guarantee between these two independent `onChange` handlers — if this one
+                // ran first, `photoItem` (and `loadingPhoto`) would still read as "nothing chosen"
+                // even though a selection is already on its way. Yield one main-actor turn first so
+                // a same-transaction `photoItem` update has landed, then re-check both flags — and
+                // that the request is even still pending — before treating the dismissal as a cancel.
+                guard !presented else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    if photoItem == nil, !loadingPhoto, chooser.photos.isPending {
+                        chooser.photos.resolve(nil)
+                    }
+                }
             }
             .fileImporter(isPresented: $files.isPresented,
                           allowedContentTypes: [.png, .jpeg, .heic],
