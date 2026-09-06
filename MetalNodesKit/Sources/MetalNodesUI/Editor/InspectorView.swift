@@ -189,6 +189,9 @@ public struct InspectorView: View {
             if s.target.stitchableKind != nil {
                 Text("Preview renders the same function through a fragment wrapper. Export writes the .metal file and a .swift extension with the ShaderLibrary call in argument order.")
                     .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            } else {
+                Text("Export writes the .metal file with a header documenting the uniform layout and texture slots.")
+                    .font(.caption2).foregroundStyle(DraculaToken.muted.color)
             }
         }
         .textFieldStyle(.roundedBorder)

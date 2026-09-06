@@ -12,10 +12,31 @@ public enum ShaderExport {
         let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
         let shader = try ShaderGenerator.generate(doc, target: doc.settings.target, viewer: nil, registry: registry)
         guard let kind = doc.settings.target.stitchableKind, let export = shader.exportSource else {
-            return [ExportFile(name: "\(name).metal", contents: shader.source)]
+            let header = fragmentHeader(for: shader, document: doc, registry: registry)
+            return [ExportFile(name: "\(name).metal", contents: header + shader.source)]
         }
         return [ExportFile(name: "\(name).metal", contents: export),
                 ExportFile(name: "\(name).swift", contents: swiftSnippet(for: shader, kind: kind, document: doc, registry: registry))]
+    }
+
+    /// The comment block File ▸ Export… prepends to the fragment target's program source (spec
+    /// §21.3): the uniform buffer's layout (offset, MSL type, field name, and — for a field backed
+    /// by a node parameter — the "node · param" it came from) and the texture slots, each naming
+    /// its asset or "unassigned". Ends with a blank line, ready to concatenate with `shader.source`.
+    public static func fragmentHeader(for shader: GeneratedShader, document: ShaderDocument, registry: NodeRegistry) -> String {
+        let name = StitchableCodegen.sanitizedName(document.settings.exportName)
+        var lines = ["// MetalNodes fragment shader \"\(name)\"", "// Uniforms (buffer 0):"]
+        for f in shader.layout.fields {
+            var line = "//   \(f.offset)  \(f.mslType)  \(f.name)"
+            if f.path != nil { line += "  \u{2190} " + commentLabel(for: f, document: document, registry: registry) }
+            lines.append(line)
+        }
+        lines.append("// Textures:")
+        for slot in shader.textures {
+            let assetName = slot.asset.flatMap { document.settings.assets[$0]?.name } ?? "unassigned"
+            lines.append("//   texture(\(slot.index))  \(assetName)")
+        }
+        return lines.joined(separator: "\n") + "\n\n"
     }
 
     /// Swift parameter names: `mouse`, then camelCase(node title + param label), de-duplicated with a numeric suffix.
