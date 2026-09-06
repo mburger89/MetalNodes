@@ -4,7 +4,7 @@ A node-based Metal shader editor for macOS, in the spirit of Blender's shader ed
 
 Swift 6 · SwiftUI · Metal · macOS 26 (iPadOS 27 planned)
 
-> Screenshot placeholder — `docs/screenshot.png`
+![MetalNodes editor: node canvas with a group node, live preview and inspector](docs/screenshot.png)
 
 ## Features
 
