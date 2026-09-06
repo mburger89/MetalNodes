@@ -83,6 +83,7 @@ private struct CommentMove: ViewModifier {
     @State private var wasSelectedAtStart = false
 
     func body(content: Content) -> some View {
+        #if os(macOS)
         content.gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
                 .onChanged { g in
@@ -103,6 +104,10 @@ private struct CommentMove: ViewModifier {
                     if mode == .replace || mode == .toggle { actions.select(mode) }
                 }
         )
+        #else
+        // The overlay drives comment selection and movement on iPad (spec §22.2).
+        content
+        #endif
     }
 }
 
@@ -131,6 +136,7 @@ struct CommentResizeHandle: View {
         .fill(DraculaTheme.selection.color.opacity(0.8))
         .frame(width: Self.size, height: Self.size)
         .contentShape(Rectangle())
+        .interactiveRect()
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .named("canvas"))
                 .onChanged { g in

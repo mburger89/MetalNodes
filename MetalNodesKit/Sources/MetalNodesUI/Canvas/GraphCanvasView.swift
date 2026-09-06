@@ -55,6 +55,17 @@ public struct GraphCanvasView: View {
     /// Last background click (viewport coords), for synthesising double-click since
     /// `backgroundDrag` already claims single clicks — see its `onEnded` click branch.
     @State private var lastClick: (time: Date, point: CGPoint)?
+    /// The touch path (spec §22.2). Compiled on both platforms — the mapper is pure and the rects
+    /// cost nothing when nothing feeds them — but only iOS ever sends it an event.
+    @State private var mapper = TouchIntentMapper()
+    @State private var interactiveRects: [CGRect] = []
+    /// What a touch move is dragging, so `move` and `endMove` route to the comment functions or
+    /// the node functions the way the two mouse gestures do.
+    @State private var activeMove: CanvasHit?
+    /// Where a long-press asked for the context menu, and what it hit. Stored here and presented
+    /// by Task 8.
+    @State private var contextMenuAnchor: CGPoint?
+    @State private var contextMenuHit: CanvasHit?
 
     static let contentSize: CGFloat = 4000
     static let wireHitDistance: CGFloat = 6
@@ -90,6 +101,10 @@ public struct GraphCanvasView: View {
                     model.viewState.cameras[model.activePath] = transform.camera
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                #else
+                TouchInputOverlay(transform: transform, interactiveRects: interactiveRects,
+                                  onEvent: handleTouch)
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 #endif
             }
             .onAppear { viewport = geo.size; hoverLocation = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2) }
@@ -103,8 +118,12 @@ public struct GraphCanvasView: View {
                 }
             }
             .contentShape(Rectangle())
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("canvas")
+            #if os(macOS)
             .gesture(backgroundDrag)
             .simultaneousGesture(magnifyGesture)
+            #endif
             .focusable()
             .focusEffectDisabled()
             .focused($canvasFocused)
@@ -207,6 +226,9 @@ public struct GraphCanvasView: View {
             #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
+        #if os(iOS)
+        .onPreferenceChange(InteractiveRectKey.self) { interactiveRects = $0 }
+        #endif
         .onAppear { if let cam = model.viewState.cameras[model.activePath] { transform = CanvasTransform(camera: cam) } }
         .onAppear { canvasFocused = true; model.canvasHasFocus = true }
         // One camera per graph (spec §20.3): diving in or out parks the camera on the graph being
@@ -687,14 +709,20 @@ public struct GraphCanvasView: View {
         anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: model.graph, shapes: shapes)
     }
 
-    private func click(at p: CGPoint) {
+    /// The wire within grabbing distance of a canvas point, nearest first. Lifted out of
+    /// `click(at:)` so `hit(at:)` resolves wires exactly as a click does (spec §22.2).
+    private func wire(at p: CGPoint) -> SocketRef? {
         var best: (SocketRef, CGFloat)?
         for (to, from) in model.graph.inputs {
             guard let a = anchor(from), let b = anchor(to) else { continue }
             let d = WireGeometry.distance(from: p, wireFrom: a, to: b)
             if d <= Self.wireHitDistance / transform.zoom && (best == nil || d < best!.1) { best = (to, d) }
         }
-        if let (wire, _) = best {
+        return best?.0
+    }
+
+    private func click(at p: CGPoint) {
+        if let wire = wire(at: p) {
             model.selection = []
             model.selectedWire = wire
         } else {
@@ -714,5 +742,97 @@ public struct GraphCanvasView: View {
                 transform.zoom(by: target / transform.zoom, around: g.startLocation)
             }
             .onEnded { _ in zoomOrigin = nil; model.viewState.cameras[model.activePath] = transform.camera }
+    }
+
+    // MARK: Touch (spec §22.2)
+
+    /// What a canvas point belongs to, resolved in the order the mouse path resolves things:
+    /// socket (only where socket drags exist at all — not in compact LOD), node, comment, wire,
+    /// nothing. Shared by taps, drags and the long-press menu.
+    private func hit(at p: CGPoint) -> CanvasHit {
+        if transform.zoom >= Self.lodZoom,
+           let ref = DropResolver.socket(near: p, within: SocketView.hitSize / 2 / transform.zoom, anchors: anchors),
+           let node = model.graph.nodes[ref.node], let shape = model.shape(of: node) {
+            return .socket(ref, isInput: shape.input(named: ref.socket) != nil)
+        }
+        if let id = model.node(at: p) { return .node(id) }
+        if let id = model.comment(at: p) { return .comment(id) }
+        if let ref = wire(at: p) { return .wire(ref) }
+        return .empty
+    }
+
+    private func isSelected(_ hit: CanvasHit) -> Bool {
+        switch hit {
+        case .node(let id): model.selection.contains(id)
+        case .comment(let id): model.selectedComments.contains(id)
+        case .socket(let ref, _): model.selection.contains(ref.node)
+        case .wire(let ref): model.selectedWire == ref
+        case .empty: false
+        }
+    }
+
+    /// Every canvas touch on iPad: the overlay's event becomes intents, and each intent runs the
+    /// function the mouse path already calls. Nothing here is platform-specific but its caller.
+    private func handleTouch(_ event: TouchEvent) {
+        canvasFocused = true
+        let context = TouchContext(mode: model.viewState.canvasMode, transform: transform,
+                                   hitTest: { hit(at: $0) }, isSelected: { isSelected($0) })
+        for intent in mapper.map(event, in: context) { apply(intent) }
+    }
+
+    private func apply(_ intent: CanvasIntent) {
+        switch intent {
+        case .select(let hit, let mode):
+            switch hit {
+            case .node(let id): model.select(id, mode: mode)
+            case .comment(let id): model.selectComment(id, mode: mode)
+            case .socket(let ref, _): model.select(ref.node, mode: mode)
+            // Exactly what `click(at:)` does for a wire.
+            case .wire(let ref): model.selection = []; model.selectedWire = ref
+            case .empty: model.clearSelection()
+            }
+        case .clearSelection:
+            model.clearSelection()
+        case .beginMove(let hit):
+            activeMove = hit
+            // The mapper only ever latches a move onto a node or a comment.
+            if case .comment(let id) = hit { beginCommentDrag(id, resizing: false) } else { beginNodeDrag() }
+        case .move(let t):
+            if case .comment = activeMove { dragComments(by: t) } else { moveSelection(by: t) }
+        case .endMove:
+            if case .comment = activeMove { endCommentDrag() } else { endNodeDrag() }
+            activeMove = nil
+        case .beginWire(let ref, let isInput):
+            beginWire(from: ref, isInput: isInput)
+        case .wire(let p):
+            pendingWire?.point = p
+        case .endWire(let p):
+            // Closes the drag's transaction — or opens the chooser, which owns it from there.
+            endWire(at: p)
+        case .beginMarquee(let p):
+            marqueeStart = p
+            marquee = CGRect(origin: p, size: .zero)
+        case .marquee(let r):
+            marquee = r
+        case .endMarquee(let r, let mode):
+            marqueeStart = nil
+            marquee = nil
+            // Nodes and comments in one pass, so neither clears the other (spec §21.4).
+            let nodes = NodeGeometry.nodes(in: model.graph, intersecting: r, shapes: shapes)
+            model.select(nodes: nodes, comments: model.comments(intersecting: r), mode: mode)
+        case .pan(let delta):
+            transform.pan(by: delta)
+        case .endPan:
+            model.viewState.cameras[model.activePath] = transform.camera
+        case .zoom(let factor, let point):
+            transform.zoom(by: factor, around: point)
+        case .endZoom:
+            model.viewState.cameras[model.activePath] = transform.camera
+        case .contextMenu(let p, let hit):
+            contextMenuHit = hit
+            contextMenuAnchor = p
+        case .openChooser(let p):
+            openChooser(atScreen: p, wire: nil)
+        }
     }
 }

@@ -48,11 +48,14 @@ struct SocketView: View {
 }
 
 extension View {
-    /// Reports this view's centre, in the "canvas" space, as the anchor for `ref`.
+    /// Reports this view's centre, in the "canvas" space, as the anchor for `ref` — and names it
+    /// for the XCUITest target, which drags wires between `socket.<hex>.<name>` elements.
     func socketAnchor(_ ref: SocketRef) -> some View {
         background(GeometryReader { g in
             let f = g.frame(in: .named("canvas"))
             Color.clear.preference(key: SocketAnchorKey.self, value: [ref: CGPoint(x: f.midX, y: f.midY)])
         })
+        .accessibilityElement()
+        .accessibilityIdentifier("socket.\(GroupCodegen.hex8(ref.node)).\(ref.socket)")
     }
 }

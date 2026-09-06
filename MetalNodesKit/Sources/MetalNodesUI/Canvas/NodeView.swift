@@ -36,6 +36,10 @@ struct NodeView: View {
         Group {
             if shape.style == .dot { dotBody } else { standardBody }
         }
+        // `.contain` keeps the params, the badge and the sockets as their own elements inside it,
+        // so `node.<hex>` names the node without swallowing what it holds (spec §22.8).
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("node.\(GroupCodegen.hex8(node.id))")
     }
 
     /// The outline colour: an error wins over the selection, which wins over a group instance's
@@ -72,6 +76,7 @@ struct NodeView: View {
                                          value: node.params[param.name] ?? param.defaultValue,
                                          onChange: { onChange(.setParam(node.id, param.name, $0)) },
                                          onEditing: onEditing)
+                                .interactiveRect()
                         }
                     }
                     ForEach(shape.outputs, id: \.name) { outputRow($0) }
@@ -88,7 +93,10 @@ struct NodeView: View {
         .overlay { if isGroupInstance { innerAccentRing } }
         .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 6, y: isSelected ? 0 : 3)
         .contentShape(Rectangle())
+        #if os(macOS)
+        // On iPad the overlay's tap recognizer selects; here the gesture would fight it (spec §22.2).
         .onTapGesture { onSelect(InputModifiers.selectionMode()) }
+        #endif
     }
 
     /// The inner ring of a group instance's doubled border, masked to the body: the header is
@@ -126,7 +134,9 @@ struct NodeView: View {
                 SocketView(type: inType, dimmed: dragType.map { !DropResolver.compatible($0, inType) } ?? false, hitSize: Self.dotSocketHitSize)
                     .opacity(0.001)
                     .socketAnchor(SocketRef(node.id, i.name))
+                    #if os(macOS)
                     .gesture(socketDrag(SocketRef(node.id, i.name), isInput: true))
+                    #endif
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .offset(x: -SocketView.size / 2)
             }
@@ -134,7 +144,9 @@ struct NodeView: View {
                 SocketView(type: type, dimmed: dragType != nil, hitSize: Self.dotSocketHitSize)
                     .opacity(0.001)
                     .socketAnchor(SocketRef(node.id, o.name))
+                    #if os(macOS)
                     .gesture(socketDrag(SocketRef(node.id, o.name), isInput: false))
+                    #endif
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .offset(x: SocketView.size / 2)
             }
@@ -142,7 +154,9 @@ struct NodeView: View {
         .frame(width: NodeGeometry.dotSize, height: NodeGeometry.dotSize)
         .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 4, y: isSelected ? 0 : 2)
         .contentShape(Circle())
+        #if os(macOS)
         .gesture(headerDrag)
+        #endif
     }
 
     private var header: some View {
@@ -173,6 +187,8 @@ struct NodeView: View {
                     .contentShape(Rectangle())
                     .highPriorityGesture(TapGesture().onEnded { onViewerToggle() })
                     .accessibilityLabel(isViewed ? "Clear viewer" : "View this node")
+                    .accessibilityIdentifier("badge.\(GroupCodegen.hex8(node.id))")
+                    .interactiveRect()
             }
             if compact {
                 VStack(spacing: 2) {
@@ -188,7 +204,9 @@ struct NodeView: View {
         .foregroundStyle(DraculaToken.background.color)
         .background(accentColor, in: UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
         .contentShape(Rectangle())
+        #if os(macOS)
         .gesture(headerDrag)
+        #endif
     }
 
     /// Moving the node: on a standard node this lives on the header, on a `.dot` node the whole
@@ -256,7 +274,9 @@ struct NodeView: View {
             SocketView(type: type, dimmed: dim)
                 .socketAnchor(ref)
                 .offset(x: -8 - SocketView.size / 2)
+                #if os(macOS)
                 .gesture(socketDrag(ref, isInput: true))
+                #endif
             // A pseudo-node carries no params of its own: its rows mirror the definition's
             // sockets, so an unwired one stays a plain label, and the trailing `+` a glyph (spec §20.8).
             if NodeShape.isPlus(decl) {
@@ -266,6 +286,7 @@ struct NodeView: View {
                              value: coerced(node.params[decl.name] ?? dflt, to: type),
                              onChange: { onChange(.setParam(node.id, decl.name, $0)) },
                              onEditing: onEditing)
+                    .interactiveRect()
             } else {
                 Text(decl.label).font(.caption)
             }
@@ -281,7 +302,9 @@ struct NodeView: View {
             SocketView(type: type, dimmed: dragType != nil)
                 .socketAnchor(ref)
                 .offset(x: 8 + SocketView.size / 2)
+                #if os(macOS)
                 .gesture(socketDrag(ref, isInput: false))
+                #endif
         }
     }
 
