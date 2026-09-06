@@ -68,17 +68,23 @@ public struct EditorView: View {
     @ViewBuilder
     private var previewColumn: some View {
         #if os(macOS)
+        // Both panes state a minimum and can grow, which is what lets the divider actually move;
+        // the preview keeps the priority, so opening the panel takes the code panel's ideal height
+        // and no more.
         VSplitView {
             previewPane
+                .frame(minHeight: 220, maxHeight: .infinity)
+                .layoutPriority(1)
             if model.viewState.showsCode {
-                CodePanel(model: model).frame(minHeight: 160)
+                CodePanel(model: model)
+                    .frame(minHeight: CodePanel.minimumHeight, idealHeight: 260, maxHeight: .infinity)
             }
         }
         #else
         VStack(spacing: 0) {
             previewPane
             if model.viewState.showsCode {
-                CodePanel(model: model).frame(minHeight: 160)
+                CodePanel(model: model).frame(minHeight: CodePanel.minimumHeight, idealHeight: 260)
             }
         }
         #endif

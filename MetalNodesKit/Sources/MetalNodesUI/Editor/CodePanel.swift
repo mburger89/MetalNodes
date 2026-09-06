@@ -8,29 +8,47 @@ public struct CodePanel: View {
 
     public init(model: EditorModel) { self.model = model }
 
+    /// The panel below which the header — Copy included — would be cut off. The split view is free
+    /// to make the panel this short; the source simply scrolls in what is left.
+    public static let minimumHeight: CGFloat = 92
+
     public var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Generated Code").font(.caption).foregroundStyle(DraculaToken.muted.color)
-                if isStale {
-                    Text("(stale)").font(.caption).foregroundStyle(DraculaToken.muted.color)
-                }
-                Spacer()
-                Button("Copy") {
-                    model.pasteboard.write(Data(model.generatedSource.utf8), type: "public.utf8-plain-text")
-                }
-                .controlSize(.small)
-            }
+        // The header takes its own height first and the scroll view gets the remainder: a minimum
+        // on the *scroll view* would instead let a short panel push the header off the top, where
+        // it was clipped and its Copy button unclickable.
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+                .fixedSize(horizontal: false, vertical: true)
             ScrollView([.vertical, .horizontal]) {
                 Text(highlighted)
                     .font(.system(.caption, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
             }
-            .frame(minHeight: 160)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(10)
+        .frame(minHeight: Self.minimumHeight, alignment: .top)
         .background(DraculaToken.background.color)
+    }
+
+    private var header: some View {
+        HStack {
+            Text("Generated Code").font(.caption).foregroundStyle(DraculaToken.muted.color)
+            if isStale {
+                Text("(stale)").font(.caption).foregroundStyle(DraculaToken.muted.color)
+            }
+            Spacer()
+            Button("Copy") {
+                model.pasteboard.write(Data(model.generatedSource.utf8), type: "public.utf8-plain-text")
+            }
+            .controlSize(.small)
+        }
+        .lineLimit(1)
     }
 
     /// The generation validated but produced no fresh source (spec §21.5 controller ruling): the
