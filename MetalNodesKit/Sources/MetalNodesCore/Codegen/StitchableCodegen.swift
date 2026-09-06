@@ -45,7 +45,11 @@ public enum StitchableCodegen {
         return out
     }
 
-    static func signature(kind: StitchableKind, name: String, args: [Argument], forExport: Bool) -> String {
+    /// `textures` is always empty for the exported function — SwiftUI passes no textures, and under
+    /// the Layer Effect the samples read `layer` instead (spec §21.2). The preview declares one
+    /// `texture2d<float>` parameter per slot so `shaderMain` can forward its bindings.
+    static func signature(kind: StitchableKind, name: String, args: [Argument],
+                          textures: [TextureSlot] = [], forExport: Bool) -> String {
         let prefix: String = switch kind {
         case .colorEffect: "half4 \(name)(float2 position, half4 currentColor, float2 size, float time"
         case .distortionEffect: "float2 \(name)(float2 position, float2 size, float time"
@@ -54,6 +58,7 @@ public enum StitchableCodegen {
             : "half4 \(name)(float2 position, float2 size, float time"
         }
         let tail = args.map { ", \($0.mslType) \($0.name)" }.joined()
+            + textures.map { ", texture2d<float> \($0.fragmentName)" }.joined()
         return (forExport ? "[[stitchable]] " : "") + prefix + tail + ")"
     }
 
@@ -65,13 +70,14 @@ public enum StitchableCodegen {
     }
 
     /// Body of the preview's `shaderMain`, calling the function with values read from `Uniforms`.
-    static func previewBody(kind: StitchableKind, name: String, args: [Argument]) -> [String] {
+    static func previewBody(kind: StitchableKind, name: String, args: [Argument],
+                            textures: [TextureSlot] = []) -> [String] {
         // MSL has no implicit conversion between vector types, so the `float4` a colour slot occupies
         // in `Uniforms` needs an explicit narrowing to the `half4` the function declares.
-        let call = args.map { a in
+        let call = (args.map { a in
             guard let f = a.field else { return "u.mouse" }
             return f.type == .color ? "half4(u.\(a.name))" : "u.\(a.name)"
-        }.joined(separator: ", ")
+        } + textures.map(\.fragmentName)).joined(separator: ", ")
         var lines = ["float2 position = float2(in.uv.x, 1.0 - in.uv.y) * u.resolution;"]
         switch kind {
         case .colorEffect:

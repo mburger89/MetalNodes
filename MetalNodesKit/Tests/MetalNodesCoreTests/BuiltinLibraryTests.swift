@@ -16,6 +16,7 @@ import Testing
             "noise.perlin", "noise.simplex", "noise.voronoi", "noise.fbm",
             "color.ramp", "color.hsv2rgb", "color.rgb2hsv", "color.invert", "color.mixcolor",
             "utility.reroute", "utility.compare", "utility.switch",
+            "texture.sample", "texture.gradient", "texture.checker",
         ]
         #expect(ids == expected)
     }

@@ -60,10 +60,11 @@ extension ShaderGenerator {
 
         let all = groupFunctions + variants
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + all.flatMap(\.requiredStdlib),
-                                functions: all.map(\.source), body: body)
+                                functions: all.map(\.source), body: body, textures: emitted.textureRequests)
         return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map,
                                resolved: merged(resolved, groupFunctions + variants),
-                               fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: v, viewerPath: path)
+                               fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: v, viewerPath: path,
+                               textures: emitted.textureRequests)
     }
 
     /// No instance supplies the outermost variant's exposed inputs, so the synthetic program passes
@@ -76,9 +77,12 @@ extension ShaderGenerator {
         guard let wrap = ViewerWrap.statement(variable: "v0", type: type) else {
             throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: v.node, socket: v.socket)])
         }
+        // The variant already deduplicated its slots by asset; this program only has to number them.
+        let textures = outer.textureParams.enumerated().map { TextureSlot(index: $0.offset, asset: $0.element.asset) }
         var args = ["in.uv", "u.time", "u.resolution", "u.mouse"]
         args += outer.inputs.map(defaultArgument)
         args += outer.uniformParams.map { EmitEnvironment.fragment.uniform(layout.field(for: $0.path)!) }
+        args += textures.map(\.fragmentName)
         let body: [(line: String, owner: NodeID?)] = [
             ("\(outer.structName) r0 = \(outer.name)(\(args.joined(separator: ", ")));", v.node),
             ("\(type.mslName) v0 = r0.value;", v.node),
@@ -86,10 +90,11 @@ extension ShaderGenerator {
         ]
         let all = groupFunctions + variants
         let b = fragmentProgram(layout: layout, stdlib: all.flatMap(\.requiredStdlib),
-                                functions: all.map(\.source), body: body)
+                                functions: all.map(\.source), body: body, textures: textures)
         return GeneratedShader(source: b.text, layout: layout, lineMap: b.map,
                                resolved: merged([:], groupFunctions + variants),
-                               fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: v, viewerPath: path)
+                               fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: v, viewerPath: path,
+                               textures: textures)
     }
 
     /// The graphs the viewer sits under, outermost first: the palette-opened definition, when there

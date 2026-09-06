@@ -13,21 +13,30 @@ enum Emitter {
         /// and value params plus the ones its group calls pass through (spec §20.4). The layout
         /// is built from exactly this list.
         var uniformRequests: [(path: ParamPath, type: SocketType)] = []
+        /// Every texture slot this graph needs, deduplicated by asset in first-use order: the ones
+        /// its own Texture Samples read plus the ones its group calls pass through (spec §21.2).
+        var textureRequests: [TextureSlot] = []
     }
 
-    /// Which `{in.x}` / `{param.x}` names a body references (rule 4).
-    static func referencedNames(in body: NodeBody, chosen: String?) -> (inputs: Set<String>, params: Set<String>) {
+    /// Which `{in.x}` / `{param.x}` names a body references (rule 4), and whether it samples a texture.
+    static func referencedNames(in body: NodeBody, chosen: String?)
+        -> (inputs: Set<String>, params: Set<String>, usesTexture: Bool) {
         let text: String
         switch body {
         case .template(let t): text = t
         case .variants(_, let table): text = chosen.flatMap { table[$0] } ?? ""
-        case .custom: return (inputs: [], params: [])
+        case .custom: return (inputs: [], params: [], usesTexture: false)
         }
-        var ins = Set<String>(), ps = Set<String>()
+        var ins = Set<String>(), ps = Set<String>(), tex = false
         for m in text.matches(of: NodeRegistry.placeholderPattern) {
-            if m.1 == "in" { ins.insert(String(m.2)) } else if m.1 == "param" { ps.insert(String(m.2)) }
+            switch m.1 {
+            case "in": ins.insert(String(m.2))
+            case "param": ps.insert(String(m.2))
+            case "tex": tex = true
+            default: break
+            }
         }
-        return (ins, ps)
+        return (ins, ps, tex)
     }
 
     static func chosenVariant(_ def: NodeDef, _ inst: NodeInstance) -> String? {
@@ -67,6 +76,23 @@ enum Emitter {
                 if case .value = decl.default { request(ParamPath(node: id, param: decl.name), r.inputTypes[decl.name]!) }
             }
         }
+        /// One slot per distinct asset, in first-use order; unassigned samples share the `nil` slot.
+        var textureSlots: [AssetID?: TextureSlot] = [:]
+        var textureOrder: [TextureSlot] = []
+        /// The slot each sampling node reads, so pass 2 need not re-scan bodies for `{tex.sample}`.
+        var textureSlotOfNode: [NodeID: TextureSlot] = [:]
+        @discardableResult func requestTexture(_ asset: AssetID?) -> TextureSlot {
+            if let existing = textureSlots[asset] { return existing }
+            let slot = TextureSlot(index: textureOrder.count, asset: asset)
+            textureSlots[asset] = slot
+            textureOrder.append(slot)
+            return slot
+        }
+        /// The asset a Texture Sample instance names; `nil` when unset or set to nothing.
+        func asset(of inst: NodeInstance) -> AssetID? {
+            if case .asset(let a)? = inst.params["asset"] { return a }
+            return nil
+        }
         for id in order {
             guard let inst = graph.nodes[id], let r = resolved[id] else { continue }
             switch inst.kind {
@@ -78,10 +104,12 @@ enum Emitter {
                 for p in def.params where (custom || refs.params.contains(p.name)) {
                     if case .value(let t, _) = p.kind { request(ParamPath(node: id, param: p.name), t) }
                 }
+                if refs.usesTexture { textureSlotOfNode[id] = requestTexture(asset(of: inst)) }
             case .group(let gid):
                 // The instance's own unwired exposed inputs, then everything its function needs.
                 if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
                 for p in function(for: gid, at: id)?.uniformParams ?? [] { request(p.path, p.type) }
+                for slot in function(for: gid, at: id)?.textureParams ?? [] { requestTexture(slot.asset) }
             case .groupOutput:
                 if let s = shape(inst) { requestUnwiredInputs(id, declared(s.inputs), r) }
             case .groupInput:
@@ -90,6 +118,7 @@ enum Emitter {
         }
         var out = Output(layout: UniformLayoutBuilder.build(requests, reserved: reserved))
         out.uniformRequests = requests
+        out.textureRequests = textureOrder
 
         func uniformExpr(_ path: ParamPath) -> String {
             env.uniform(out.layout.field(for: path)!)
@@ -149,7 +178,10 @@ enum Emitter {
                     case .asset: break
                     }
                 }
-                let ctx = EmitContext(inputs: inputs, outputs: outputs, params: params, enums: enums, types: r.generics, sys: env.sys)
+                let texture = textureSlotOfNode[id]
+                    .map { env.textureSample($0, inputs["uv"] ?? env.sys["uv"] ?? "in.uv") } ?? ""
+                let ctx = EmitContext(inputs: inputs, outputs: outputs, params: params, enums: enums,
+                                      types: r.generics, sys: env.sys, texture: texture)
 
                 let lines: [String]
                 switch def.body {
@@ -188,6 +220,9 @@ enum Emitter {
                             env.sys["resolution"] ?? "u.resolution", env.sys["mouse"] ?? "u.mouse"]
                 args += fn.inputs.map { inputs[$0.name] ?? GroupCodegen.zeroLiteral(r.inputTypes[$0.name] ?? .float) }
                 args += fn.uniformParams.map { uniformExpr($0.path) }
+                // The function names its texture parameters by asset; this program spells the same
+                // assets by its own slots (spec §21.2).
+                args += fn.textureParams.map { env.textureName(textureSlots[$0.asset]!) }
                 out.bodyLines.append("\(fn.structName) \(result) = \(fn.name)(\(args.joined(separator: ", ")));")
                 out.lineOwners.append(id)
                 if let viewed = fn.viewedType {
@@ -217,6 +252,7 @@ enum Emitter {
             case "param": return ctx.params[name] ?? "/* ?param.\(name) */"
             case "type": return ctx.types[name]?.mslName ?? "float"
             case "sys": return ctx.sys[name] ?? "/* ?sys.\(name) */"
+            case "tex": return ctx.texture
             default: return String(m.0)
             }
         }

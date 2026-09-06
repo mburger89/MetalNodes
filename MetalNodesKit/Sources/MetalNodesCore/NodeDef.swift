@@ -63,11 +63,15 @@ public struct EmitContext: Sendable {
     public var types: [String: SocketType]
     /// The four system values (`uv`, `time`, `resolution`, `mouse`), spelled for the target program.
     public var sys: [String: String]
+    /// The complete texture-sample expression for this node in this target (spec §21.2) — what
+    /// `{tex.sample}` substitutes to. Empty for every node that does not sample a texture.
+    public var texture: String
 
     public init(inputs: [String: String], outputs: [String: String], params: [String: String],
-                enums: [String: String], types: [String: SocketType], sys: [String: String] = [:]) {
+                enums: [String: String], types: [String: SocketType], sys: [String: String] = [:],
+                texture: String = "") {
         self.inputs = inputs; self.outputs = outputs; self.params = params
-        self.enums = enums; self.types = types; self.sys = sys
+        self.enums = enums; self.types = types; self.sys = sys; self.texture = texture
     }
 }
 

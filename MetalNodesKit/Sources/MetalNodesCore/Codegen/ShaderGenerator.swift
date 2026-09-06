@@ -16,10 +16,14 @@ public struct GeneratedShader: Sendable, Hashable {
     public let exportSource: String?
     /// The exported SwiftUI stitchable function's name. Empty when `exportSource` is `nil`.
     public let functionName: String
+    /// The texture bindings this program declares, in slot order (spec §21.2). The renderer binds
+    /// slot `i` with `setFragmentTexture(_:index: i)`.
+    public let textures: [TextureSlot]
 
     public init(source: String, layout: UniformLayout, lineMap: LineMap, resolved: [NodeID: ResolvedNode],
                 fragmentFunctionName: String, target: OutputTarget, viewer: SocketRef? = nil,
-                viewerPath: [NodeID] = [], exportSource: String? = nil, functionName: String = "") {
+                viewerPath: [NodeID] = [], exportSource: String? = nil, functionName: String = "",
+                textures: [TextureSlot] = []) {
         self.source = source
         self.layout = layout
         self.lineMap = lineMap
@@ -30,6 +34,7 @@ public struct GeneratedShader: Sendable, Hashable {
         self.viewerPath = viewerPath
         self.exportSource = exportSource
         self.functionName = functionName
+        self.textures = textures
     }
 }
 
@@ -125,16 +130,27 @@ public enum ShaderGenerator {
             body.append((wrap, v.node))
         }
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib),
-                                functions: groupFunctions.map(\.source), body: body)
+                                functions: groupFunctions.map(\.source), body: body, textures: emitted.textureRequests)
         return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map,
                                resolved: merged(resolved, groupFunctions),
-                               fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: viewer)
+                               fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: viewer,
+                               textures: emitted.textureRequests)
+    }
+
+    /// `shaderMain`'s parameter list: the stage-in, the uniform buffer, then one binding per slot.
+    /// Empty `textures` reproduces the pre-texture signature byte for byte.
+    static func fragmentSignature(textures: [TextureSlot]) -> String {
+        let indent = String(repeating: " ", count: "fragment float4 \(fragmentFunctionName)(".count)
+        var params = ["VertexOut in [[stage_in]]", "constant Uniforms &u [[buffer(0)]]"]
+        params += textures.map { "texture2d<float> \($0.fragmentName) [[texture(\($0.index))]]" }
+        return "fragment float4 \(fragmentFunctionName)(" + params.joined(separator: ",\n" + indent) + ") {"
     }
 
     /// The shape of every fragment program: includes, the uniform struct, `VertexOut`, the stdlib
     /// closure, the group functions, then `shaderMain`'s body.
     static func fragmentProgram(layout: UniformLayout, stdlib: [String], functions: [String],
-                                body: [(line: String, owner: NodeID?)]) -> SourceBuilder {
+                                body: [(line: String, owner: NodeID?)],
+                                textures: [TextureSlot] = []) -> SourceBuilder {
         var b = SourceBuilder()
         b.add("#include <metal_stdlib>\nusing namespace metal;\n")
         b.add(layout.mslStruct + "\n")
@@ -143,7 +159,7 @@ public enum ShaderGenerator {
         // Group function bodies are one chunk: their statements' owners are nodes in another
         // graph, which the root line map cannot address (M4 limitation, spec §9.4).
         for source in functions { b.add(source) }
-        b.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
+        b.add(fragmentSignature(textures: textures))
         for statement in body { b.add("    " + statement.line, owner: statement.owner) }
         b.add("}")
         return b
@@ -155,15 +171,24 @@ public enum ShaderGenerator {
         let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
         let emitted = Emitter.emit(order: order, graph: doc.root, path: .root, document: doc, registry: registry, resolved: resolved,
                                    env: .stitchableFunction, functions: functions)
+        let textures = emitted.textureRequests
+        // The preview binds the assets as textures; the export has none to bind and reads the layer
+        // SwiftUI passes instead, so it needs its own emission (spec §21.2). Only the Layer Effect
+        // gets here with textures at all — validation refuses the other two kinds.
+        let exported = textures.isEmpty ? emitted
+            : Emitter.emit(order: order, graph: doc.root, path: .root, document: doc, registry: registry,
+                           resolved: resolved, env: .layerExport, functions: functions)
         let args = StitchableCodegen.arguments(layout: emitted.layout)
-        let color = emitted.inputExpressions[terminal]?["color"] ?? "float4(0.0, 0.0, 0.0, 1.0)"
         let stdlib = MSLStdlib.resolve(emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib))
 
         func function(into b: inout SourceBuilder, forExport: Bool) {
-            b.add(StitchableCodegen.signature(kind: kind, name: name, args: args, forExport: forExport) + " {")
+            let e = forExport ? exported : emitted
+            let color = e.inputExpressions[terminal]?["color"] ?? "float4(0.0, 0.0, 0.0, 1.0)"
+            b.add(StitchableCodegen.signature(kind: kind, name: name, args: args,
+                                              textures: forExport ? [] : textures, forExport: forExport) + " {")
             b.add("    float2 uv = float2(position.x / size.x, 1.0 - position.y / size.y);")
-            for (i, line) in emitted.bodyLines.enumerated() where emitted.lineOwners[i] != terminal {
-                b.add("    " + line, owner: emitted.lineOwners[i])
+            for (i, line) in e.bodyLines.enumerated() where e.lineOwners[i] != terminal {
+                b.add("    " + line, owner: e.lineOwners[i])
             }
             b.add("    " + StitchableCodegen.returnStatement(kind: kind, color: color), owner: terminal)
             b.add("}")
@@ -183,13 +208,14 @@ public enum ShaderGenerator {
         for fn in groupFunctions { preview.add(fn.source) }
         function(into: &preview, forExport: false)
         preview.add("")
-        preview.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
-        for l in StitchableCodegen.previewBody(kind: kind, name: name, args: args) { preview.add("    " + l) }
+        preview.add(fragmentSignature(textures: textures))
+        for l in StitchableCodegen.previewBody(kind: kind, name: name, args: args, textures: textures) { preview.add("    " + l) }
         preview.add("}")
 
         return GeneratedShader(source: preview.text, layout: emitted.layout, lineMap: preview.map,
                                resolved: merged(resolved, groupFunctions),
                                fragmentFunctionName: fragmentFunctionName, target: .stitchable(kind),
-                               viewer: nil, exportSource: export.text, functionName: name)
+                               viewer: nil, exportSource: export.text, functionName: name,
+                               textures: textures)
     }
 }

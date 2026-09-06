@@ -26,7 +26,10 @@ public struct NodeRegistry: Sendable {
     public subscript(id: String) -> NodeDef? { defs[id] }
     public var all: [NodeDef] { defs.values.sorted { $0.id < $1.id } }
 
-    nonisolated(unsafe) static let placeholderPattern = /\{(in|out|param|type|sys)\.([A-Za-z_][A-Za-z0-9_]*)\}/
+    nonisolated(unsafe) static let placeholderPattern = /\{(in|out|param|type|sys|tex)\.([A-Za-z_][A-Za-z0-9_]*)\}/
+
+    /// The only `{tex.…}` placeholder: the complete sample expression for the target (spec §21.2).
+    static let textureSamplePlaceholder = "sample"
 
     private static func validate(_ def: NodeDef) throws(RegistryError) {
         var seen = Set<String>()
@@ -61,6 +64,7 @@ public struct NodeRegistry: Sendable {
             case "param": def.param(named: name) != nil
             case "type": def.generics[name] != nil
             case "sys": EmitEnvironment.sysNames.contains(name)
+            case "tex": name == NodeRegistry.textureSamplePlaceholder
             default: false
             }
             if !ok { throw RegistryError.unknownPlaceholder(def: def.id, placeholder: "\(kind).\(name)") }

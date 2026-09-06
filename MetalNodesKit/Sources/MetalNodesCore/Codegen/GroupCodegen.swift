@@ -10,6 +10,11 @@ public struct GroupFunction: Sendable {
     /// Every uniform slot the body reads, own and propagated, in first-use order. These are the
     /// function's trailing parameters and become requests of whoever calls it.
     public let uniformParams: [(path: ParamPath, type: SocketType)]
+    /// Every texture slot the body samples, own and propagated, deduplicated by asset in first-use
+    /// order. These follow the uniform parameters and become texture requests of whoever calls it.
+    /// The indices are the definition's own numbering; only the assets matter to a caller, which
+    /// passes its own slot for each (spec §21.2).
+    public let textureParams: [TextureSlot]
     public let requiredStdlib: [String]
     public let source: String
     /// Line owners for the function's body statements, parallel to the body lines in `source`
@@ -23,10 +28,12 @@ public struct GroupFunction: Sendable {
     public let resolved: [NodeID: ResolvedNode]
 
     init(id: GroupID, name: String, structName: String, inputs: [SocketDecl], outputs: [SocketDecl],
-         uniformParams: [(path: ParamPath, type: SocketType)], requiredStdlib: [String], source: String,
+         uniformParams: [(path: ParamPath, type: SocketType)], textureParams: [TextureSlot] = [],
+         requiredStdlib: [String], source: String,
          lineOwners: [NodeID?], viewedType: SocketType? = nil, resolved: [NodeID: ResolvedNode] = [:]) {
         self.id = id; self.name = name; self.structName = structName
         self.inputs = inputs; self.outputs = outputs; self.uniformParams = uniformParams
+        self.textureParams = textureParams
         self.requiredStdlib = requiredStdlib; self.source = source
         self.lineOwners = lineOwners; self.viewedType = viewedType; self.resolved = resolved
     }
@@ -98,6 +105,7 @@ public enum GroupCodegen {
         var params = ["float2 uv", "float time", "float2 size", "float2 mouse"]
         params += def.inputs.map { "\(concrete($0.type).mslName) in_\($0.name)" }
         params += emitted.uniformRequests.map { "\($0.type.mslName) \(parameterName(for: $0.path))" }
+        params += emitted.textureRequests.map { "texture2d<float> \($0.parameterName)" }
         b.add("\(outStruct) \(fnName)(\(params.joined(separator: ", "))) {")
         for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
         b.add("    \(outStruct) out;")
@@ -110,7 +118,8 @@ public enum GroupCodegen {
         b.add("    return out;")
         b.add("}")
         return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
-                             uniformParams: emitted.uniformRequests, requiredStdlib: emitted.requiredStdlib,
+                             uniformParams: emitted.uniformRequests, textureParams: emitted.textureRequests,
+                             requiredStdlib: emitted.requiredStdlib,
                              source: b.text, lineOwners: emitted.lineOwners, viewedType: viewed?.type, resolved: resolved)
     }
 

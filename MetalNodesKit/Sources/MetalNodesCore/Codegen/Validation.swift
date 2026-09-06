@@ -2,6 +2,7 @@ import Foundation
 
 public enum GraphValidator {
     public static let fragmentTerminalID = "output.fragment"
+    static let textureSampleID = "texture.sample"
 
     public static func terminal(in graph: Graph) -> NodeID? {
         graph.nodes.values
@@ -39,6 +40,14 @@ public enum GraphValidator {
                 out.append(Diagnostic(.error, "Group Output is only valid inside a definition", node: n.id))
             default:
                 if let s = doc.shape(of: n, in: path, registry: registry) { shapes[n.id] = s }
+            }
+        }
+
+        // A Color or Distortion Effect gets no texture argument from SwiftUI and, unlike the Layer
+        // Effect, has no layer to sample instead (spec §21.2).
+        if case .stitchable(let kind) = target, kind != .layerEffect {
+            for n in sorted where n.kind == .builtin(textureSampleID) {
+                out.append(Diagnostic(.error, "Texture Sample needs the Layer Effect target", node: n.id))
             }
         }
 

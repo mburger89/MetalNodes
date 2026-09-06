@@ -19,6 +19,18 @@ public struct GroupDefinition: Codable, Sendable, Hashable, Identifiable {
 
 public enum TimeMode: String, Codable, Sendable { case wallClock, fixedRate }
 
+/// One imported image in the package's manifest (spec §21.2). The bytes live in
+/// `textures/<AssetID>.<fileExtension>`; this is everything the editor and codegen need without them.
+public struct AssetInfo: Sendable, Hashable, Codable {
+    public var name: String
+    public var pixelSize: CGSize
+    public var fileExtension: String
+
+    public init(name: String, pixelSize: CGSize, fileExtension: String) {
+        self.name = name; self.pixelSize = pixelSize; self.fileExtension = fileExtension
+    }
+}
+
 public struct DocumentSettings: Sendable, Hashable {
     public var previewSize: CGSize = CGSize(width: 512, height: 512)
     public var timeMode: TimeMode = .wallClock
@@ -28,11 +40,20 @@ public struct DocumentSettings: Sendable, Hashable {
     public var target: OutputTarget = .fragment
     /// The name given to the exported SwiftUI stitchable function / Swift symbol.
     public var exportName: String = "metalNodesShader"
+    /// The imported images this document references (spec §21.2). Never auto-pruned.
+    public var assets: [AssetID: AssetInfo] = [:]
     public init() {}
 }
 
 extension DocumentSettings: Codable {
-    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName }
+    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets }
+
+    /// A dictionary keyed by a struct encodes as a flat `[key, value, …]` array, which neither
+    /// diffs nor reads well — so `assets` is written as an array of these, sorted by id.
+    private struct AssetEntry: Codable {
+        let id: AssetID
+        let info: AssetInfo
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -41,6 +62,8 @@ extension DocumentSettings: Codable {
         fastMath = try c.decodeIfPresent(Bool.self, forKey: .fastMath) ?? true
         target = try c.decodeIfPresent(OutputTarget.self, forKey: .target) ?? .fragment
         exportName = try c.decodeIfPresent(String.self, forKey: .exportName) ?? "metalNodesShader"
+        let entries = try c.decodeIfPresent([AssetEntry].self, forKey: .assets) ?? []
+        assets = Dictionary(entries.map { ($0.id, $0.info) }, uniquingKeysWith: { $1 })
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -50,6 +73,8 @@ extension DocumentSettings: Codable {
         try c.encode(fastMath, forKey: .fastMath)
         try c.encode(target, forKey: .target)
         try c.encode(exportName, forKey: .exportName)
+        try c.encode(assets.map { AssetEntry(id: $0.key, info: $0.value) }
+            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .assets)
     }
 }
 
