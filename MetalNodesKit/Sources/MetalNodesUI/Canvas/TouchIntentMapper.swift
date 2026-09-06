@@ -102,6 +102,9 @@ nonisolated public struct TouchIntentMapper {
     /// Where the finger went down, in viewport points: a latch resolves its hit from here, not
     /// from where the finger has travelled to.
     private var pressPoint: CGPoint?
+    /// The most recent `dragChanged` location, in viewport points — set whenever `drag` is set, so
+    /// an abandoned latch can close at the last place the finger was actually seen.
+    private var lastLocation: CGPoint?
     private var lastTwoFingerTranslation: CGSize?
     private var lastPinchScale: CGFloat?
 
@@ -117,15 +120,22 @@ nonisolated public struct TouchIntentMapper {
         case .longPress(let p):
             return [.contextMenu(at: p, hit: context.hitTest(context.transform.toCanvas(p)))]
         case .dragBegan(let p):
+            // A latch left open by a broken touch stream (another recognizer stealing the touch,
+            // or two `dragBegan`s with no `dragEnded` between them) must close before the new
+            // press starts, or a consumer that opened an undo transaction on `beginMove` /
+            // `beginWire` / `beginMarquee` / the pan is left holding it open forever.
+            let abandoned = abandon(in: context)
             drag = nil
             pressPoint = p
-            return []
+            lastLocation = nil
+            return abandoned
         case .dragChanged(let location, let translation):
             return dragChanged(location: location, translation: translation, in: context)
         case .dragEnded(let location, let translation):
             let out = dragEnded(location: location, translation: translation, in: context)
             drag = nil
             pressPoint = nil
+            lastLocation = nil
             return out
         case .twoFingerPan(let translation):
             let last = lastTwoFingerTranslation ?? .zero
@@ -166,6 +176,7 @@ nonisolated public struct TouchIntentMapper {
 
     private mutating func dragChanged(location: CGPoint, translation: CGSize,
                                       in c: TouchContext) -> [CanvasIntent] {
+        lastLocation = location
         if let drag { return changed(drag, location: location, translation: translation, in: c) }
         guard hypot(translation.width, translation.height) >= Self.dragThreshold else { return [] }
         let start = pressPoint ?? CGPoint(x: location.x - translation.width, y: location.y - translation.height)
@@ -206,6 +217,26 @@ nonisolated public struct TouchIntentMapper {
             return [.pan(CGSize(width: translation.width - last.width, height: translation.height - last.height))]
         case .marquee(let start):
             return [.marquee(Self.rect(from: start, to: c.transform.toCanvas(location)))]
+        }
+    }
+
+    /// Closes whatever the current latch left open, using the last location actually seen for
+    /// `.wire` and `.marquee` — `lastLocation` is always set by the time `drag` is, so this only
+    /// falls back to the press point in a state that should be unreachable.
+    private func abandon(in c: TouchContext) -> [CanvasIntent] {
+        guard let drag else { return [] }
+        let loc = lastLocation ?? pressPoint ?? .zero
+        switch drag {
+        case .move:
+            return [.endMove]
+        case .wire:
+            return [.endWire(c.transform.toCanvas(loc))]
+        case .pan:
+            return [.endPan]
+        case .marquee(let start):
+            // Select mode gathers; the lasso is a one-shot selection (spec §22.2) — the same rule
+            // `dragEnded` applies to a marquee that finishes normally.
+            return [.endMarquee(Self.rect(from: start, to: c.transform.toCanvas(loc)), c.mode == .lasso ? .replace : .add)]
         }
     }
 

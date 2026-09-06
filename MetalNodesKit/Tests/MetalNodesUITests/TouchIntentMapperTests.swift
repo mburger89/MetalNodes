@@ -240,6 +240,63 @@ import MetalNodesCore
                                  translation: CGSize(width: 3, height: 0)), in: c).isEmpty)
     }
 
+    // MARK: Interrupted drags
+
+    /// A second `dragBegan` with no `dragEnded` in between (another recognizer stealing the
+    /// touch, or a broken stream) must close whatever the current latch left open — otherwise a
+    /// consumer that opened an undo transaction on `beginMove` is left holding it forever.
+    @Test func aSecondDragBeganWhileMovingEndsTheMoveFirst() {
+        var m = TouchIntentMapper()
+        let c = context(.pointer, hits: everything)
+        _ = m.map(.dragBegan(onNode), in: c)
+        let t = CGSize(width: 8, height: 0)
+        _ = m.map(.dragChanged(location: CGPoint(x: onNode.x + 8, y: onNode.y), translation: t), in: c)
+        #expect(m.map(.dragBegan(onComment), in: c) == [.endMove])
+        // The new press starts clean: nothing latches until it, too, passes the threshold.
+        #expect(m.map(.dragChanged(location: CGPoint(x: onComment.x + 1, y: onComment.y),
+                                   translation: CGSize(width: 1, height: 0)), in: c).isEmpty)
+    }
+
+    @Test func aSecondDragBeganWhileWiringEndsTheWireAtTheLastLocation() {
+        var m = TouchIntentMapper()
+        let c = context(.pointer, hits: everything)
+        _ = m.map(.dragBegan(onSocket), in: c)
+        let moved = CGPoint(x: onSocket.x + 10, y: onSocket.y)
+        _ = m.map(.dragChanged(location: moved, translation: CGSize(width: 10, height: 0)), in: c)
+        #expect(m.map(.dragBegan(onEmpty), in: c) == [.endWire(canvas(moved))])
+    }
+
+    @Test func aSecondDragBeganWhileMarqueeingEndsTheMarqueeAtTheLastRect() {
+        var m = TouchIntentMapper()
+        let c = context(.select, hits: everything)
+        _ = m.map(.dragBegan(onEmpty), in: c)
+        let moved = CGPoint(x: onEmpty.x + 40, y: onEmpty.y + 20)          // canvas (120, 110)
+        _ = m.map(.dragChanged(location: moved, translation: CGSize(width: 40, height: 20)), in: c)
+        let rect = CGRect(x: 100, y: 100, width: 20, height: 10)
+        #expect(m.map(.dragBegan(onNode), in: c) == [.endMarquee(rect, .add)])
+    }
+
+    /// The lasso's one-shot replace rule applies to an abandoned marquee too.
+    @Test func aSecondDragBeganWhileLassoingEndsTheMarqueeReplacing() {
+        var m = TouchIntentMapper()
+        let c = context(.lasso, hits: everything)
+        let start = CGPoint(x: 620, y: 610)                                // canvas (300, 300), empty
+        _ = m.map(.dragBegan(start), in: c)
+        let moved = CGPoint(x: start.x - 60, y: start.y - 20)              // canvas (270, 290)
+        _ = m.map(.dragChanged(location: moved, translation: CGSize(width: -60, height: -20)), in: c)
+        let rect = CGRect(x: 270, y: 290, width: 30, height: 10)
+        #expect(m.map(.dragBegan(onNode), in: c) == [.endMarquee(rect, .replace)])
+    }
+
+    @Test func aSecondDragBeganWhilePanningEndsThePan() {
+        var m = TouchIntentMapper()
+        let c = context(.pointer, hits: everything)
+        _ = m.map(.dragBegan(onEmpty), in: c)
+        _ = m.map(.dragChanged(location: CGPoint(x: onEmpty.x + 10, y: onEmpty.y),
+                               translation: CGSize(width: 10, height: 0)), in: c)
+        #expect(m.map(.dragBegan(onNode), in: c) == [.endPan])
+    }
+
     // MARK: Two fingers
 
     @Test func twoFingerPanEmitsTheDeltaSinceTheLastReport() {
