@@ -252,17 +252,17 @@ import MetalNodesCore
     @Test func texturedFragmentProgramCompiles() async throws {
         let c = try compiler()
         let shader = try ShaderGenerator.generate(texturedFragmentDoc())
-        #expect(shader.textures.count == 1)
+        #expect(shader.textures == [TextureSlot(index: 0, asset: aid(1))])
         guard case .success(let p) = await c.compile(shader, generation: 1) else {
             Issue.record("expected success"); return
         }
-        #expect(p.shader.textures == shader.textures)
+        #expect(p.shader.textures == [TextureSlot(index: 0, asset: aid(1))])
     }
 
     @Test func texturedGroupProgramCompiles() async throws {
         let c = try compiler()
         let shader = try ShaderGenerator.generate(texturedGroupDoc())
-        #expect(shader.textures.count == 1)
+        #expect(shader.textures == [TextureSlot(index: 0, asset: aid(2))])
         if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) {
             Issue.record("group texture failed: \(msg)\n\(shader.source)")
         }
@@ -274,8 +274,22 @@ import MetalNodesCore
         d.settings.target = .stitchable(.layerEffect)
         d.settings.exportName = "fx"
         let shader = try ShaderGenerator.generate(d, target: d.settings.target)
+        #expect(shader.textures == [TextureSlot(index: 0, asset: aid(1))])
         if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) {
             Issue.record("layer effect texture failed: \(msg)\n\(shader.source)")
+        }
+    }
+
+    /// Viewer-shape compile: the Texture Sample's own `color` socket, viewed directly (spec §19.3),
+    /// still binds the same one texture slot the fragment program does.
+    @Test func viewerOnATextureSampleCompiles() async throws {
+        let c = try compiler()
+        let doc = texturedFragmentDoc()
+        let sample = doc.root.nodes.values.first { $0.kind == .builtin("texture.sample") }!
+        let shader = try ShaderGenerator.generate(doc, target: .fragment, viewer: SocketRef(sample.id, "color"), registry: .builtin)
+        #expect(shader.textures == [TextureSlot(index: 0, asset: aid(1))])
+        if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) {
+            Issue.record("viewer texture failed: \(msg)\n\(shader.source)")
         }
     }
 }

@@ -43,6 +43,21 @@ import MetalNodesCore
         #expect(s.placeholder.height == 2)
     }
 
+    /// Pins the placeholder's exact pixel content (magenta/black diagonal checker, RGBA8) and,
+    /// by using the real per-row stride (2 px × 4 bytes = 8), guards against the out-of-bounds
+    /// row-1 write/read a wrong `bytesPerRow` would otherwise hide.
+    @Test func placeholderIsAMagentaBlackDiagonalChecker() throws {
+        let s = try store()
+        var readBack = [UInt8](repeating: 0, count: 16)
+        readBack.withUnsafeMutableBytes { raw in
+            s.placeholder.getBytes(raw.baseAddress!, bytesPerRow: 2 * 4,
+                                   from: MTLRegionMake2D(0, 0, 2, 2), mipmapLevel: 0)
+        }
+        let magenta: [UInt8] = [255, 0, 255, 255]
+        let black: [UInt8] = [0, 0, 0, 255]
+        #expect(readBack == magenta + black + black + magenta)
+    }
+
     @Test func nilAssetReturnsThePlaceholder() throws {
         let s = try store()
         let tex = s.texture(for: nil, bytes: nil)

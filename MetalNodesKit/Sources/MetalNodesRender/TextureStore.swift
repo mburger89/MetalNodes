@@ -33,7 +33,7 @@ public final class TextureStore {
         let bytes = row0 + row1
         bytes.withUnsafeBytes { raw in
             texture.replace(region: MTLRegionMake2D(0, 0, 2, 2), mipmapLevel: 0,
-                            withBytes: raw.baseAddress!, bytesPerRow: 4 * 4)
+                            withBytes: raw.baseAddress!, bytesPerRow: 2 * 4)
         }
         return texture
     }
