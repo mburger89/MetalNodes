@@ -44,7 +44,9 @@ struct MetalNodesApp: App {
             let url = directory.appending(path: "Sample.mnshader")
             try ShaderPackage(document: .sample()).fileWrapper()
                 .write(to: url, options: .atomic, originalContentsURL: nil)
-            NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in }
+            NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
+                if let error { NSAlert(error: error).runModal() }
+            }
         } catch {
             NSAlert(error: error).runModal()
         }

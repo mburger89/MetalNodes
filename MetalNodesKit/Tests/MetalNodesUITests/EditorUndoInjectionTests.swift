@@ -19,7 +19,7 @@ import MetalNodesRender
 
     @Test func editsRegisterOnTheInjectedManager() {
         let external = UndoManager()
-        external.groupsByEvent = false
+        external.groupsByEvent = true          // as AppKit hands it over from the document window
         let m = model(undoManager: external)
         let original = m.document
         let node = uv(m)
@@ -86,6 +86,45 @@ import MetalNodesRender
         #expect(package.document == m.document)
         #expect(package.viewState == m.viewState)
         #expect(package.textures == [asset: Data([1, 2, 3])])
+    }
+
+    /// File ▸ Revert To Saved replaces the file under the editor: everything the package owns is
+    /// taken from it, and the undo stack goes rather than growing a step that could resurrect the
+    /// discarded content.
+    @Test func reloadReplacesThePackageAndDropsTheUndoStack() {
+        let m = model()
+        let node = uv(m)
+        m.apply(.moveNodes([node.id: CGPoint(x: 42, y: 42)]))
+        #expect(m.canUndo)
+
+        let asset = AssetID()
+        var saved = ShaderDocument.starter()
+        saved.settings.exportName = "reverted"
+        saved.settings.assets[asset] = AssetInfo(name: "a.png", pixelSize: CGSize(width: 2, height: 2), fileExtension: "png")
+        var state = EditorViewState()
+        state.editingDefinition = nil
+
+        m.reload(package: ShaderPackage(document: saved, viewState: state, textures: [asset: Data([7])]))
+
+        #expect(m.document == saved)
+        #expect(m.viewState == state)
+        #expect(m.textures == [asset: Data([7])])
+        #expect(!m.canUndo)
+        #expect(!m.canRedo)
+        #expect(m.undoManager.canUndo == false)
+    }
+
+    @Test func reloadAbandonsAnOpenTransactionInsteadOfCommittingIt() {
+        let m = model()
+        let node = uv(m)
+        m.beginTransaction("Move")
+        m.apply(.moveNodes([node.id: CGPoint(x: 1, y: 1)]))
+
+        m.reload(package: ShaderPackage(document: .starter()))
+
+        #expect(!m.isInTransaction)
+        m.endTransaction()                      // the stale gesture must not register anything
+        #expect(!m.canUndo)
     }
 
     /// The document host mirrors `textures` into the file wrapper with `onChange`, which only

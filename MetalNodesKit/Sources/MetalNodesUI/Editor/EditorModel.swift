@@ -99,6 +99,31 @@ public final class EditorModel {
         }()
     }
 
+    /// Replaces everything the package owns because the file changed underneath the editor —
+    /// File ▸ Revert To Saved, or any other reseed by the document host (spec §21.1).
+    ///
+    /// Deliberately not an edit: nothing on the undo stack applies to the document that just
+    /// arrived, so the stack is dropped rather than extended. Going through `apply(.restore(_:))`
+    /// instead would register the revert as an undoable step, which would let ⌘Z resurrect the
+    /// content the user just discarded.
+    public func reload(package: ShaderPackage) {
+        // A gesture that was open belongs to the document being replaced; its snapshot must not
+        // survive to be committed against the new one.
+        transactionSnapshot = nil
+        transactionDepth = 0
+
+        document = package.document
+        viewState = package.viewState
+        textures = package.textures
+        missingTextures = package.missingTextures
+        selectedWire = nil
+        pruneAfterRemoval()
+
+        undoManager.removeAllActions()
+        undoStackVersion += 1
+        scheduleCompile()
+    }
+
     /// Takes the document window's manager once SwiftUI publishes it (the environment value is
     /// nil on the first pass). Refused once anything is on the current stack, so a step already
     /// registered can never be stranded on a manager nobody drives.

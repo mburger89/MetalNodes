@@ -4,8 +4,10 @@ import MetalNodesCore
 import MetalNodesRender
 import MetalNodesUI
 
-/// One document window: builds the window's `EditorModel` on first appearance and mirrors what
-/// the model owns back into the file so `DocumentGroup` sees the edit and marks the window dirty.
+/// One document window: builds the window's `EditorModel` on first appearance and keeps it in step
+/// with the file in both directions — model → file so `DocumentGroup` sees the edit and marks the
+/// window dirty, and file → model so a change that came from outside the editor (File ▸ Revert To
+/// Saved) reseeds it rather than being silently overwritten by the next edit.
 ///
 /// The model is created lazily because `\.undoManager` is nil on the very first pass — the window
 /// publishes its manager a beat later, and `adoptUndoManager` takes it while the stack is still
@@ -21,11 +23,19 @@ struct DocumentHostView: View {
         Group {
             if let model {
                 EditorView(model: model, device: device)
-                    // View state is persisted next to the document (spec §3), so a camera move
-                    // marks the window dirty too.
-                    .onChange(of: model.document) { _, d in file.package.document = d }
-                    .onChange(of: model.viewState) { _, v in file.package.viewState = v }
-                    .onChange(of: model.textures) { _, t in file.package.textures = t }
+                    // Model → file. View state is persisted next to the document (spec §3), so a
+                    // camera move marks the window dirty too. Each write is guarded on a real
+                    // difference, so a value that arrived *from* the file is never written back.
+                    .onChange(of: model.document) { _, d in if file.package.document != d { file.package.document = d } }
+                    .onChange(of: model.viewState) { _, v in if file.package.viewState != v { file.package.viewState = v } }
+                    .onChange(of: model.textures) { _, t in if file.package.textures != t { file.package.textures = t } }
+                    // File → model. Watched per field rather than on the whole package: a field
+                    // the mirror above just wrote already equals the model's, so only a change
+                    // that did *not* come from the model gets this far, and `reseed` then checks
+                    // the package as a whole so one revert is one reload.
+                    .onChange(of: file.package.document) { _, _ in reseed() }
+                    .onChange(of: file.package.viewState) { _, _ in reseed() }
+                    .onChange(of: file.package.textures) { _, _ in reseed() }
             } else {
                 Color.clear.onAppear(perform: makeModel)
             }
@@ -34,6 +44,17 @@ struct DocumentHostView: View {
             if let manager, let model { model.adoptUndoManager(manager) }
         }
         .frame(minWidth: 960, minHeight: 620)
+    }
+
+    /// Pulls the file back into the model when the two have genuinely diverged — i.e. the file
+    /// was replaced under the editor. A no-op for anything the model itself just mirrored out.
+    private func reseed() {
+        guard let model else { return }
+        let incoming = file.package
+        guard incoming.document != model.document
+                || incoming.viewState != model.viewState
+                || incoming.textures != model.textures else { return }
+        model.reload(package: incoming)
     }
 
     private func makeModel() {
