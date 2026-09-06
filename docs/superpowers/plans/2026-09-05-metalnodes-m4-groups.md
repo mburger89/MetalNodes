@@ -2030,3 +2030,7 @@ extension EditorModel {
 ## What the next plan (M5) starts from
 
 Package persistence (`DocumentGroup`, `document.json` + `view.json` + `textures/`), Texture Sample + `layer.sample`, comment frames and stickies (already on `Graph`), the generated-code panel (uses `LineMap` — extend `SourceBuilder` owners into group function bodies), minimap, `.metal` export of the fragment program, cross-document paste (the dedupe logic is in place). Deferred from M4: line owners inside group functions (compile errors inside a definition currently map to no node), socket reordering, per-instance slots for nested instances (spec §9.2 says shared; revisit only if users ask), viewer numeric readout. Also carried over: ⇧A popover rows for definitions; a `[NodeID: NodeShape]` cache invalidated on document change (retires the per-lookup definition sort and per-frame shape re-derivation); delete the test-only `registry:` geometry overloads; `ShaderGenerator.diagnostics(_:)` is root-only and uncalled — fix or delete.
+
+## Execution record
+
+Executed 2026-09-05 with subagent-driven development on branch `m4-groups` (19 commits, 8d7f028..). Rulings R1–R24, fix rounds, deferred minors and the owed in-app checklist are recorded in the handoff document §11. The T11 manual checklist (Step 3) was not run: screen-capture consent was unavailable for the session.
