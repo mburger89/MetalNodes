@@ -101,7 +101,7 @@ public struct InspectorView: View {
             ParamControl(label: p.label, kind: p.kind, value: value,
                          onChange: { model.apply(.setParam(id, p.name, $0)) },
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
-                         imageData: model.assetData(for: value),
+                         image: model.assetThumbnail(for: value),
                          onChooseImage: chooseImageAction(for: id, param: p.name))
         }
 
@@ -230,7 +230,13 @@ public struct InspectorView: View {
         } else {
             ForEach(model.assetList) { entry in
                 let missing = model.missingTextures.contains(entry.id)
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .center) {
+                    // The same cached thumbnail the image well draws — no decode per body pass.
+                    if let image = model.thumbnail(for: entry.id) {
+                        Image(decorative: image, scale: 1).resizable().scaledToFill()
+                            .frame(width: 20, height: 20)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(entry.info.name).font(.caption)
                         Text(missing ? "missing" : "\(Int(entry.info.pixelSize.width)) × \(Int(entry.info.pixelSize.height))")

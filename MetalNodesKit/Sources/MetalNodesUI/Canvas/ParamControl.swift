@@ -1,8 +1,6 @@
 import SwiftUI
+import CoreGraphics
 import MetalNodesCore
-#if os(macOS)
-import AppKit
-#endif
 
 /// The inline editor for one parameter or unwired input.
 struct ParamControl: View {
@@ -11,8 +9,9 @@ struct ParamControl: View {
     let value: ParamValue
     let onChange: (ParamValue) -> Void
     var onEditing: ((Bool) -> Void)? = nil
-    /// The bytes behind a `.asset` value, for the image well's thumbnail.
-    var imageData: Data? = nil
+    /// The image well's thumbnail: already decoded and cached by the model, because this body runs
+    /// on every keystroke and every preview tick.
+    var image: CGImage? = nil
     /// What "Choose…" runs — the open panel, on the platforms that have one.
     var onChooseImage: (() -> Void)? = nil
 
@@ -63,19 +62,13 @@ struct ParamControl: View {
 
     @ViewBuilder
     private var thumbnailContent: some View {
-        #if os(macOS)
-        if let imageData, let image = NSImage(data: imageData) {
-            Image(nsImage: image).resizable().scaledToFill()
+        if let image {
+            // `decorative:` because the image is the parameter's value, not content to describe:
+            // the well is already labelled, and an imported file has no alt text to offer.
+            Image(decorative: image, scale: 1).resizable().scaledToFill()
         } else {
-            emptyThumbnail
+            Image(systemName: "photo").foregroundStyle(DraculaToken.muted.color)
         }
-        #else
-        emptyThumbnail
-        #endif
-    }
-
-    private var emptyThumbnail: some View {
-        Image(systemName: "photo").foregroundStyle(DraculaToken.muted.color)
     }
 
     @ViewBuilder

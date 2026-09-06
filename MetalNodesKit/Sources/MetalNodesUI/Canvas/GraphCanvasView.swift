@@ -152,7 +152,9 @@ public struct GraphCanvasView: View {
                 return model.addNode(defID: defID, at: origin) != nil
             }
             // An image file from the Finder becomes a Texture Sample already pointing at it
-            // (spec §21.2). Anything that is not an image is refused with a notice by the import.
+            // (spec §21.2). `addTextureNode` explains every refusal it makes — a link rather than a
+            // file, an unreadable file, bytes no decoder knows — with a notice. Only the first URL
+            // of a multi-file drop is placed; a node per file is not what the spec asks for.
             .dropDestination(for: URL.self) { urls, location in
                 guard let url = urls.first else { return false }
                 let c = transform.toCanvas(location)

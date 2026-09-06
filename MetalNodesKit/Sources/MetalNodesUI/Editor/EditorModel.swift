@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import Observation
 import MetalNodesCore
 import MetalNodesRender
@@ -69,8 +70,18 @@ public final class EditorModel {
     /// The imported image bytes, keyed as in `document.settings.assets`. Written by image import
     /// and by the package that opened the document; never re-encoded.
     public var textures: [AssetID: Data] = [:] {
-        didSet { texturesVersion += 1; refreshTextureBindings() }
+        didSet {
+            texturesVersion += 1
+            // A thumbnail is only valid while the bytes it was decoded from are still the ones
+            // under its id: drop the entries whose bytes changed or went away (a relink, a revert).
+            thumbnailCache = thumbnailCache.filter { textures[$0.key] == oldValue[$0.key] }
+            refreshTextureBindings()
+        }
     }
+    /// Small decoded thumbnails, one per asset, built on demand by `thumbnail(for:)`. Not observed:
+    /// it is a cache of what `textures` already says, filled *during* a view's body evaluation, and
+    /// every reader reaches it through `textures`, which is observed.
+    @ObservationIgnored var thumbnailCache: [AssetID: CGImage] = [:]
     /// Bumped on every write to `textures`. A host mirroring the bytes into its file document can
     /// observe this instead of `textures` itself, which would deep-compare every image on each change.
     public private(set) var texturesVersion = 0

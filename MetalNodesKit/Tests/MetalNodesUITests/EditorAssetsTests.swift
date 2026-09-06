@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import CoreGraphics
+import ImageIO
 import MetalNodesCore
 import MetalNodesRender
 @testable import MetalNodesUI
@@ -17,6 +18,25 @@ import MetalNodesRender
     static let png4x1 = Data(base64Encoded: """
         iVBORw0KGgoAAAANSUhEUgAAAAQAAAABCAYAAAD5PA/NAAAAEklEQVR42mP4z8DwHwwZ/oMBAEXLCff38S+qAAAAAElFTkSuQmCC
         """)!
+    /// A 3×2 JPEG, encoded here rather than pasted as a literal: a relink test needs bytes whose
+    /// format differs from the manifest entry's, and a hand-written JPEG literal is unreadable.
+    static let jpeg3x2: Data = {
+        let context = CGContext(data: nil, width: 3, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(red: 1, green: 0, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 3, height: 2))
+        let out = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        precondition(CGImageDestinationFinalize(destination))
+        return out as Data
+    }()
+
+    /// `CGImage` is a CF type with no `===`, so identity is the address.
+    private func identity(_ image: CGImage) -> UnsafeMutableRawPointer {
+        Unmanaged.passUnretained(image).toOpaque()
+    }
 
     private func model(_ document: ShaderDocument = .starter()) -> EditorModel {
         let m = EditorModel(document: document, compiler: RecordingCompiler())
@@ -117,16 +137,29 @@ import MetalNodesRender
         #expect(!m.isAssetReferenced(id))
         #expect(m.removeAsset(id))
         #expect(m.document.settings.assets.isEmpty)
-        #expect(m.textures[id] == nil)
         #expect(m.undoManager.undoActionName == "Remove Asset")
     }
 
     @Test func removeAssetUndoesBackIntoTheManifest() throws {
         let m = model()
         let id = try #require(m.importImage(data: Self.png2x2, name: "Leaf.png"))
+        let bytesBefore = m.textures
         #expect(m.removeAsset(id))
+        // Removal is a manifest edit only: undo restores the document, and the document is all it
+        // restores, so bytes dropped here would come back as an entry with nothing behind it.
+        #expect(m.textures == bytesBefore)
+
         m.undo()
         #expect(m.document.settings.assets[id]?.name == "Leaf.png")
+        #expect(m.textures[id] == Self.png2x2)
+    }
+
+    @Test func removeAssetForgetsThatItsBytesWereMissing() throws {
+        let m = model()
+        let id = try #require(m.importImage(data: Self.png2x2, name: "Leaf.png"))
+        m.missingTextures = [id]
+        #expect(m.removeAsset(id))
+        #expect(m.missingTextures.isEmpty)
     }
 
     @Test func referenceInsideADefinitionCounts() throws {
@@ -191,6 +224,42 @@ import MetalNodesRender
         let m = model()
         #expect(!m.replaceAssetBytes(AssetID(), data: Self.png2x2))
         #expect(m.textures.isEmpty)
+    }
+
+    @Test func relinkingTakesTheFileExtensionFromTheNewBytes() throws {
+        let m = model()
+        let id = try #require(m.importImage(data: Self.png2x2, name: "Leaf.png"))
+        #expect(m.document.settings.assets[id]?.fileExtension == "png")
+
+        #expect(m.replaceAssetBytes(id, data: Self.jpeg3x2))
+        // The bytes are written verbatim, so `textures/<id>.<ext>` has to name their real format.
+        #expect(m.document.settings.assets[id]?.fileExtension == "jpg")
+        #expect(m.document.settings.assets[id]?.pixelSize == CGSize(width: 3, height: 2))
+        #expect(m.document.settings.assets[id]?.name == "Leaf.png")
+    }
+
+    // MARK: Thumbnails
+
+    @Test func thumbnailsAreDecodedOncePerAsset() throws {
+        let m = model()
+        let id = try #require(m.importImage(data: Self.png2x2, name: "Leaf.png"))
+        let first = try #require(m.thumbnail(for: id))
+        let second = try #require(m.thumbnail(for: id))
+        #expect(identity(first) == identity(second))         // cached, not re-decoded
+
+        #expect(m.replaceAssetBytes(id, data: Self.png4x1))
+        let afterRelink = try #require(m.thumbnail(for: id))
+        #expect(identity(afterRelink) != identity(first))    // new bytes, new thumbnail
+        #expect(afterRelink.width == 4)
+    }
+
+    @Test func thereIsNoThumbnailWithoutBytes() throws {
+        let m = model()
+        let id = try #require(m.importImage(data: Self.png2x2, name: "Leaf.png"))
+        _ = m.thumbnail(for: id)
+        m.textures[id] = nil                                 // the bytes a package did not carry
+        #expect(m.thumbnail(for: id) == nil)
+        #expect(m.assetThumbnail(for: .asset(nil)) == nil)
     }
 
     // MARK: Assignment
