@@ -152,10 +152,15 @@ public struct GraphCanvasView: View {
                      attachmentAnchor: .rect(.rect(CGRect(origin: chooser?.screenPoint ?? .zero, size: CGSize(width: 1, height: 1)))), arrowEdge: .top) { c in
                 NodeSearchPopover(rows: { query in
                     var rows = PaletteSearch.rows(query: query, registry: model.registry, document: model.document)
-                    // A wire-drop chooser only lists builtins the wire could connect to; "My
-                    // Functions" definitions are wired when compatible (spec §21.7) but not filtered.
+                    // A wire-drop chooser only lists rows the wire could actually connect to —
+                    // builtins and "My Functions" definitions alike (spec §21.7).
                     if let w = c.wire {
-                        rows = rows.filter { if case .builtin(let d) = $0 { PaletteSearch.acceptsInput(of: w.type, d) } else { true } }
+                        rows = rows.filter { row in
+                            switch row {
+                            case .builtin(let d): PaletteSearch.acceptsInput(of: w.type, d)
+                            case .definition(let d): PaletteSearch.acceptsInput(of: w.type, d)
+                            }
+                        }
                     }
                     return rows
                 }, onPick: { row in
@@ -441,32 +446,30 @@ public struct GraphCanvasView: View {
     }
 
     private func place(_ def: NodeDef, for c: Chooser) {
+        placeAndWire(for: c) { model.addNode(defID: def.id, at: $0) }
+    }
+
+    /// A "My Functions" pick (spec §21.7): `addInstance` can refuse (a definition cannot contain
+    /// itself) — it shows the notice and returns `nil` itself, so `placeAndWire` simply has
+    /// nothing to wire; the open transaction still closes cleanly with no document change.
+    private func placeDefinition(_ def: GroupDefinition, for c: Chooser) {
+        placeAndWire(for: c) { model.addInstance(of: def.id, at: $0) }
+    }
+
+    /// Shared by `place` and `placeDefinition`: commits `place` at `c`'s canvas point (joining a
+    /// wire drop's open transaction) and, when it placed a node and `c` came from a wire drop,
+    /// wires the pending wire to the new node's first compatible input.
+    private func placeAndWire(for c: Chooser, place: (CGPoint) -> NodeID?) {
         chooser = nil                                   // not through `dismissChooser`: this commits
         model.beginTransaction("Add Node")              // joins a wire drop's open transaction
         let origin = CGPoint(x: c.canvasPoint.x - NodeGeometry.width / 2, y: c.canvasPoint.y - NodeGeometry.headerHeight / 2)
-        if let id = model.addNode(defID: def.id, at: origin), let w = c.wire,
+        if let id = place(origin), let w = c.wire,
            let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.graph,
                                                          shapes: shapes, resolved: model.resolvedTypes) {
             model.connectIfCompatible(w.source, to: input)
         }
         model.endTransaction()
         if c.wire != nil { model.endTransaction() }      // and closes it, as one undo step
-    }
-
-    /// A "My Functions" pick (spec §21.7): mirrors `place`, but `addInstance` can refuse (a
-    /// definition cannot contain itself) — it shows the notice and returns `nil` itself, so there
-    /// is simply nothing to wire; the open transaction still closes cleanly with no document change.
-    private func placeDefinition(_ def: GroupDefinition, for c: Chooser) {
-        chooser = nil
-        model.beginTransaction("Add Node")
-        let origin = CGPoint(x: c.canvasPoint.x - NodeGeometry.width / 2, y: c.canvasPoint.y - NodeGeometry.headerHeight / 2)
-        if let id = model.addInstance(of: def.id, at: origin), let w = c.wire,
-           let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.graph,
-                                                         shapes: shapes, resolved: model.resolvedTypes) {
-            model.connectIfCompatible(w.source, to: input)
-        }
-        model.endTransaction()
-        if c.wire != nil { model.endTransaction() }
     }
 
     /// Closes the chooser without placing anything. A chooser opened by a wire drop still owns

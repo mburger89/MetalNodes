@@ -60,14 +60,29 @@ enum PaletteSearch {
             filterDefinitions(query, in: document).map(SearchRow.definition)
     }
 
-    /// True if some input of `def` could accept a value of `type` (used to filter the wire-drop popover).
-    static func acceptsInput(of type: SocketType, _ def: NodeDef) -> Bool {
-        def.inputs.contains { decl in
+    /// True if some declaration in `inputs` could accept a value of `type`, resolving a generic
+    /// declaration against `generics` (spec §18.7, §21.7: shared by builtins and "My Functions"
+    /// definitions so the wire-drop popover filters both the same way).
+    private static func accepts(_ type: SocketType, inputs: [SocketDecl], generics: [String: [SocketType]]) -> Bool {
+        inputs.contains { decl in
             switch decl.type {
             case .concrete(let c): DropResolver.compatible(type, c)
-            case .generic(let g): (def.generics[g] ?? []).contains { DropResolver.compatible(type, $0) }
+            case .generic(let g): (generics[g] ?? []).contains { DropResolver.compatible(type, $0) }
             }
         }
+    }
+
+    /// True if some input of `def` could accept a value of `type` (used to filter the wire-drop popover).
+    static func acceptsInput(of type: SocketType, _ def: NodeDef) -> Bool {
+        accepts(type, inputs: def.inputs, generics: def.generics)
+    }
+
+    /// True if some exposed input of `def` could accept a value of `type` (used to filter the
+    /// wire-drop popover's "My Functions" rows the same way builtin rows are filtered, spec
+    /// §21.7). A definition's exposed inputs are always concrete — `EditorModel.exposeInput`
+    /// never creates a generic one — so there is no generics table to resolve against.
+    static func acceptsInput(of type: SocketType, _ def: GroupDefinition) -> Bool {
+        accepts(type, inputs: def.inputs, generics: [:])
     }
 }
 

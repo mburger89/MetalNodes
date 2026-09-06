@@ -61,4 +61,18 @@ import MetalNodesCore
         #expect(rows.map(\.id) == [SearchRow.builtin(registry["noise.value"]!)].map(\.id))
         #expect(rows.allSatisfy { if case .definition = $0 { false } else { true } })
     }
+
+    /// A wire-drop chooser must filter "My Functions" rows by input compatibility the same way it
+    /// filters builtins, so a definition with no compatible input never appears (spec §21.7).
+    @Test func acceptsInputAppliesToDefinitionsSymmetricallyWithBuiltins() {
+        var floatOnly = GroupDefinition.make(name: "Blend")
+        floatOnly.inputs = [SocketDecl(name: "amount", type: .concrete(.float))]
+
+        #expect(PaletteSearch.acceptsInput(of: .float, floatOnly))
+        #expect(PaletteSearch.acceptsInput(of: .texture, floatOnly) == false)
+
+        var noInputs = GroupDefinition.make(name: "Constant")
+        noInputs.inputs = []
+        #expect(PaletteSearch.acceptsInput(of: .float, noInputs) == false)
+    }
 }
