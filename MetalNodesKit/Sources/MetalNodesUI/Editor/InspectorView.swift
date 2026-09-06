@@ -4,13 +4,17 @@ import MetalNodesCore
 /// Right sidebar (spec §18.8). Reuses `ParamControl`; the node body keeps its compact controls.
 public struct InspectorView: View {
     let model: EditorModel
+    let services: EditorServices
     @State private var titleDraft = ""
     @State private var widthDraft = ""
     @State private var heightDraft = ""
     @State private var exportNameDraft = ""
     @FocusState private var exportNameFocused: Bool
 
-    public init(model: EditorModel) { self.model = model }
+    public init(model: EditorModel, services: EditorServices = .platform) {
+        self.model = model
+        self.services = services
+    }
 
     public var body: some View {
         ScrollView {
@@ -112,7 +116,7 @@ public struct InspectorView: View {
                          onChange: { model.apply(.setParam(id, p.name, $0)) },
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
                          image: model.assetThumbnail(for: value),
-                         onChooseImage: chooseImageAction(for: id, param: p.name))
+                         onChooseImage: { source in chooseImage(id, p.name, source) })
         }
 
         // A pseudo-node's "outputs" are the definition's inputs and carry no ◉ (spec §20.8).
@@ -146,21 +150,10 @@ public struct InspectorView: View {
         }
     }
 
-    /// The image well's "Choose…": one undo step ("Choose Image") for the import and the assignment
-    /// together (spec §21.2). Nil where there is no open panel, which hides the button.
-    private func chooseImageAction(for node: NodeID, param: ParamID) -> (() -> Void)? {
-        #if os(macOS)
-        return {
-            guard let picked = ImagePanelMac.chooseImage() else { return }
-            model.beginTransaction("Choose Image")
-            if let asset = model.importImage(data: picked.data, name: picked.name) {
-                model.apply(.setParam(node, param, .asset(asset)))
-            }
-            model.endTransaction()
-        }
-        #else
-        return nil
-        #endif
+    /// The image well's chooser: the model owns the "Choose Image" transaction (spec §21.2, §22.4),
+    /// so both platforms and both sources go through one function.
+    private func chooseImage(_ node: NodeID, _ param: ParamID, _ source: ImageSource) {
+        Task { await model.chooseImage(for: node, param: param, from: source, using: services.imageChooser) }
     }
 
     // MARK: Document
@@ -211,9 +204,7 @@ public struct InspectorView: View {
                 // Both actions read `settings.exportName`, so an uncommitted edit must land first.
                 Button("Copy Swift snippet") { commitExportName(); _ = model.copySwiftSnippet() }
                     .disabled(s.target.stitchableKind == nil)
-                #if os(macOS)
                 Button("Export…") { commitExportName(); model.requestExport() }
-                #endif
             }
             .controlSize(.small)
             if s.target.stitchableKind != nil {
@@ -256,8 +247,16 @@ public struct InspectorView: View {
                             .foregroundStyle(missing ? DraculaToken.orange.color : DraculaToken.muted.color)
                     }
                     Spacer()
-                    if missing, let relink = relinkAction(for: entry.id) {
-                        Button("Relink…", action: relink)
+                    if missing {
+                        #if os(macOS)
+                        Button("Relink…") { relink(entry.id, .files) }
+                        #else
+                        Menu("Relink…") {
+                            Button("Photos…") { relink(entry.id, .photos) }
+                            Button("Files…") { relink(entry.id, .files) }
+                        }
+                        .fixedSize()
+                        #endif
                     }
                     Button("Remove") { model.removeAsset(entry.id) }
                         .disabled(model.isAssetReferenced(entry.id))
@@ -269,15 +268,8 @@ public struct InspectorView: View {
 
     /// Re-imports a missing texture's bytes under its own id, so the warning clears and every node
     /// pointing at it keeps pointing at it.
-    private func relinkAction(for asset: AssetID) -> (() -> Void)? {
-        #if os(macOS)
-        return {
-            guard let picked = ImagePanelMac.chooseImage() else { return }
-            model.replaceAssetBytes(asset, data: picked.data)
-        }
-        #else
-        return nil
-        #endif
+    private func relink(_ asset: AssetID, _ source: ImageSource) {
+        Task { await model.relinkAsset(asset, from: source, using: services.imageChooser) }
     }
 
     private func clampedDimension(_ v: CGFloat) -> Int {

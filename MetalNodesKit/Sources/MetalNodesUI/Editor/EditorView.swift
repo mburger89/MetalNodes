@@ -6,13 +6,15 @@ import MetalNodesRender
 public struct EditorView: View {
     let model: EditorModel
     let device: MTLDevice
+    let services: EditorServices
     @State private var exportError: String?
-    /// A panel is on screen; a second request must not stack another one behind it.
+    /// A chooser is on screen; a second request must not stack another one behind it.
     @State private var exporting = false
 
-    public init(model: EditorModel, device: MTLDevice) {
+    public init(model: EditorModel, device: MTLDevice, services: EditorServices = .platform) {
         self.model = model
         self.device = device
+        self.services = services
     }
 
     public var body: some View {
@@ -22,17 +24,17 @@ public struct EditorView: View {
             .tint(DraculaToken.purple.color)
             .focusedSceneValue(\.editorModel, model)
             .onChange(of: model.exportRequest) { _, _ in
-                #if os(macOS)
                 // A modal panel must not run inside SwiftUI's update transaction (it returns
-                // immediately without showing); hop to the next main-actor turn first.
+                // immediately without showing); hop to the next main-actor turn first. The iPad's
+                // `fileExporter` needs the same hop for its `isPresented` write.
                 Task { @MainActor in
                     guard !exporting else { return }
                     exporting = true
                     defer { exporting = false }
-                    do { exportError = ExportPanelMac.run(files: try model.exportFiles()) }
-                    catch { exportError = "The graph has errors; fix them before exporting." }
+                    if case .failed(let message) = await model.exportShader(using: services.exporter) {
+                        exportError = message
+                    }
                 }
-                #endif
             }
             .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("OK") { exportError = nil }
@@ -136,7 +138,7 @@ public struct EditorView: View {
             }
             diagnosticsList
             Divider()
-            InspectorView(model: model)
+            InspectorView(model: model, services: services)
         }
         .padding(10)
     }

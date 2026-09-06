@@ -12,8 +12,9 @@ struct ParamControl: View {
     /// The image well's thumbnail: already decoded and cached by the model, because this body runs
     /// on every keystroke and every preview tick.
     var image: CGImage? = nil
-    /// What "Choose…" runs — the open panel, on the platforms that have one.
-    var onChooseImage: (() -> Void)? = nil
+    /// What the well's chooser buttons run, with the source the button stands for. Nil where there
+    /// is no chooser at all (the node body's compact well), which hides them.
+    var onChooseImage: ((ImageSource) -> Void)? = nil
 
     var body: some View {
         switch kind {
@@ -32,8 +33,9 @@ struct ParamControl: View {
         }
     }
 
-    /// The image well (spec §21.2): the imported image's thumbnail, "Choose…" to import another,
-    /// "Clear" to unassign — an unassigned Texture Sample still renders, on the placeholder.
+    /// The image well (spec §21.2): the imported image's thumbnail, a chooser to import another,
+    /// "Clear" to unassign — an unassigned Texture Sample still renders, on the placeholder. The Mac
+    /// has one open panel ("Choose…"); the iPad splits it into Photos and Files (spec §22.4).
     private var imageWell: some View {
         let assigned: Bool = { if case .asset(let a) = value { return a != nil } else { return false } }()
         return VStack(alignment: .leading, spacing: 4) {
@@ -41,8 +43,13 @@ struct ParamControl: View {
             HStack(spacing: 8) {
                 thumbnail
                 VStack(alignment: .leading, spacing: 2) {
-                    if onChooseImage != nil {
-                        Button("Choose…") { onChooseImage?() }
+                    if let choose = onChooseImage {
+                        #if os(macOS)
+                        Button("Choose…") { choose(.files) }
+                        #else
+                        Button("Photos…") { choose(.photos) }
+                        Button("Files…") { choose(.files) }
+                        #endif
                     }
                     Button("Clear") { onChange(.asset(nil)) }.disabled(!assigned)
                 }

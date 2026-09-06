@@ -8,32 +8,36 @@ import MetalNodesCore
 /// entitlement, a save panel's write grant covers only the exact URL the user picked — writing a
 /// second file beside it fails with "You don't have permission…" (confirmed by hand). Picking a
 /// folder via an open panel grants access to the whole directory, so both files can be written there.
-enum ExportPanelMac {
-    /// Returns an error message to show, or nil on success/cancel.
-    static func run(files: [ExportFile]) -> String? {
-        guard let metal = files.first(where: { $0.name.hasSuffix(".metal") }) else { return "Nothing to export." }
+public final class ExportPanelMac: Exporter {
+    public init() {}
+
+    /// `name` is the iPad's folder name; the panels ask the user for the destination themselves.
+    public func export(files: [ExportFile], name: String) async -> ExportOutcome { runPanels(files: files) }
+
+    func runPanels(files: [ExportFile]) -> ExportOutcome {
+        guard let metal = files.first(where: { $0.name.hasSuffix(".metal") }) else { return .failed("Nothing to export.") }
         guard let swift = files.first(where: { $0.name.hasSuffix(".swift") }) else {
             return runSingleFile(metal)
         }
         return runFolder(metal: metal, swift: swift)
     }
 
-    private static func runSingleFile(_ metal: ExportFile) -> String? {
+    private func runSingleFile(_ metal: ExportFile) -> ExportOutcome {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = metal.name
         panel.allowedContentTypes = [UTType(filenameExtension: "metal") ?? .sourceCode]
         panel.canCreateDirectories = true
         panel.title = "Export Shader"
-        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        guard panel.runModal() == .OK, let url = panel.url else { return .cancelled }
         do {
             try metal.contents.write(to: url, atomically: true, encoding: .utf8)
-            return nil
+            return .saved
         } catch {
-            return error.localizedDescription
+            return .failed(error.localizedDescription)
         }
     }
 
-    private static func runFolder(metal: ExportFile, swift: ExportFile) -> String? {
+    private func runFolder(metal: ExportFile, swift: ExportFile) -> ExportOutcome {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -42,24 +46,24 @@ enum ExportPanelMac {
         panel.title = "Export Shader"
         panel.prompt = "Export"
         panel.message = "Choose a folder for \(metal.name) and \(swift.name)."
-        guard panel.runModal() == .OK, let dir = panel.url else { return nil }
+        guard panel.runModal() == .OK, let dir = panel.url else { return .cancelled }
         // An open panel grants the folder, so nothing warns about replacing what is already there
         // the way a save panel would — ask before clobbering.
         let existing = [metal.name, swift.name].filter {
             FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path)
         }
-        if !existing.isEmpty, !confirmReplace(existing) { return nil }
+        if !existing.isEmpty, !confirmReplace(existing) { return .cancelled }
         do {
             try metal.contents.write(to: dir.appendingPathComponent(metal.name), atomically: true, encoding: .utf8)
             try swift.contents.write(to: dir.appendingPathComponent(swift.name), atomically: true, encoding: .utf8)
-            return nil
+            return .saved
         } catch {
-            return error.localizedDescription
+            return .failed(error.localizedDescription)
         }
     }
 
     /// True when the user chose Replace.
-    private static func confirmReplace(_ names: [String]) -> Bool {
+    private func confirmReplace(_ names: [String]) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Replace existing files?"
