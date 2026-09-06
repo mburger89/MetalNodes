@@ -38,4 +38,20 @@ import CoreGraphics
         doc[.definition(def.id)] = g
         #expect(doc.definitions[def.id]?.graph.nodes[n.id] != nil)
     }
+
+    /// The XCUITest fixture (spec §22.8). Its ids are fixed *and distinct in their first eight hex
+    /// digits*, because that prefix is what `GroupCodegen.hex8` — and every accessibility
+    /// identifier built from it — uses. The Texture Sample's `color` output is deliberately
+    /// unconnected: it is what the wire-drag UI test connects.
+    @Test func texturedFixtureHasStableIdentifiers() {
+        let doc = ShaderDocument.textured()
+        let uv = NodeID(raw: UUID(uuidString: "00000101-0000-0000-0000-000000000000")!)
+        let tex = NodeID(raw: UUID(uuidString: "00000102-0000-0000-0000-000000000000")!)
+        let out = NodeID(raw: UUID(uuidString: "00000103-0000-0000-0000-000000000000")!)
+        #expect(Set(doc.root.nodes.keys) == Set([uv, tex, out]))
+        #expect(doc.root.nodes[tex]?.kind == .builtin("texture.sample"))
+        #expect(doc.root.inputs[SocketRef(tex, "uv")] == SocketRef(uv, "uv"))
+        #expect(doc.root.inputs[SocketRef(out, "color")] == nil)
+        #expect(Set([uv, tex, out].map(GroupCodegen.hex8)) == Set(["00000101", "00000102", "00000103"]))
+    }
 }
