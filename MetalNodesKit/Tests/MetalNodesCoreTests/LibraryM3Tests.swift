@@ -112,6 +112,20 @@ import Foundation
         #expect(s.resolved[r.id]?.outputTypes["out"] == .color)
     }
 
+    /// File ▸ New's document (spec §21.1): the smallest graph that already renders.
+    @Test func starterIsUVWiredIntoTheFragmentOutput() throws {
+        let doc = ShaderDocument.starter()
+        #expect(GraphValidator.validate(document: doc, registry: reg, target: .fragment).isEmpty)
+
+        let uv = try #require(doc.root.nodes.values.first { $0.kind == .builtin("input.uv") })
+        let out = try #require(doc.root.nodes.values.first { $0.kind == .builtin("output.fragment") })
+        #expect(doc.root.nodes.count == 2)
+        #expect(uv.position == CGPoint(x: 0, y: 0))
+        #expect(out.position == CGPoint(x: 300, y: 0))
+        #expect(doc.root.inputs[SocketRef(out.id, "color")] == SocketRef(uv.id, "uv"))
+        #expect(try ShaderGenerator.generate(doc, registry: reg).source.contains("in.uv"))
+    }
+
     @Test func compareProducesBoolAndSwitchSelects() throws {
         let cmp = NodeInstance(kind: .builtin("utility.compare"), params: ["op": .enumCase("greater")])
         let sw = NodeInstance(kind: .builtin("utility.switch")), out = NodeInstance(kind: .builtin("output.fragment"))

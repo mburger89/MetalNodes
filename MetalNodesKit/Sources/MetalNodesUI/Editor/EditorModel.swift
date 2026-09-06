@@ -54,20 +54,65 @@ public final class EditorModel {
     private var scheduleCount = 0
 
     // MARK: Undo (spec §18.3) — see EditorModel+Undo.swift
-    public let undoManager = UndoManager()
+    /// The window's manager once a document window hands one over, else a private one.
+    public private(set) var undoManager: UndoManager
     var transactionSnapshot: ShaderDocument?
     var transactionName = ""
     var transactionDepth = 0
 
-    public init(document: ShaderDocument, compiler: any ShaderCompiling,
+    // MARK: Textures (spec §21.2)
+
+    /// The imported image bytes, keyed as in `document.settings.assets`. Written by image import
+    /// and by the package that opened the document; never re-encoded.
+    public var textures: [AssetID: Data] = [:] { didSet { refreshTextureBindings() } }
+    /// Assets whose bytes were absent from the package on open: each referenced one becomes a
+    /// warning diagnostic after generation, and its slot binds the placeholder.
+    public var missingTextures: Set<AssetID> = []
+    /// Everything the `.mnshader` package holds, assembled from the model's live state.
+    public var package: ShaderPackage {
+        ShaderPackage(document: document, viewState: viewState, textures: textures)
+    }
+    private let textureStore: TextureStore?
+    /// The slots of the last generated program, kept so `textures` changes can rebind without
+    /// waiting for a recompile.
+    private var textureSlots: [TextureSlot] = []
+
+    public init(document: ShaderDocument, viewState: EditorViewState = EditorViewState(),
+                textures: [AssetID: Data] = [:], compiler: any ShaderCompiling,
                 registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState(),
-                pasteboard: any Pasteboarding = SystemPasteboard()) {
+                pasteboard: any Pasteboarding = SystemPasteboard(),
+                undoManager: UndoManager? = nil, textureStore: TextureStore? = nil) {
         self.document = document
+        self.viewState = viewState
+        self.textures = textures
         self.compiler = compiler
         self.registry = registry
         self.preview = preview
         self.pasteboard = pasteboard
-        undoManager.groupsByEvent = false
+        self.textureStore = textureStore
+        // A private manager needs `groupsByEvent` off so `commitUndo`'s own grouping is the only
+        // one; the window's belongs to AppKit, which configures it, so leave that one alone.
+        self.undoManager = undoManager ?? {
+            let own = UndoManager()
+            own.groupsByEvent = false
+            return own
+        }()
+    }
+
+    /// Takes the document window's manager once SwiftUI publishes it (the environment value is
+    /// nil on the first pass). Refused once anything is on the current stack, so a step already
+    /// registered can never be stranded on a manager nobody drives.
+    public func adoptUndoManager(_ manager: UndoManager) {
+        guard manager !== undoManager, !undoManager.canUndo, !undoManager.canRedo else { return }
+        undoManager = manager
+        undoStackVersion += 1
+    }
+
+    /// Rebinds `preview.textures` from the last generated program's slots. Called whenever the
+    /// slots, the bytes or the manifest change (spec §21.2).
+    func refreshTextureBindings() {
+        guard let textureStore else { return }
+        preview.textures = textureStore.bindings(for: textureSlots, textures: textures)
     }
 
     // MARK: The active graph (spec §20.3)
@@ -265,18 +310,25 @@ public final class EditorModel {
             return                                   // keep last-good pipeline
         }
 
+        // The slots this program binds; a `textures` change rebinds against these without a recompile.
+        textureSlots = shader.textures
+        refreshTextureBindings()
+        // One warning per referenced asset whose bytes the package did not carry (spec §21.2).
+        // Carried onto every outcome below, since each of them replaces `diagnostics` wholesale.
+        let missing = missingTextureDiagnostics(for: shader.textures)
+
         if let last = lastCompiled, last.source == shader.source, last.fastMath == doc.settings.fastMath {
             // Same program as the last settled compile (typically an undo of a cosmetic edit): its
             // outcome still stands. Refresh what depends on the document and skip the compiler (§19.1).
             generatedSource = shader.source
             resolvedTypes = shader.resolved
             if last.succeeded, let p = preview.pipeline {
-                diagnostics = []
+                diagnostics = missing
                 preview.uniforms = UniformImage.rebuild(layout: p.shader.layout, document: document, registry: registry)
             }
             return
         }
-        diagnostics = []
+        diagnostics = missing
         generatedSource = shader.source
         resolvedTypes = shader.resolved
 
@@ -295,10 +347,20 @@ public final class EditorModel {
                 let sev: Diagnostic.Severity = l.severity == .error ? .error : .warning
                 mapped.append(Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line)))
             }
-            diagnostics = mapped.isEmpty ? [Diagnostic(.error, message)] : mapped
+            diagnostics = (mapped.isEmpty ? [Diagnostic(.error, message)] : mapped) + missing
             lastCompiled = (shader.source, doc.settings.fastMath, false)
         case .superseded:
             break
+        }
+    }
+
+    /// A warning per slot whose asset is in `missingTextures`, named from the document's manifest
+    /// (spec §21.2: the manifest entry survives, the preview shows the placeholder).
+    private func missingTextureDiagnostics(for slots: [TextureSlot]) -> [Diagnostic] {
+        slots.compactMap { slot in
+            guard let asset = slot.asset, missingTextures.contains(asset),
+                  let info = document.settings.assets[asset] else { return nil }
+            return Diagnostic(.warning, "Texture “\(info.name)” is missing")
         }
     }
 
