@@ -2,7 +2,8 @@ import Foundation
 import CoreGraphics
 
 /// The pasteboard payload (spec §6, §18.4): a subgraph with positions relative to its own
-/// bounding box, plus the definitions/comments it depends on (empty until M4/M5).
+/// bounding box, plus the group definitions it transitively depends on (populated by
+/// `extract(_:from:document:)`).
 public struct GraphClipboard: Codable, Sendable, Equatable {
     public static let currentFormatVersion = 1
 
@@ -55,6 +56,65 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
             return Edge(to: SocketRef(to, e.to.socket), from: SocketRef(from, e.from.socket))
         }
         return (fresh, wires)
+    }
+}
+
+public extension GraphClipboard {
+    /// Spec §6, §20.7: the payload also carries every `GroupDefinition` transitively referenced
+    /// by the copied instances, sorted by id. Pseudo-nodes (`.groupInput`/`.groupOutput`) never copy.
+    static func extract(_ ids: Set<NodeID>, from graph: Graph, document doc: ShaderDocument) -> GraphClipboard {
+        let real = ids.filter { graph.nodes[$0].map { $0.kind != .groupInput && $0.kind != .groupOutput } ?? false }
+        var clip = extract(real, from: graph)
+        var refs = Set<GroupID>()
+        for id in real {
+            if case .group(let g)? = graph.nodes[id]?.kind {
+                refs.insert(g)
+                refs.formUnion(GroupDependencies.transitive(g, in: doc))
+            }
+        }
+        clip.definitions = refs.compactMap { doc.definitions[$0] }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        return clip
+    }
+}
+
+/// Spec §6 / §20.7: what to do with the definitions a paste payload brings — reuse an identical
+/// definition, import a diverged one under a fresh id, or insert one the destination lacks.
+public enum ClipboardMerge {
+    public struct Plan: Sendable {
+        public var insert: [GroupDefinition] = []
+        public var remap: [GroupID: GroupID] = [:]
+    }
+
+    public static func plan(definitions: [GroupDefinition], into doc: ShaderDocument) -> Plan {
+        var plan = Plan()
+        for d in definitions {
+            if let existing = doc.definitions[d.id] {
+                if existing.contentHash == d.contentHash { continue }
+                let copy = GroupDefinition(id: GroupID(), name: d.name + " (imported)",
+                                            inputs: d.inputs, outputs: d.outputs, graph: d.graph, accent: d.accent)
+                plan.remap[d.id] = copy.id
+                plan.insert.append(copy)
+            } else {
+                plan.insert.append(d)
+            }
+        }
+        // Instances inside inserted definitions must follow the remap too.
+        plan.insert = plan.insert.map { d in
+            var m = d
+            for (id, n) in m.graph.nodes {
+                if case .group(let g) = n.kind, let r = plan.remap[g] { m.graph.nodes[id]!.kind = .group(r) }
+            }
+            return m
+        }
+        return plan
+    }
+
+    public static func apply(_ plan: Plan, to nodes: [NodeInstance]) -> [NodeInstance] {
+        nodes.map { n in
+            var m = n
+            if case .group(let g) = n.kind, let r = plan.remap[g] { m.kind = .group(r) }
+            return m
+        }
     }
 }
 
