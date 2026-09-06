@@ -9,6 +9,9 @@ public struct GeneratedShader: Sendable, Hashable {
     public let target: OutputTarget
     /// The node/socket previewed, when this is a viewer program (spec §19.3).
     public let viewer: SocketRef?
+    /// The instances dived through to reach the viewed node, outermost first (spec §20.5).
+    /// Empty when the viewer is in the root or the definition was opened from the palette.
+    public let viewerPath: [NodeID]
     /// The stitchable function's source, when `target` is `.stitchable` (T4). `nil` for a viewer or a fragment program.
     public let exportSource: String?
     /// The exported SwiftUI stitchable function's name. Empty when `exportSource` is `nil`.
@@ -16,7 +19,7 @@ public struct GeneratedShader: Sendable, Hashable {
 
     public init(source: String, layout: UniformLayout, lineMap: LineMap, resolved: [NodeID: ResolvedNode],
                 fragmentFunctionName: String, target: OutputTarget, viewer: SocketRef? = nil,
-                exportSource: String? = nil, functionName: String = "") {
+                viewerPath: [NodeID] = [], exportSource: String? = nil, functionName: String = "") {
         self.source = source
         self.layout = layout
         self.lineMap = lineMap
@@ -24,6 +27,7 @@ public struct GeneratedShader: Sendable, Hashable {
         self.fragmentFunctionName = fragmentFunctionName
         self.target = target
         self.viewer = viewer
+        self.viewerPath = viewerPath
         self.exportSource = exportSource
         self.functionName = functionName
     }
@@ -41,7 +45,11 @@ public enum ShaderGenerator {
         return structural + TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order).diagnostics
     }
 
+    /// `viewerPath` is the editing stack: the instances dived through to reach `viewer`, outermost
+    /// first. `viewerDefinition` names the definition when it was opened from the palette with no
+    /// instance — its declared defaults stand in for one (spec §20.5).
     public static func generate(_ doc: ShaderDocument, target: OutputTarget = .fragment, viewer: SocketRef? = nil,
+                                viewerPath: [NodeID] = [], viewerDefinition: GroupID? = nil,
                                 registry: NodeRegistry = .builtin) throws(GenerationError) -> GeneratedShader {
         let structural = GraphValidator.validate(document: doc, registry: registry, target: target)
         if structural.contains(where: { $0.severity == .error }) { throw .invalid(structural) }
@@ -49,19 +57,42 @@ public enum ShaderGenerator {
             throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: v.node, socket: v.socket)])
         }
         let terminal = GraphValidator.terminal(in: doc.root)!
-        let start = viewer?.node ?? terminal
-        let order = TopoSort.order(doc.root, from: start)
-        let (resolved, typeDiags) = TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order)
-        if !typeDiags.isEmpty { throw .invalid(structural + typeDiags) }
 
         // One function per reachable definition, inner-most first, so each is already built
-        // when the definitions and the program that call it are emitted (spec §20.4).
-        let groupOrder = GroupDependencies.innerFirst(GroupDependencies.reachable(from: doc.root, in: doc), in: doc)
+        // when the definitions and the program that call it are emitted (spec §20.4). A
+        // definition previewed from the palette need not be instantiated anywhere.
+        var reachable = GroupDependencies.reachable(from: doc.root, in: doc)
+        if viewer != nil, viewerPath.isEmpty, let gid = viewerDefinition, doc.definitions[gid] != nil {
+            reachable.insert(gid)
+            reachable.formUnion(GroupDependencies.transitive(gid, in: doc))
+        }
+        let groupOrder = GroupDependencies.innerFirst(reachable, in: doc)
         var functions: [GroupID: GroupFunction] = [:]
         for gid in groupOrder {
             functions[gid] = try GroupCodegen.function(for: doc.definitions[gid]!, document: doc, registry: registry, functions: functions)
         }
         let groupFunctions = groupOrder.compactMap { functions[$0] }
+
+        // A viewer inside a definition runs through view variants of the definitions on the path
+        // (spec §20.5); one in the root is the ordinary program terminating early.
+        if let v = viewer {
+            if !viewerPath.isEmpty {
+                return try viewerThroughInstances(doc, viewer: v, path: viewerPath, registry: registry,
+                                                  functions: functions, groupFunctions: groupFunctions)
+            }
+            if let gid = viewerDefinition {
+                return try viewerFromDefinition(doc, viewer: v, definition: gid, registry: registry,
+                                                functions: functions, groupFunctions: groupFunctions)
+            }
+            guard doc.root.nodes[v.node] != nil else {
+                throw .invalid([Diagnostic(.error, "The viewed instance no longer exists")])
+            }
+        }
+
+        let start = viewer?.node ?? terminal
+        let order = TopoSort.order(doc.root, from: start)
+        let (resolved, typeDiags) = TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order)
+        if !typeDiags.isEmpty { throw .invalid(structural + typeDiags) }
 
         // A viewer is a preview concept: always a fragment program (spec §19.3).
         let effectiveTarget: OutputTarget = viewer == nil ? target : .fragment
@@ -82,23 +113,33 @@ public enum ShaderGenerator {
                                    env: .fragment,
                                    reserved: viewer == nil ? UniformLayoutBuilder.standardReserved : UniformLayoutBuilder.viewerReserved,
                                    functions: functions)
-        var b = SourceBuilder()
-        b.add("#include <metal_stdlib>\nusing namespace metal;\n")
-        b.add(emitted.layout.mslStruct + "\n")
-        b.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
-        for f in MSLStdlib.resolve(emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib)) { b.add(f.source + "\n") }
-        // Group function bodies are one chunk: their statements' owners are nodes in another
-        // graph, which the root line map cannot address (M4 limitation, spec §9.4).
-        for fn in groupFunctions { b.add(fn.source) }
-        b.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
-        for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
+        var body = zip(emitted.bodyLines, emitted.lineOwners).map { (line: $0, owner: $1) }
         if let v = viewer, let variable = emitted.outputVars[v], let type = resolved[v.node]?.outputTypes[v.socket],
            let wrap = ViewerWrap.statement(variable: variable, type: type) {
-            b.add("    " + wrap, owner: v.node)
+            body.append((wrap, v.node))
         }
-        b.add("}")
+        let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib),
+                                functions: groupFunctions.map(\.source), body: body)
         return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map, resolved: resolved,
                                fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: viewer)
+    }
+
+    /// The shape of every fragment program: includes, the uniform struct, `VertexOut`, the stdlib
+    /// closure, the group functions, then `shaderMain`'s body.
+    static func fragmentProgram(layout: UniformLayout, stdlib: [String], functions: [String],
+                                body: [(line: String, owner: NodeID?)]) -> SourceBuilder {
+        var b = SourceBuilder()
+        b.add("#include <metal_stdlib>\nusing namespace metal;\n")
+        b.add(layout.mslStruct + "\n")
+        b.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
+        for f in MSLStdlib.resolve(stdlib) { b.add(f.source + "\n") }
+        // Group function bodies are one chunk: their statements' owners are nodes in another
+        // graph, which the root line map cannot address (M4 limitation, spec §9.4).
+        for source in functions { b.add(source) }
+        b.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
+        for statement in body { b.add("    " + statement.line, owner: statement.owner) }
+        b.add("}")
+        return b
     }
 
     private static func assembleStitchable(_ doc: ShaderDocument, kind: StitchableKind, order: [NodeID], terminal: NodeID,

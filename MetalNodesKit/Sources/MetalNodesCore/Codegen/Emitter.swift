@@ -41,9 +41,15 @@ enum Emitter {
                      registry: NodeRegistry, resolved: [NodeID: ResolvedNode],
                      env: EmitEnvironment = .fragment,
                      reserved: [UniformLayoutBuilder.Reserved] = UniformLayoutBuilder.standardReserved,
-                     functions: [GroupID: GroupFunction] = [:]) -> Output {
+                     functions: [GroupID: GroupFunction] = [:],
+                     viewInstance: (id: NodeID, function: GroupFunction)? = nil) -> Output {
         let doc = doc ?? { var d = ShaderDocument(); d.root = graph; return d }()
         func shape(_ inst: NodeInstance) -> NodeShape? { doc.shape(of: inst, in: path, registry: registry) }
+        /// The dived-through instance calls its definition's view variant; every other instance of
+        /// the same definition keeps the normal function (spec §20.5).
+        func function(for gid: GroupID, at id: NodeID) -> GroupFunction? {
+            viewInstance.flatMap { $0.id == id ? $0.function : nil } ?? functions[gid]
+        }
 
         // Pass 1: collect uniform requests in a deterministic, deduplicated order.
         var requests: [(path: ParamPath, type: SocketType)] = []
@@ -72,7 +78,7 @@ enum Emitter {
             case .group(let gid):
                 // The instance's own unwired exposed inputs, then everything its function needs.
                 if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
-                for p in functions[gid]?.uniformParams ?? [] { request(p.path, p.type) }
+                for p in function(for: gid, at: id)?.uniformParams ?? [] { request(p.path, p.type) }
             case .groupOutput:
                 if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
             case .groupInput:
@@ -171,7 +177,7 @@ enum Emitter {
                 out.inputExpressions[id] = inputs
 
             case .group(let gid):
-                guard let s = shape(inst), let fn = functions[gid] else { continue }
+                guard let s = shape(inst), let fn = function(for: gid, at: id) else { continue }
                 let inputs = inputExpressions(id, s.inputs, r)
                 out.inputExpressions[id] = inputs
                 let result = "r\(varCounter)"; varCounter += 1
@@ -181,6 +187,14 @@ enum Emitter {
                 args += fn.uniformParams.map { uniformExpr($0.path) }
                 out.bodyLines.append("\(fn.structName) \(result) = \(fn.name)(\(args.joined(separator: ", ")));")
                 out.lineOwners.append(id)
+                if let viewed = fn.viewedType {
+                    // A view variant yields one socket, `value`: the viewed node's output (spec §20.5).
+                    let name = "v\(varCounter)"; varCounter += 1
+                    out.outputVars[SocketRef(id, "value")] = name
+                    out.bodyLines.append("\(viewed.mslName) \(name) = \(result).value;")
+                    out.lineOwners.append(id)
+                    continue
+                }
                 let outputs = declareOutputs(id, s.outputs, r)
                 for decl in s.outputs {
                     out.bodyLines.append("\(outputs[decl.name]!) = \(result).\(decl.name);")
