@@ -355,6 +355,37 @@ import MetalNodesRender
         #expect(m.document.definitions[gid]!.graph == before)
     }
 
+    /// A refused ⌘G says so rather than doing nothing (spec §20.6): a selection of nothing but
+    /// pseudo-nodes leaves no editable selection to group.
+    @Test func aRefusedGroupShowsANotice() {
+        let m = model()
+        m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
+        let gid = m.groupSelection()!
+        m.diveIn(m.selection.first!)
+        let gin = m.document.definitions[gid]!.inputNode!
+        m.select(nodes: [gin], mode: .replace)
+        let before = m.document
+        #expect(m.groupSelection() == nil)
+        #expect(m.notice == "Selection cannot be grouped")
+        #expect(m.document == before)
+    }
+
+    /// A camera parked on a definition that is then deleted does not outlive it (spec §20.3).
+    @Test func deletingADefinitionDropsItsCamera() {
+        let m = model()
+        m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
+        let gid = m.groupSelection()!
+        let inst = m.selection.first!
+        m.viewState.cameras[.root] = Camera(pan: CGSize(width: 1, height: 1), zoom: 1)
+        m.viewState.cameras[.definition(gid)] = Camera(pan: CGSize(width: 2, height: 2), zoom: 2)
+        m.apply(.removeNodes([inst]))
+        #expect(m.viewState.cameras[.definition(gid)] != nil)      // still there while the definition is
+        m.apply(.deleteDefinition(gid))
+        #expect(m.document.definitions.isEmpty)
+        #expect(m.viewState.cameras[.definition(gid)] == nil)
+        #expect(m.viewState.cameras[.root]?.zoom == CGFloat(1))
+    }
+
     @Test func pasteBringsDefinitionsAlong() {
         let m = model()
         m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)

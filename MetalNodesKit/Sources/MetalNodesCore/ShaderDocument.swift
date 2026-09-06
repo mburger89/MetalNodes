@@ -93,8 +93,11 @@ public extension GroupDefinition {
             copy.graph.nodes[id] = NodeInstance(id: id, kind: n.kind, position: n.position,
                                                  params: n.params, customTitle: n.customTitle, collapsed: n.collapsed)
         }
+        // A wire whose either end names a node the graph does not hold is dangling: drop it rather
+        // than trap — a decoded or hand-built definition can carry one.
         for (to, from) in graph.inputs {
-            copy.graph.connect(SocketRef(map[from.node]!, from.socket), to: SocketRef(map[to.node]!, to.socket))
+            guard let f = map[from.node], let t = map[to.node] else { continue }
+            copy.graph.connect(SocketRef(f, from.socket), to: SocketRef(t, to.socket))
         }
         return copy
     }
@@ -117,8 +120,19 @@ public extension ShaderDocument {
     }
 
     /// Reads/mutates the graph at `path`. Writing to a missing definition is a programmer error.
+    /// `_modify` yields the storage in place, so `doc[path].nodes[id]?.position = p` mutates the
+    /// graph without the get→copy→set round trip a get/set-only subscript would force.
     subscript(path: GraphPath) -> Graph {
         get { graph(at: path) ?? Graph() }
+        _modify {
+            switch path {
+            case .root:
+                yield &root
+            case .definition(let id):
+                precondition(definitions[id] != nil, "no definition \(id)")
+                yield &definitions[id]!.graph
+            }
+        }
         set {
             switch path {
             case .root: root = newValue

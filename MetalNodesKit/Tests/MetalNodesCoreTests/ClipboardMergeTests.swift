@@ -61,4 +61,19 @@ import CoreGraphics
         #expect(copy.graph.nodes.count == changed.graph.nodes.count)
         #expect(copy.graph.inputs.count == changed.graph.inputs.count)
     }
+
+    /// A wire whose source node is not in the graph is dropped by the copy, not force-unwrapped.
+    @Test func duplicateDropsADanglingWire() {
+        var def = GroupDefinition.make(name: "Fbm")
+        def.outputs = [SocketDecl(name: "v", type: .concrete(.float))]
+        let real = NodeInstance(kind: .builtin("input.float"))
+        def.graph.nodes[real.id] = real
+        def.graph.connect(SocketRef(real.id, "out"), to: SocketRef(def.outputNode!, "v"))
+        def.graph.inputs[SocketRef(real.id, "a")] = SocketRef(NodeID(), "out")     // source is gone
+        let copy = def.duplicate(name: "Fbm 2")
+        #expect(copy.graph.nodes.count == 3)
+        #expect(copy.graph.inputs.count == 1)
+        let map = Dictionary(uniqueKeysWithValues: copy.graph.nodes.values.map { ($0.kind, $0.id) })
+        #expect(copy.graph.inputs[SocketRef(map[.groupOutput]!, "v")] == SocketRef(map[.builtin("input.float")]!, "out"))
+    }
 }

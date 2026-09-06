@@ -4,15 +4,23 @@ import MetalNodesCore
 
 /// Groups: the five operations, the editing stack, and the recursion refusal (spec §20.3, §20.6).
 extension EditorModel {
-    /// Folds the selection into a fresh definition and selects its instance. Nil when nothing
-    /// real is selected or the cut could not be typed.
+    /// Folds the selection into a fresh definition and selects its instance. Nil — with a notice,
+    /// so a refused ⌘G is not silent (spec §20.6) — when nothing real is selected or the cut could
+    /// not be typed.
     @discardableResult
     public func groupSelection(name: String? = nil) -> GroupID? {
         let ids = editableSelection
-        guard !ids.isEmpty else { return nil }
+        guard !ids.isEmpty else {
+            showNotice("Selection cannot be grouped")
+            return nil
+        }
         let before = Set(document.definitions.keys)
         apply(.groupSelection(ids, name: name))
-        return Set(document.definitions.keys).subtracting(before).first
+        guard let created = Set(document.definitions.keys).subtracting(before).first else {
+            showNotice("Selection cannot be grouped")
+            return nil
+        }
+        return created
     }
 
     public func ungroupSelection() {
@@ -166,9 +174,15 @@ extension EditorModel {
         }
     }
 
-    /// Drops the stack from the first entry that is no longer a group instance, and forgets a
-    /// deleted `editingDefinition` — a dive can outlive what it dived into (spec §20.3).
+    /// Drops the stack from the first entry that is no longer a group instance, forgets a
+    /// deleted `editingDefinition` — a dive can outlive what it dived into (spec §20.3) — and
+    /// drops the parked camera of any definition the document no longer holds, so leaving a
+    /// graph that is being deleted cannot leave its camera behind for good.
     func pruneEditingStack() {
+        viewState.cameras = viewState.cameras.filter { path, _ in
+            guard case .definition(let id) = path else { return true }
+            return document.definitions[id] != nil
+        }
         if let i = viewState.editingStack.firstIndex(where: { id in
             guard let n = document.node(id)?.node, case .group(let g) = n.kind, document.definitions[g] != nil else { return true }
             return false

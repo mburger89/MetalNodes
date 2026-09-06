@@ -118,7 +118,10 @@ public final class EditorModel {
         let path = activePath
         switch change {
         case .moveNodes(let positions):
-            for (id, p) in positions { document[path].nodes[id]?.position = p }
+            // One graph write for the whole drag frame, not one per node.
+            var g = document[path]
+            for (id, p) in positions { g.nodes[id]?.position = p }
+            document[path] = g
         case .setParam(let id, let key, let value):
             document[path].nodes[id]?.params[key] = value
         case .setTitle(let id, let title):
@@ -137,8 +140,11 @@ public final class EditorModel {
             // Reuse, import or insert what the payload brought, then retarget the instances (spec §20.7).
             let plan = ClipboardMerge.plan(definitions: definitions, into: document)
             for d in plan.insert { document.definitions[d.id] = d }
-            for n in ClipboardMerge.apply(plan, to: nodes) { document[path].nodes[n.id] = n }
-            for e in edges { document[path].connect(e.from, to: e.to) }
+            // One graph write for the whole paste, not one per node and one per wire.
+            var g = document[path]
+            for n in ClipboardMerge.apply(plan, to: nodes) { g.nodes[n.id] = n }
+            for e in edges { g.connect(e.from, to: e.to) }
+            document[path] = g
         case .groupSelection(let ids, let name):
             if let r = GroupOperations.group(ids, in: path, of: document, registry: registry, name: name) {
                 document = r.document

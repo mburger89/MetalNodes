@@ -15,11 +15,20 @@ struct BreadcrumbBar: View {
                     Text("›").font(.caption).foregroundStyle(DraculaToken.muted.color)
                 }
                 let isLast = i == crumbs.count - 1
-                Button(crumb.title) { model.popToLevel(crumb.level) }
-                    .buttonStyle(.plain)
-                    .font(isLast ? .caption.bold() : .caption)
-                    .foregroundStyle((isLast ? DraculaToken.foreground : DraculaToken.muted).color)
-                    .lineLimit(1)
+                // The crumb for the graph already being edited is a label, not a button: clicking
+                // it would pop to where we already are and clear the selection for nothing.
+                if isLast {
+                    Text(crumb.title)
+                        .font(.caption.bold())
+                        .foregroundStyle(DraculaToken.foreground.color)
+                        .lineLimit(1)
+                } else {
+                    Button(crumb.title) { model.popToLevel(crumb.level) }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(DraculaToken.muted.color)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
         }

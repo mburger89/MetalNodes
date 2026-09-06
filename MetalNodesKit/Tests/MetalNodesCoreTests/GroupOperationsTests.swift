@@ -121,6 +121,39 @@ import Testing
         #expect(u.nodes.isEmpty)   // a pure pass-through has no real node to inline
     }
 
+    /// M4 fix: an *unwired* pass-through has no source to point the external target at, so the
+    /// instance's stored value (else the declared default) lands on that target's own input param
+    /// instead of the downstream node reverting to its own default.
+    @Test func ungroupCarriesAnUnwiredPassThroughValueOntoTheExternalTarget() throws {
+        var def = GroupDefinition.make(name: "PassThrough")
+        def.inputs = [SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(1)))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.graph.connect(SocketRef(def.inputNode!, "x"), to: SocketRef(def.outputNode!, "out"))
+        var doc = ShaderDocument(); doc.definitions[def.id] = def
+        let inst = NodeInstance(kind: .group(def.id), params: ["x": .float(7)])
+        let sink = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [inst, sink] { doc.root.nodes[n.id] = n }
+        doc.root.connect(SocketRef(inst.id, "out"), to: SocketRef(sink.id, "color"))
+        let u = try #require(GroupOperations.ungroup(inst.id, in: .root, of: doc))
+        #expect(u.document.root.nodes[sink.id]?.params["color"] == .float(7))
+        #expect(u.document.root.inputs[SocketRef(sink.id, "color")] == nil)
+    }
+
+    /// With nothing stored on the instance the declared default is what carries over.
+    @Test func ungroupCarriesAPassThroughDefaultWhenTheInstanceStoredNothing() throws {
+        var def = GroupDefinition.make(name: "PassThrough")
+        def.inputs = [SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(1)))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.graph.connect(SocketRef(def.inputNode!, "x"), to: SocketRef(def.outputNode!, "out"))
+        var doc = ShaderDocument(); doc.definitions[def.id] = def
+        let inst = NodeInstance(kind: .group(def.id))
+        let sink = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [inst, sink] { doc.root.nodes[n.id] = n }
+        doc.root.connect(SocketRef(inst.id, "out"), to: SocketRef(sink.id, "color"))
+        let u = try #require(GroupOperations.ungroup(inst.id, in: .root, of: doc))
+        #expect(u.document.root.nodes[sink.id]?.params["color"] == .float(1))
+    }
+
     /// I2 fix: exposed socket types come from resolving the whole graph at `path`, not a `.float`
     /// fallback — a non-float boundary must keep its real type.
     @Test func exposedSocketTypesComeFromResolutionNotAFloatFallback() throws {

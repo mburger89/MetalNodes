@@ -130,20 +130,31 @@ public enum GroupOperations {
         }
         // Outputs: whatever fed GroupOutput.<name> now feeds every external target of the instance's output.
         // A pass-through (GroupOutput fed directly by GroupInput, with no real node in between) has no
-        // inlined source to point at — the target instead picks up whatever fed the instance's own input.
+        // inlined source to point at — the target instead picks up whatever fed the instance's own input,
+        // or, when that input is unwired, the value the instance carried on it (else the declared
+        // default) written onto the target's own input param, so the number downstream saw survives.
         for decl in def.outputs {
             guard let internalSource = def.graph.inputs[SocketRef(gout, decl.name)] else { continue }
-            let resolvedSource: SocketRef?
+            var resolvedSource: SocketRef?
+            var passThrough: ParamValue?
             if internalSource.node == gin {
-                resolvedSource = g.inputs[SocketRef(instance, internalSource.socket)]
+                if let external = g.inputs[SocketRef(instance, internalSource.socket)] {
+                    resolvedSource = external
+                } else {
+                    passThrough = inst.params[internalSource.socket] ?? {
+                        guard case .value(let v)? = def.inputs.first(where: { $0.name == internalSource.socket })?.default else { return nil }
+                        return v
+                    }()
+                }
             } else if let src = map[internalSource.node] {
                 resolvedSource = SocketRef(src, internalSource.socket)
-            } else {
-                resolvedSource = nil
             }
-            guard let resolvedSource else { continue }
             for (to, from) in g.inputs where from == SocketRef(instance, decl.name) {
-                g.connect(resolvedSource, to: to)
+                if let resolvedSource {
+                    g.connect(resolvedSource, to: to)
+                } else if let passThrough {
+                    g.nodes[to.node]?.params[to.socket] = passThrough
+                }
             }
         }
         g.remove(nodes: [instance])
