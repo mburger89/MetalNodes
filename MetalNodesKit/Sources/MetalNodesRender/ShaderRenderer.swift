@@ -27,8 +27,8 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
     }
 
     public func draw(in view: MTKView) {
-        guard let pipeline = state.pipeline, var image = state.uniforms,
-              image.layout == pipeline.shader.layout,
+        guard let program = state.program, var image = state.uniforms,
+              image.layout == program.pipeline.shader.layout,
               let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor else { return }
 
@@ -62,9 +62,9 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         guard let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else {
             inflight.signal(); return
         }
-        enc.setRenderPipelineState(pipeline.state)
+        enc.setRenderPipelineState(program.pipeline.state)
         enc.setFragmentBuffer(buffer, offset: 0, index: 0)
-        for (index, texture) in state.textures {
+        for (index, texture) in program.textures {
             enc.setFragmentTexture(texture, index: index)
         }
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)

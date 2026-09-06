@@ -337,7 +337,7 @@ actor SwitchableCompiler: ShaderCompiling {
         m.debounceInterval = .milliseconds(5)
         m.start(); await m.awaitIdle()
         #expect(m.textureSlots == [TextureSlot(index: 0, asset: asset)])
-        #expect(m.preview.textures.count == 1)
+        #expect(m.preview.program?.textures.count == 1)
 
         // A program that generates but does not compile: the pipeline drawing the preview is still
         // the one that samples the asset, so its slot must stay bound.
@@ -346,7 +346,7 @@ actor SwitchableCompiler: ShaderCompiling {
         await m.awaitIdle()
         #expect(m.preview.lastError == "synthetic")
         #expect(m.textureSlots == [TextureSlot(index: 0, asset: asset)])
-        #expect(m.preview.textures.count == 1)
+        #expect(m.preview.program?.textures.count == 1)
 
         // And once a compile lands, they follow it — the new pipeline declares no slot.
         await c.setFailing(false)
@@ -355,6 +355,23 @@ actor SwitchableCompiler: ShaderCompiling {
         await m.awaitIdle()
         #expect(m.preview.lastError == nil)
         #expect(m.textureSlots.isEmpty)
-        #expect(m.preview.textures.isEmpty)
+        #expect(m.preview.program?.textures.isEmpty == true)
+    }
+
+    /// A failed compile must not touch the program at all: the generation and the bindings the
+    /// renderer reads are the ones from the last landed compile, together.
+    @Test func aFailedCompileLeavesThePublishedProgramIntact() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice(), "No Metal device — this test needs a GPU")
+        let c = try SwitchableCompiler(device: device)
+        let m = EditorModel(document: .starter(), compiler: c, textureStore: TextureStore(device: device))
+        m.debounceInterval = .milliseconds(5)
+        m.start(); await m.awaitIdle()
+        let landed = try #require(m.preview.program)
+        await c.setFailing(true)
+        var s = m.document.settings; s.fastMath = false
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(m.preview.lastError == "synthetic")
+        #expect(m.preview.program?.pipeline.generation == landed.pipeline.generation)
+        #expect(m.preview.program?.textures.count == landed.textures.count)
     }
 }

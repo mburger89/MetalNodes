@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Metal
 import Observation
 import MetalNodesCore
 import MetalNodesRender
@@ -95,9 +96,8 @@ public final class EditorModel {
         ShaderPackage(document: document, viewState: viewState, textures: textures)
     }
     let textureStore: TextureStore?
-    /// The slots of the live pipeline, kept so `textures` changes can rebind without waiting for a
-    /// recompile. Read by the tests; only `rebindTextures()` writes it.
-    private(set) var textureSlots: [TextureSlot] = []
+    /// The slots of the live pipeline. Read by the tests and by the missing-texture diagnostics.
+    var textureSlots: [TextureSlot] { preview.program?.pipeline.shader.textures ?? [] }
 
     public init(document: ShaderDocument, viewState: EditorViewState = EditorViewState(),
                 textures: [AssetID: Data] = [:], compiler: any ShaderCompiling,
@@ -160,22 +160,22 @@ public final class EditorModel {
         undoStackVersion += 1
     }
 
-    /// Takes the slots from the pipeline that is actually drawing and rebinds against them.
-    ///
-    /// Keying off the live pipeline rather than the freshly generated program is what keeps a
-    /// compile failure harmless: the last-good pipeline keeps drawing, and binding the new program's
-    /// slots could leave one of *its* `tex<i>` unbound — undefined sampling, and a Metal API
-    /// validation failure in Debug. Over-binding a slot the pipeline does not declare is harmless.
-    private func rebindTextures() {
-        textureSlots = preview.pipeline?.shader.textures ?? []
-        refreshTextureBindings()
+    /// Publishes `pipeline` together with the bindings its slots need — one write, so the renderer
+    /// never draws a pipeline against another program's textures (spec §22.6).
+    private func publish(_ pipeline: CompiledPipeline) {
+        preview.program = PreviewProgram(pipeline: pipeline, textures: bindings(for: pipeline))
     }
 
-    /// Rebinds `preview.textures` from the live pipeline's slots. Called whenever the slots, the
-    /// bytes or the manifest change (spec §21.2).
+    /// Rebuilds the live program's bindings — called whenever the bytes or the manifest change
+    /// (spec §21.2). Keys off the pipeline that is drawing: a compile failure leaves the last-good
+    /// pipeline live, and binding a *new* program's slots could leave one of its `tex<i>` unbound.
     func refreshTextureBindings() {
-        guard let textureStore else { return }
-        preview.textures = textureStore.bindings(for: textureSlots, textures: textures)
+        guard let pipeline = preview.program?.pipeline else { return }
+        preview.program = PreviewProgram(pipeline: pipeline, textures: bindings(for: pipeline))
+    }
+
+    private func bindings(for pipeline: CompiledPipeline) -> [Int: MTLTexture] {
+        textureStore?.bindings(for: pipeline.shader.textures, textures: textures) ?? [:]
     }
 
     // MARK: The active graph (spec §20.3)
@@ -466,7 +466,7 @@ public final class EditorModel {
             if last.succeeded, let p = preview.pipeline {
                 diagnostics = missing
                 preview.uniforms = UniformImage.rebuild(layout: p.shader.layout, document: document, registry: registry)
-                rebindTextures()
+                refreshTextureBindings()
             }
             return
         }
@@ -478,8 +478,7 @@ public final class EditorModel {
         switch await compiler.compile(shader, generation: gen, fastMath: doc.settings.fastMath) {
         case .success(let pipeline):
             guard pipeline.generation == generation else { return }
-            preview.pipeline = pipeline
-            rebindTextures()
+            publish(pipeline)
             preview.uniforms = UniformImage.rebuild(layout: pipeline.shader.layout, document: document, registry: registry)
             preview.lastError = nil
             lastCompiled = (shader.source, doc.settings.fastMath, true)

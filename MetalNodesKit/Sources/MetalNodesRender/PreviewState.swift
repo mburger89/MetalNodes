@@ -3,15 +3,25 @@ import CoreGraphics
 import Metal
 import Observation
 
+/// The pipeline that is drawing and the textures its slots bind, published as one value so the
+/// renderer can never see a pipeline with another program's bindings (spec §22.6).
+public struct PreviewProgram {
+    public let pipeline: CompiledPipeline
+    /// Slot index → texture, one entry per `pipeline.shader.textures` slot.
+    public let textures: [Int: MTLTexture]
+    public init(pipeline: CompiledPipeline, textures: [Int: MTLTexture]) {
+        self.pipeline = pipeline; self.textures = textures
+    }
+}
+
 /// Hand-off between the editor (writes) and the renderer (reads every frame).
 @MainActor
 @Observable
 public final class PreviewState {
-    public var pipeline: CompiledPipeline?
+    public var program: PreviewProgram?
+    /// The live pipeline, for readers that only need it (the preview pane's generation label).
+    public var pipeline: CompiledPipeline? { program?.pipeline }
     public var uniforms: UniformImage?
-    /// Slot index → texture, rebuilt by the editor whenever the pipeline or the texture
-    /// manifest changes (spec §21.2). The renderer binds every entry each frame.
-    public var textures: [Int: MTLTexture] = [:]
     public var isPlaying = true
     /// Seconds subtracted from wall-clock so "reset time" is cheap.
     public var timeOffset: Float = 0
