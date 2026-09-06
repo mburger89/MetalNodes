@@ -29,6 +29,16 @@ enum PaletteSearch {
         }
     }
 
+    /// The document's group definitions for "My Functions" (spec §20.8): a case-insensitive
+    /// substring match on the name, sorted by name. An empty query returns all of them.
+    static func filterDefinitions(_ query: String, in doc: ShaderDocument) -> [GroupDefinition] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return doc.definitions.values
+            .filter { q.isEmpty || $0.name.lowercased().contains(q) }
+            // Names are unique in practice; the id breaks any tie so the list never reorders itself.
+            .sorted { ($0.name.lowercased(), $0.id.raw.uuidString) < ($1.name.lowercased(), $1.id.raw.uuidString) }
+    }
+
     /// True if some input of `def` could accept a value of `type` (used to filter the wire-drop popover).
     static func acceptsInput(of type: SocketType, _ def: NodeDef) -> Bool {
         def.inputs.contains { decl in
@@ -41,8 +51,13 @@ enum PaletteSearch {
 }
 
 extension NodeCategory {
-    /// Palette / inspector label. `rawValue.capitalized` would print "Sdf".
+    /// Palette / inspector label. `rawValue.capitalized` would print "Sdf", and group definitions
+    /// are called "My Functions" throughout the UI (spec §11.4, §20.8).
     var displayName: String {
-        self == .sdf ? "SDF" : rawValue.capitalized
+        switch self {
+        case .sdf: "SDF"
+        case .group: "My Functions"
+        default: rawValue.capitalized
+        }
     }
 }

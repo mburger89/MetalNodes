@@ -16,7 +16,7 @@ public struct InspectorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 switch model.selection.count {
-                case 0: documentSettings
+                case 0: emptySelectionPane
                 case 1: nodePane(model.selection.first!)
                 default: Text("\(model.selection.count) nodes selected").font(.callout).foregroundStyle(DraculaToken.muted.color)
                 }
@@ -27,86 +27,109 @@ public struct InspectorView: View {
         .background(DraculaToken.background.color)
     }
 
+    /// Nothing selected: the document's settings at the root, the definition's own pane inside one
+    /// (spec §20.8).
+    @ViewBuilder
+    private var emptySelectionPane: some View {
+        if case .definition(let gid) = model.activePath {
+            DefinitionPane(model: model, id: gid)
+        } else {
+            documentSettings
+        }
+    }
+
     // MARK: Node
 
     @ViewBuilder
     private func nodePane(_ id: NodeID) -> some View {
         if let node = model.graph.nodes[id], let shape = model.shape(of: node) {
-            let resolved = model.resolvedTypes[id]
-            HStack {
-                Text(node.customTitle ?? shape.title).font(.headline)
-                Spacer()
-                Text(shape.category.displayName).font(.caption2)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(DraculaTheme.token(for: shape.category).color.opacity(0.25))
-                    .clipShape(Capsule())
-            }
-            if case .builtin(let defID) = node.kind {
-                Text(defID).font(.caption.monospaced()).foregroundStyle(DraculaToken.muted.color)
-            }
-
-            TextField("Title", text: $titleDraft, prompt: Text(shape.title))
-                .textFieldStyle(.roundedBorder)
-                .onAppear { titleDraft = node.customTitle ?? "" }
-                .onChange(of: id) { _, _ in titleDraft = node.customTitle ?? "" }
-                .onChange(of: node.customTitle) { _, t in titleDraft = t ?? "" }
-                .onSubmit { model.apply(.setTitle(id, titleDraft)) }
-
-            Divider()
-
-            ForEach(shape.inputs, id: \.name) { decl in
-                let ref = SocketRef(id, decl.name)
-                if let src = model.graph.source(feeding: ref) {
-                    HStack {
-                        Text(decl.label).font(.caption)
-                        Spacer()
-                        Text("← \(model.socketLabel(src))").font(.caption).foregroundStyle(DraculaToken.muted.color)
-                    }
-                } else if case .value(let dflt) = decl.default {
-                    let type = resolved?.inputTypes[decl.name] ?? (decl.type.concreteOrFloat)
-                    ParamControl(label: decl.label, kind: .value(type, range: decl.range),
-                                 value: node.params[decl.name] ?? dflt,
-                                 onChange: { model.apply(.setParam(id, decl.name, $0)) },
-                                 onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
-                }
-            }
-            ForEach(shape.params, id: \.name) { p in
-                ParamControl(label: p.label, kind: p.kind, value: node.params[p.name] ?? p.defaultValue,
-                             onChange: { model.apply(.setParam(id, p.name, $0)) },
-                             onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
-            }
-
-            // A pseudo-node's "outputs" are the definition's inputs and carry no ◉ (spec §20.8).
-            if !shape.outputs.isEmpty && !shape.isPseudo {
-                Divider()
-                ForEach(shape.outputs, id: \.name) { decl in
-                    let ref = SocketRef(id, decl.name)
-                    let viewed = model.viewer == ref
-                    HStack {
-                        Text(decl.label).font(.caption)
-                        Text((resolved?.outputTypes[decl.name] ?? decl.type.concreteOrFloat).rawValue)
-                            .font(.caption2.monospaced()).foregroundStyle(DraculaToken.muted.color)
-                        Spacer()
-                        Button { model.toggleViewer(ref) } label: {
-                            Image(systemName: viewed ? "circle.circle.fill" : "circle.circle")
-                                .foregroundStyle(viewed ? DraculaTheme.viewerFlag.color : DraculaToken.muted.color)
-                        }
-                        .buttonStyle(.plain)
-                        .help(viewed ? "Clear viewer" : "View \(decl.label)")
-                    }
-                }
-            }
-
-            let diags = model.diagnostics.filter { $0.node == id }
-            if !diags.isEmpty {
-                Divider()
-                ForEach(Array(diags.enumerated()), id: \.offset) { _, d in
-                    Text(d.message).font(.caption)
-                        .foregroundStyle(d.severity == .error ? DraculaTheme.error.color : DraculaToken.orange.color)
-                }
+            if case .group = node.kind {
+                InstancePane(model: model, id: id)
+            } else if shape.isPseudo, case .definition(let gid) = model.activePath {
+                // A pseudo-node *is* the definition's socket list (spec §20.2).
+                DefinitionPane(model: model, id: gid)
+            } else {
+                builtinPane(id, node, shape)
             }
         } else {
             Text("Unknown node").foregroundStyle(DraculaToken.muted.color)
+        }
+    }
+
+    @ViewBuilder
+    private func builtinPane(_ id: NodeID, _ node: NodeInstance, _ shape: NodeShape) -> some View {
+        let resolved = model.resolvedTypes[id]
+        HStack {
+            Text(node.customTitle ?? shape.title).font(.headline)
+            Spacer()
+            Text(shape.category.displayName).font(.caption2)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(DraculaTheme.token(for: shape.category).color.opacity(0.25))
+                .clipShape(Capsule())
+        }
+        if case .builtin(let defID) = node.kind {
+            Text(defID).font(.caption.monospaced()).foregroundStyle(DraculaToken.muted.color)
+        }
+
+        TextField("Title", text: $titleDraft, prompt: Text(shape.title))
+            .textFieldStyle(.roundedBorder)
+            .onAppear { titleDraft = node.customTitle ?? "" }
+            .onChange(of: id) { _, _ in titleDraft = node.customTitle ?? "" }
+            .onChange(of: node.customTitle) { _, t in titleDraft = t ?? "" }
+            .onSubmit { model.apply(.setTitle(id, titleDraft)) }
+
+        Divider()
+
+        ForEach(shape.inputs, id: \.name) { decl in
+            let ref = SocketRef(id, decl.name)
+            if let src = model.graph.source(feeding: ref) {
+                HStack {
+                    Text(decl.label).font(.caption)
+                    Spacer()
+                    Text("← \(model.socketLabel(src))").font(.caption).foregroundStyle(DraculaToken.muted.color)
+                }
+            } else if case .value(let dflt) = decl.default {
+                let type = resolved?.inputTypes[decl.name] ?? (decl.type.concreteOrFloat)
+                ParamControl(label: decl.label, kind: .value(type, range: decl.range),
+                             value: node.params[decl.name] ?? dflt,
+                             onChange: { model.apply(.setParam(id, decl.name, $0)) },
+                             onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
+            }
+        }
+        ForEach(shape.params, id: \.name) { p in
+            ParamControl(label: p.label, kind: p.kind, value: node.params[p.name] ?? p.defaultValue,
+                         onChange: { model.apply(.setParam(id, p.name, $0)) },
+                         onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
+        }
+
+        // A pseudo-node's "outputs" are the definition's inputs and carry no ◉ (spec §20.8).
+        if !shape.outputs.isEmpty && !shape.isPseudo {
+            Divider()
+            ForEach(shape.outputs, id: \.name) { decl in
+                let ref = SocketRef(id, decl.name)
+                let viewed = model.viewer == ref
+                HStack {
+                    Text(decl.label).font(.caption)
+                    Text((resolved?.outputTypes[decl.name] ?? decl.type.concreteOrFloat).rawValue)
+                        .font(.caption2.monospaced()).foregroundStyle(DraculaToken.muted.color)
+                    Spacer()
+                    Button { model.toggleViewer(ref) } label: {
+                        Image(systemName: viewed ? "circle.circle.fill" : "circle.circle")
+                            .foregroundStyle(viewed ? DraculaTheme.viewerFlag.color : DraculaToken.muted.color)
+                    }
+                    .buttonStyle(.plain)
+                    .help(viewed ? "Clear viewer" : "View \(decl.label)")
+                }
+            }
+        }
+
+        let diags = model.diagnostics.filter { $0.node == id }
+        if !diags.isEmpty {
+            Divider()
+            ForEach(Array(diags.enumerated()), id: \.offset) { _, d in
+                Text(d.message).font(.caption)
+                    .foregroundStyle(d.severity == .error ? DraculaTheme.error.color : DraculaToken.orange.color)
+            }
         }
     }
 
@@ -205,7 +228,8 @@ public struct InspectorView: View {
     }
 }
 
-private extension TypeRef {
+extension TypeRef {
+    /// What the inspector labels a socket with before type resolution has an answer.
     var concreteOrFloat: SocketType {
         if case .concrete(let c) = self { return c } else { return .float }
     }

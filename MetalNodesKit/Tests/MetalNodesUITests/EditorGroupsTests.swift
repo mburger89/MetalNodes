@@ -87,6 +87,20 @@ import MetalNodesRender
         #expect(m.viewState.editingDefinition == nil)
     }
 
+    /// What gates the Edit menu's "Exit Group" (spec §20.8).
+    @Test func exitGroupIsOfferedOnlyBelowTheRoot() {
+        let m = model()
+        #expect(m.canExitGroup == false)
+        m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
+        let gid = m.groupSelection()!
+        m.diveIn(m.selection.first!)
+        #expect(m.canExitGroup)
+        m.exitGroup()
+        #expect(m.canExitGroup == false)
+        m.editDefinition(gid)
+        #expect(m.canExitGroup)
+    }
+
     @Test func popToLevelOneReturnsToThePaletteOpenedDefinition() {
         let m = model()
         let g = nestedGroups(m)

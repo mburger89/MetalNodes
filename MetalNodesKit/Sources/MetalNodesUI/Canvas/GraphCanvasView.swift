@@ -135,8 +135,12 @@ public struct GraphCanvasView: View {
             .dropDestination(for: NodeDefTransfer.self) { items, location in
                 guard let t = items.first else { return false }
                 let c = transform.toCanvas(location)
-                model.addNode(defID: t.defID, at: CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2))
-                return true
+                let origin = CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2)
+                // A "My Functions" row: `addInstance` refuses (with a notice) a drop that would
+                // make a definition contain itself, spec §20.8.
+                if let g = t.groupID { return model.addInstance(of: g, at: origin) != nil }
+                guard let defID = t.defID else { return false }
+                return model.addNode(defID: defID, at: origin) != nil
             }
             // The binding's setter is also how the popover reports a dismissal we did not ask for
             // (a click outside), so `dismissChooser` — not just `onCancel` — is what abandons a

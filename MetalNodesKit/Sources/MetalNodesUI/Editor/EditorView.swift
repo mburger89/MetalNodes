@@ -44,16 +44,23 @@ public struct EditorView: View {
         #if os(macOS)
         HSplitView {
             PaletteView(model: model).frame(minWidth: 200, idealWidth: 220, maxWidth: 320)
-            GraphCanvasView(model: model).frame(minWidth: 480)
+            canvasColumn.frame(minWidth: 480)
             previewPane.frame(minWidth: 320, idealWidth: 420)
         }
         #else
         HStack(spacing: 0) {
             PaletteView(model: model).frame(width: 220)
-            GraphCanvasView(model: model)
+            canvasColumn
             previewPane.frame(width: 420)
         }
         #endif
+    }
+
+    private var canvasColumn: some View {
+        VStack(spacing: 0) {
+            BreadcrumbBar(model: model)
+            GraphCanvasView(model: model)
+        }
     }
 
     private var previewPane: some View {
@@ -94,6 +101,11 @@ public struct EditorView: View {
                 }
                 .controlSize(.small)
                 .textFieldStyle(.roundedBorder)
+            }
+            // A refused recursive placement, shown for 3 s (spec §20.8) — an error-class message.
+            if let n = model.notice {
+                Text(n).font(.caption).foregroundStyle(DraculaTheme.error.color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             diagnosticsList
             Divider()

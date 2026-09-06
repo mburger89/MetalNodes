@@ -9,6 +9,7 @@ public struct PaletteView: View {
     public init(model: EditorModel) { self.model = model }
 
     private var results: [NodeDef] { PaletteSearch.filter(query, in: model.registry.all) }
+    private var definitions: [GroupDefinition] { PaletteSearch.filterDefinitions(query, in: model.document) }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -21,8 +22,17 @@ public struct PaletteView: View {
                         ForEach(group.defs, id: \.id) { row($0) }
                     }
                 }
-                Section("My Functions") {
-                    Text("None yet").font(.caption).foregroundStyle(DraculaToken.muted.color)
+                // The document's group definitions (spec §11.4, §20.8). Hidden while a search is
+                // running and matches nothing, so it behaves like the builtin sections.
+                let defs = definitions
+                if !defs.isEmpty {
+                    Section(NodeCategory.group.displayName) {
+                        ForEach(defs) { definitionRow($0) }
+                    }
+                } else if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Section(NodeCategory.group.displayName) {
+                        Text("None yet").font(.caption).foregroundStyle(DraculaToken.muted.color)
+                    }
                 }
             }
             .listStyle(.sidebar)
@@ -40,5 +50,23 @@ public struct PaletteView: View {
         .contentShape(Rectangle())
         .draggable(NodeDefTransfer(defID: def.id))
         .onTapGesture(count: 2) { model.requestCanvas(.place(defID: def.id)) }
+    }
+
+    /// "Edit" opens the definition with no instance to dive through (spec §20.6); a drag or a
+    /// double-click places an instance, which `addInstance` refuses if it would recurse.
+    private func definitionRow(_ def: GroupDefinition) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(DraculaTheme.token(for: def.accent).color).frame(width: 8, height: 8)
+            Text(def.name).font(.callout).lineLimit(1)
+            Spacer()
+            Button("Edit") { model.editDefinition(def.id) }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(DraculaToken.muted.color)
+                .help("Edit \(def.name)")
+        }
+        .contentShape(Rectangle())
+        .draggable(NodeDefTransfer(groupID: def.id))
+        .onTapGesture(count: 2) { model.requestCanvas(.placeGroup(def.id)) }
     }
 }

@@ -46,6 +46,10 @@ extension EditorModel {
     /// and the stack follows. So the deepest level is `base + editingStack.count`.
     private var levelBase: Int { viewState.editingDefinition == nil ? 0 : 1 }
 
+    /// Whether there is a level to pop: the stack is non-empty, or a definition is open from the
+    /// palette. Gates the Edit menu's "Exit Group" (spec §20.8).
+    public var canExitGroup: Bool { activePath != .root }
+
     /// Pops exactly one level — out of the innermost instance, or out of a palette-opened
     /// definition once the stack above it is gone.
     public func exitGroup() { popToLevel(max(0, levelBase + viewState.editingStack.count - 1)) }
