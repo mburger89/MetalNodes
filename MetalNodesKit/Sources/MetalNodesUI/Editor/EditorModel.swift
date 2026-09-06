@@ -95,9 +95,9 @@ public final class EditorModel {
         ShaderPackage(document: document, viewState: viewState, textures: textures)
     }
     let textureStore: TextureStore?
-    /// The slots of the last generated program, kept so `textures` changes can rebind without
-    /// waiting for a recompile.
-    private var textureSlots: [TextureSlot] = []
+    /// The slots of the live pipeline, kept so `textures` changes can rebind without waiting for a
+    /// recompile. Read by the tests; only `rebindTextures()` writes it.
+    private(set) var textureSlots: [TextureSlot] = []
 
     public init(document: ShaderDocument, viewState: EditorViewState = EditorViewState(),
                 textures: [AssetID: Data] = [:], compiler: any ShaderCompiling,
@@ -160,8 +160,19 @@ public final class EditorModel {
         undoStackVersion += 1
     }
 
-    /// Rebinds `preview.textures` from the last generated program's slots. Called whenever the
-    /// slots, the bytes or the manifest change (spec §21.2).
+    /// Takes the slots from the pipeline that is actually drawing and rebinds against them.
+    ///
+    /// Keying off the live pipeline rather than the freshly generated program is what keeps a
+    /// compile failure harmless: the last-good pipeline keeps drawing, and binding the new program's
+    /// slots could leave one of *its* `tex<i>` unbound — undefined sampling, and a Metal API
+    /// validation failure in Debug. Over-binding a slot the pipeline does not declare is harmless.
+    private func rebindTextures() {
+        textureSlots = preview.pipeline?.shader.textures ?? []
+        refreshTextureBindings()
+    }
+
+    /// Rebinds `preview.textures` from the live pipeline's slots. Called whenever the slots, the
+    /// bytes or the manifest change (spec §21.2).
     func refreshTextureBindings() {
         guard let textureStore else { return }
         preview.textures = textureStore.bindings(for: textureSlots, textures: textures)
@@ -442,9 +453,6 @@ public final class EditorModel {
             return                                   // keep last-good pipeline
         }
 
-        // The slots this program binds; a `textures` change rebinds against these without a recompile.
-        textureSlots = shader.textures
-        refreshTextureBindings()
         // One warning per referenced asset whose bytes the package did not carry (spec §21.2).
         // Carried onto every outcome below, since each of them replaces `diagnostics` wholesale.
         let missing = missingTextureDiagnostics(for: shader.textures)
@@ -458,6 +466,7 @@ public final class EditorModel {
             if last.succeeded, let p = preview.pipeline {
                 diagnostics = missing
                 preview.uniforms = UniformImage.rebuild(layout: p.shader.layout, document: document, registry: registry)
+                rebindTextures()
             }
             return
         }
@@ -470,6 +479,7 @@ public final class EditorModel {
         case .success(let pipeline):
             guard pipeline.generation == generation else { return }
             preview.pipeline = pipeline
+            rebindTextures()
             preview.uniforms = UniformImage.rebuild(layout: pipeline.shader.layout, document: document, registry: registry)
             preview.lastError = nil
             lastCompiled = (shader.source, doc.settings.fastMath, true)

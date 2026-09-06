@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CoreGraphics
 import Metal
 import MetalNodesCore
 import MetalNodesRender
@@ -32,6 +33,20 @@ actor CountingFailingCompiler: ShaderCompiling {
     func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool) async -> CompileResult {
         calls += 1
         return .failure(message: "synthetic", lines: [CompileLine(line: 999, message: "nowhere")], generation: generation)
+    }
+}
+
+/// Compiles for real until a test switches it to failing. The only way to observe what happens after
+/// a compile has actually landed: a stub cannot mint a `CompiledPipeline`, which owns a real
+/// `MTLRenderPipelineState`.
+actor SwitchableCompiler: ShaderCompiling {
+    private let real: ShaderCompiler
+    private var failing = false
+    init(device: MTLDevice) throws { self.real = try ShaderCompiler(device: device) }
+    func setFailing(_ on: Bool) { failing = on }
+    func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool) async -> CompileResult {
+        guard !failing else { return .failure(message: "synthetic", lines: [], generation: generation) }
+        return await real.compile(shader, generation: generation, fastMath: fastMath)
     }
 }
 
@@ -302,5 +317,44 @@ actor CountingFailingCompiler: ShaderCompiling {
         let before = m.exportRequest
         m.requestExport()
         #expect(m.exportRequest == before + 1)
+    }
+
+    /// The bindings belong to the pipeline that is actually drawing, not to the program the editor
+    /// last generated: a generation whose Metal compile fails leaves the last-good pipeline live, and
+    /// rebinding to the new program's (here empty) slots would leave that pipeline's `tex0` unbound.
+    @Test func textureBindingsFollowTheLivePipeline() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice(), "No Metal device — this test needs a GPU")
+        let c = try SwitchableCompiler(device: device)
+        let asset = AssetID(raw: UUID(uuidString: "40000000-0000-0000-0000-000000000001")!)
+        var d = ShaderDocument()
+        d.settings.assets[asset] = AssetInfo(name: "a.png", pixelSize: CGSize(width: 2, height: 2), fileExtension: "png")
+        let sample = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(asset)])
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        d.root.nodes[sample.id] = sample; d.root.nodes[out.id] = out
+        d.root.connect(SocketRef(sample.id, "color"), to: SocketRef(out.id, "color"))
+
+        let m = EditorModel(document: d, compiler: c, textureStore: TextureStore(device: device))
+        m.debounceInterval = .milliseconds(5)
+        m.start(); await m.awaitIdle()
+        #expect(m.textureSlots == [TextureSlot(index: 0, asset: asset)])
+        #expect(m.preview.textures.count == 1)
+
+        // A program that generates but does not compile: the pipeline drawing the preview is still
+        // the one that samples the asset, so its slot must stay bound.
+        await c.setFailing(true)
+        m.apply(.removeNodes([sample.id]))
+        await m.awaitIdle()
+        #expect(m.preview.lastError == "synthetic")
+        #expect(m.textureSlots == [TextureSlot(index: 0, asset: asset)])
+        #expect(m.preview.textures.count == 1)
+
+        // And once a compile lands, they follow it — the new pipeline declares no slot.
+        await c.setFailing(false)
+        var s = m.document.settings; s.fastMath = false
+        m.apply(.setSettings(s))
+        await m.awaitIdle()
+        #expect(m.preview.lastError == nil)
+        #expect(m.textureSlots.isEmpty)
+        #expect(m.preview.textures.isEmpty)
     }
 }
