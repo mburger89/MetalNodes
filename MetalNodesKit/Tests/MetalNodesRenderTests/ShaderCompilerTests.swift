@@ -1,5 +1,7 @@
 import Testing
 import Metal
+import Foundation
+import CoreGraphics
 import MetalNodesCore
 @testable import MetalNodesRender
 
@@ -212,5 +214,68 @@ import MetalNodesCore
             Issue.record("expected superseded, not failure, for a stale broken compile"); return
         }
         #expect(g == 1)
+    }
+
+    // MARK: - Textured documents (Task 2: renderer binds texture slots)
+
+    private func aid(_ n: Int) -> AssetID { AssetID(raw: UUID(uuidString: String(format: "40000000-0000-0000-0000-%012d", n))!) }
+
+    /// UV → Texture Sample(asset) → Output, mirroring TextureCodegenTests.doc().
+    private func texturedFragmentDoc() -> ShaderDocument {
+        var d = ShaderDocument()
+        d.settings.assets[aid(1)] = AssetInfo(name: "rock.png", pixelSize: CGSize(width: 64, height: 64), fileExtension: "png")
+        let uv = NodeInstance(kind: .builtin("input.uv"))
+        let sample = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(aid(1))])
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [uv, sample, out] { d.root.nodes[n.id] = n }
+        d.root.connect(SocketRef(uv.id, "uv"), to: SocketRef(sample.id, "uv"))
+        d.root.connect(SocketRef(sample.id, "color"), to: SocketRef(out.id, "color"))
+        return d
+    }
+
+    /// A one-node group definition sampling an asset, instantiated once in the root.
+    private func texturedGroupDoc() -> ShaderDocument {
+        var def = GroupDefinition.make(name: "Tex")
+        def.outputs = [SocketDecl(name: "color", type: .concrete(.color))]
+        let sample = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(aid(2))])
+        def.graph.nodes[sample.id] = sample
+        def.graph.connect(SocketRef(sample.id, "color"), to: SocketRef(def.outputNode!, "color"))
+        var d = ShaderDocument()
+        d.settings.assets[aid(2)] = AssetInfo(name: "a.png", pixelSize: CGSize(width: 2, height: 2), fileExtension: "png")
+        d.definitions[def.id] = def
+        let inst = NodeInstance(kind: .group(def.id)), out = NodeInstance(kind: .builtin("output.fragment"))
+        d.root.nodes[inst.id] = inst; d.root.nodes[out.id] = out
+        d.root.connect(SocketRef(inst.id, "color"), to: SocketRef(out.id, "color"))
+        return d
+    }
+
+    @Test func texturedFragmentProgramCompiles() async throws {
+        let c = try compiler()
+        let shader = try ShaderGenerator.generate(texturedFragmentDoc())
+        #expect(shader.textures.count == 1)
+        guard case .success(let p) = await c.compile(shader, generation: 1) else {
+            Issue.record("expected success"); return
+        }
+        #expect(p.shader.textures == shader.textures)
+    }
+
+    @Test func texturedGroupProgramCompiles() async throws {
+        let c = try compiler()
+        let shader = try ShaderGenerator.generate(texturedGroupDoc())
+        #expect(shader.textures.count == 1)
+        if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) {
+            Issue.record("group texture failed: \(msg)\n\(shader.source)")
+        }
+    }
+
+    @Test func layerEffectTargetWithATextureSampleCompiles() async throws {
+        let c = try compiler()
+        var d = texturedFragmentDoc()
+        d.settings.target = .stitchable(.layerEffect)
+        d.settings.exportName = "fx"
+        let shader = try ShaderGenerator.generate(d, target: d.settings.target)
+        if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) {
+            Issue.record("layer effect texture failed: \(msg)\n\(shader.source)")
+        }
     }
 }

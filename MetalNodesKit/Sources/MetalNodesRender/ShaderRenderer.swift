@@ -64,6 +64,9 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         }
         enc.setRenderPipelineState(pipeline.state)
         enc.setFragmentBuffer(buffer, offset: 0, index: 0)
+        for (index, texture) in state.textures {
+            enc.setFragmentTexture(texture, index: index)
+        }
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         enc.endEncoding()
         let sem = inflight

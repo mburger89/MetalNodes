@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import Metal
 import Observation
 
 /// Hand-off between the editor (writes) and the renderer (reads every frame).
@@ -8,6 +9,9 @@ import Observation
 public final class PreviewState {
     public var pipeline: CompiledPipeline?
     public var uniforms: UniformImage?
+    /// Slot index → texture, rebuilt by the editor whenever the pipeline or the texture
+    /// manifest changes (spec §21.2). The renderer binds every entry each frame.
+    public var textures: [Int: MTLTexture] = [:]
     public var isPlaying = true
     /// Seconds subtracted from wall-clock so "reset time" is cheap.
     public var timeOffset: Float = 0
