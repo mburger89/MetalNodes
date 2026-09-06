@@ -731,7 +731,7 @@ test.
 | **M3** | Library to full v1 set, viewer flags, **SwiftUI stitchable target + export (§9.5)**, error mapping |
 | **M4** | Groups: create, dive-in, make-unique, ungroup, palette integration, cross-document paste |
 | **M5** | Comment frames + sticky notes, generated-code panel, minimap, `.metal` export, package persistence with textures |
-| **M6** | iPadOS UI layer |
+| **M6** | iPadOS UI layer: touch input, iPad layout, platform services, hardware keyboard, plus the M5 carry-overs (layer-parameter group variants, `PreviewState.program`, `DocumentBridge`) and an XCUITest target |
 
 M1 deliberately folds in the "minimal 12 nodes" option as an internal step
 rather than a shipped scope — the machinery gets proven early, the library
@@ -1355,3 +1355,87 @@ View ▸ Minimap (⌘⌥M, persisted in `EditorViewState.showsMinimap`, default 
 ### 21.9 Tests
 
 Package round-trip with and without textures, missing `view.json`, missing texture file (warning), newer `formatVersion` (refused); texture codegen goldens for the fragment program (two samples of one asset share a slot), a group function taking a texture parameter, Layer Effect export (`layer.sample`), the Color Effect validation error; Gradient/Checker goldens; `.metal` export golden plus a toolchain compile when available; GPU compile of a textured program with the placeholder bound; comment operations, frame ownership by geometry, undo names; clipboard textures round-trip and paste into a document that lacks the asset; popover rows; line map with group-function owners; minimap layout maths; shape-cache invalidation.
+
+---
+
+## 22. M6 addendum — iPadOS UI layer (added 2026-09-06)
+
+M6 delivers **full editor parity on iPadOS 27** with one `MetalNodesUI` and the existing multiplatform app target (§2). Decisions taken with the user: full parity in one milestone (not viewer-first); the three M5 carry-overs are included (layer-parameter group variants, `PreviewState.program` + `DocumentBridge`, an XCUITest target for drag-and-drop and gestures); verification is the **iPad Simulator plus XCUITest**, no physical device; **Apple Pencil is a precise finger** (same recognizers; hover highlights sockets on hover-capable Pencils through the existing `onContinuousHover`). §22 wins for M6 wherever it and §11.2 / §18.6 differ in detail. macOS behaviour is unchanged: every new platform branch lives behind `#if os(iOS)` in a `*Pad.swift` file, mirroring the `*Mac.swift` convention, and the macOS checklist subset in §22.8 guards regressions.
+
+### 22.1 Scope and order
+
+1. Carry-overs that shrink the host: `PreviewState.program`, `DocumentBridge`, `Validation.reachableDefinitions` (§22.6).
+2. Layer-parameter group variants in Core codegen (§22.7).
+3. Platform services with Pad implementations: `ImageChooser`, `Exporter`, `Pasteboarding` (§22.4).
+4. `TouchIntentMapper` + `TouchInputOverlay` + `CanvasMode` (§22.2).
+5. iPad layout, toolbar, context menu (§22.3).
+6. Hardware keyboard and Edit menu (§22.5).
+7. XCUITest target with accessibility identifiers (§22.8).
+8. Integration: the iPad Simulator checklist and the macOS regression subset (§22.8).
+
+### 22.2 Touch input model
+
+- **Ownership.** On iOS the canvas hosts `TouchInputOverlay` (`UIViewRepresentable`, `TouchInputOverlayPad.swift`) in the slot the macOS `ScrollWheelCatcher` occupies. It covers the whole canvas viewport, above the content. Its `hitTest(_:with:)` returns `nil` for points inside any **interactive rect** — param controls, the ◉ viewer badge, the gear button, comment text fields, resize handles — so SwiftUI keeps those touches; every other touch belongs to the overlay. Interactive rects are reported by `NodeView`, `StickyView` and `FrameView` through a `InteractiveRectKey` preference in viewport coordinates, the same way socket anchors already are. The SwiftUI node/comment/socket drag gestures are compiled out on iOS (`#if os(macOS)`); the overlay reproduces them.
+- **Recognizers** (all on the overlay, `cancelsTouchesInView = false`, simultaneous with one another): `UIPanGestureRecognizer` (1 finger), `UIPanGestureRecognizer` (exactly 2 fingers), `UIPinchGestureRecognizer`, `UITapGestureRecognizer` (1 tap), `UITapGestureRecognizer` (2 taps; the single tap requires it to fail), `UILongPressGestureRecognizer` (0.4 s). Pencil touches use the same recognizers (`allowedTouchTypes` = direct + pencil).
+- **`TouchIntentMapper`** (`MetalNodesUI`, a value type with no UIKit import, testable on macOS): input is a `TouchEvent` (`tap(CGPoint)`, `doubleTap(CGPoint)`, `longPress(CGPoint)`, `dragBegan(CGPoint)`, `dragChanged(location:translation:)`, `dragEnded(location:translation:)`, `twoFingerPan(translation:)`, `pinch(scale:centroid:)`) plus a `TouchContext` (canvas mode, transform, hit-test closures for node / comment / socket / wire / badge at a point); output is a `CanvasIntent`:
+  `select(hit: CanvasHit, mode: SelectionMode)`, `clearSelection`, `toggleViewer(SocketRef)`, `beginMove(hit)` / `move(delta)` / `endMove`, `beginWire(SocketRef, isInput:)` / `wire(point)` / `endWire(point)`, `beginMarquee(point)` / `marquee(rect)` / `endMarquee(rect, mode)`, `pan(delta)` / `endPan`, `zoom(factor, around:)` / `endZoom`, `contextMenu(at:, hit:)`, `openChooser(at:)`. `GraphCanvasView` applies each intent through the functions the mouse path already calls (`beginWire`, `endWire`, `click(at:)`, `model.select`, `model.moveSelection`, camera writes), so selection, wiring, transactions and undo names stay single-sourced.
+- **Gesture → intent table** (§11.2 made concrete):
+
+| Gesture | Pointer mode | Select mode | Lasso mode |
+|---|---|---|---|
+| Tap node / comment / wire | select (replace) | select (add; tapping a selected item removes it) | as pointer |
+| Tap ◉ badge | toggle viewer | toggle viewer | toggle viewer |
+| Tap empty canvas | clear selection | — (keeps the selection) | clear selection |
+| 1-finger drag on node / comment | move the selection (an unselected item is selected first, replace) | move | move |
+| 1-finger drag from a socket | wire (body auto-connect, empty canvas opens the chooser, §11.3) | wire | wire |
+| 1-finger drag on empty canvas | pan | marquee (add) | marquee (replace) |
+| 2-finger drag | pan | pan | pan |
+| Pinch | zoom around the centroid | zoom | zoom |
+| Long-press | context menu (§22.3) | context menu | context menu |
+| Double-tap empty canvas | node chooser at the point | chooser | chooser |
+
+- **`CanvasMode`** — `enum CanvasMode: String, Codable, Sendable { case pointer, select, lasso }`, stored in `EditorViewState.canvasMode` (default `.pointer`; decodes as the default when absent, like `showsCode`). It is view state: never snapshotted or undone. On macOS it exists but nothing reads it. `InputModifiers.selectionMode()` returns `.add` in select mode and `.replace` otherwise on iOS; `shiftHeld` is true in select mode; `optionHeld` is false (no ⌥-drag duplicate on iPad, per §11.2). Nudge is hardware-keyboard only.
+- **Momentum and thresholds.** No pan inertia. A drag begins after 6 pt of travel; a tap is a touch that ends inside 6 pt; the long-press cancels when the finger moves more than 6 pt before it fires. Marquee on end uses the same intersection rule as macOS.
+- **Chooser.** `NodeSearchPopover` on iPad is a `.popover` anchored at the tap point (regular width shows it as a popover, never a sheet); its search field gets focus and the software keyboard; Escape on a hardware keyboard and tapping outside both cancel (wire transactions are cancelled the same way as on macOS).
+
+### 22.3 Layout, toolbar, context menu
+
+- **`EditorView` on iPad** is a `NavigationSplitView(columnVisibility:)`: sidebar `PaletteView` (search at top; **tap a row places the node at the viewport centre**, drag-out still works through `NodeDefTransfer`; definitions under My Functions), detail = `BreadcrumbBar` over `GraphCanvasView`, and the preview + inspector column as a trailing `.inspector(isPresented:)` (380 pt, persisted in `EditorViewState.showsInspector`, default true). `showsCode` shows `CodePanel` under the preview inside the inspector column at a fixed 260 pt. The minimap keeps its bottom-trailing overlay. The palette column visibility follows the split view's own toggle.
+- **Toolbar** (`.toolbar`, trailing): ✛ Add Node (opens the chooser at the viewport centre), a segmented `CanvasMode` picker (pointer / select / lasso, SF Symbols `cursorarrow`, `plus.square.dashed`, `lasso`), Zoom to Fit (all; Selection when something is selected), Undo / Redo (system `UndoManager`), Inspector toggle, Export (§22.4). Toolbar buttons carry accessibility identifiers (§22.8).
+- **Context menu** (long-press; on macOS the same menu is the canvas's `.contextMenu` — added for parity): Cut, Copy, Paste, Duplicate, Delete · Group, Ungroup, Make Unique, Edit Group, Exit Group · Frame Selection, Add Sticky Note · Set Viewer / Clear Viewer (when the press hit a socket). Items enable exactly as their `EditorCommands` counterparts. Paste lands at the press point.
+- **Compact width** (Slide Over, narrow Split View): the editor shows a `ContentUnavailableView` "MetalNodes needs a wider window" and no canvas; the document stays open. Regular width is the only supported layout in M6.
+- **Preview interaction.** The preview's mouse uniform follows a one-finger drag on the preview (already there) — no hover on touch.
+
+### 22.4 Platform services
+
+Three seams in `MetalNodesUI`, each a protocol with a Mac and a Pad implementation and an in-memory test double, injected through `EditorView`'s initializer with platform defaults. The Mac implementations call their modal panels directly. The Pad implementations are `@Observable` presenters: `EditorView` attaches their `.photosPicker` / `.fileImporter` / `.fileExporter` modifiers once, and `choose()` / `export(...)` await a continuation that the modifier callbacks resume (cancel resumes with `nil` / `.cancelled`); a second call while one is pending returns `nil` / `.cancelled` immediately, the way the macOS export guard already refuses to stack panels.
+
+- `ImageChooser` — `func choose() async -> (data: Data, name: String)?`. Mac: `NSOpenPanel` (existing, moved behind the protocol). Pad: the image well shows **Photos…** (`PhotosPicker`, PhotosUI, `.images`, returns the original bytes and the item's file name or `Photo.<ext>`) and **Files…** (`fileImporter`, PNG/JPEG/HEIC, reads bytes under `startAccessingSecurityScopedResource`). The well also accepts a drop of an image file URL (existing) or image `Data` (new; from Photos / other apps) — `Data` drops create the same asset.
+- `Exporter` — `func export(files: [ExportFile], name: String) async -> ExportOutcome` (`.saved`, `.cancelled`, `.failed(String)`). Mac: `NSSavePanel` (existing). Pad: `fileExporter` with an `ExportFolderDocument` (`FileDocument` wrapping a directory `FileWrapper` named `<exportName>` holding every export file; for the fragment target the single `.metal` file is exported directly). The toolbar Export button also offers **Share** through `ShareLink` on the same files written to a temporary folder.
+- `Pasteboarding` — the existing protocol; `SystemPasteboard` gains a `UIPasteboard` implementation (`setData(_:forPasteboardType:)` / `data(forPasteboardType:)` with the `com.maxburger.metalnodes.graph` identifier). Cross-window paste on iPad and Universal Clipboard work unchanged.
+
+Documents need no new code: `DocumentGroup` + `ShaderFileDocument` already give iPad the document browser, autosave, iCloud Drive and the `.mnshader` package type through the M5 Info.plist keys. Help ▸ Open Sample Shader becomes a toolbar menu item on iPad that opens the sample through `openDocument` in the environment.
+
+### 22.5 Hardware keyboard and Edit menu
+
+`EditorCommands` (a `Commands` scene) already reaches iPadOS: the menu bar (iPadOS 26+) and the ⌘ HUD list every item with its shortcut. `onKeyPress` on the focused canvas handles ⌫, arrows (nudge, 1 pt / ⇧ 10 pt), Escape and ⇧A with a hardware keyboard; the canvas is `.focusable()` on both platforms. Edit ▸ Cut / Copy / Paste / Select All / Delete on iPad arrive as `UIResponderStandardEditActions`: a `UIViewRepresentable` first responder behind the canvas (`EditActionsPad.swift`) implements `cut:`, `copy:`, `paste:`, `selectAll:` and `delete:` and forwards them to the model — the responder-selector approach macOS uses in §18.6, so a focused text field still wins. Paste from the menu lands at the viewport centre.
+
+### 22.6 Carry-overs — host and render
+
+- `PreviewState.program: Program?` where `struct Program: Sendable { let pipeline: CompiledPipeline; let textures: [Int: MTLTexture] }` replaces the pair `pipeline` + `textures`. `EditorModel.compileNow` publishes one value after a successful compile; `rebindTextures()` rebuilds `program` with the same pipeline when bytes or the manifest change; the renderer reads `program` once per frame. `PreviewState.pipeline` remains as a computed convenience for the UI (`program?.pipeline`).
+- `DocumentBridge` (`MetalNodesUI`, `@MainActor`, `@Observable`): `init(model:)`; `var package: ShaderPackage { get }` (built from the model, includes `missingTextures`); `func apply(_ package: ShaderPackage)` (no-op when equal to the model's current package, otherwise `model.reload(package:)`); `var version: Int` bumped on every model change that must reach the file. `DocumentHostView` (shared by both platforms, no `#if`) watches `bridge.version` and writes `file.package = bridge.package`, and watches `file.package` and calls `bridge.apply`. Unit-tested with an in-memory `ShaderPackage` round trip and an external-reload case, no window.
+- `Validation.reachableDefinitions(_ doc: ShaderDocument) -> [GroupDefinition]` (sorted by id) is computed once per `validate(document:)` and used by both texture-target branches (the M5 final review's asymmetry).
+
+### 22.7 Layer-parameter group variants
+
+- A group definition whose **transitive** body (its own graph plus nested instances) contains a Texture Sample gets, under the **Layer Effect export only**, a second emitted function `mn_g_<8hex>_layer(<uniform params>, <texture params omitted>, SwiftUI::Layer layer, float2 position)` in which every Texture Sample emits `float4(layer.sample(position))` (uv ignored, as at the root) and every nested call with a sampling body calls the callee's `_layer` variant passing `layer, position`. Definitions without a sampling body keep one function. The fragment and preview programs keep the `texture2d` variants; nothing changes for them.
+- The Layer Effect export's root body calls `_layer` variants; the header lists no texture slots for it.
+- The validation error "Texture Sample inside a group needs the Fragment target" and its tests are deleted. The Color / Distortion refusal (one per document, root-anchored, reachable definitions only) stays.
+- Golden: a Layer Effect export with a group containing a Texture Sample, and one with a nested group (outer without a sample calling inner with one) — the outer gets a `_layer` variant too, because "contains" is transitive. The export compiles with `xcrun metal` when the toolchain is installed.
+
+### 22.8 Testing and verification
+
+- **Unit (package):** `TouchIntentMapper` tables (every row of §22.2 in each mode, thresholds, tap-vs-drag, long-press cancel on move), `CanvasMode` → `InputModifiers` on iOS (compiled on macOS through the mapper's platform-neutral path), `EditorViewState` decoding without `canvasMode` / `showsInspector`, `DocumentBridge` round trip and external reload, `PreviewState.program` atomicity (`SwitchableCompiler`: a failed compile leaves the previous program intact), `reachableDefinitions`, layer-variant goldens, `ExportFolderDocument` wrapper contents, in-memory `ImageChooser` / `Exporter` doubles driving the inspector's actions.
+- **XCUITest target `MetalNodesAppUITests`** (app target scheme, runs on macOS and the iPad Simulator; `project.pbxproj` may change to add the target and scheme, nothing else): palette drag-in (both platforms), Finder drop of an image onto the canvas (macOS), two-finger pan, pinch, lasso, long-press menu, wire drag, tap-to-place (iPad). Accessibility identifiers: `canvas`, `node.<8hex>`, `socket.<8hex>.<name>`, `badge.<8hex>.<name>`, `palette.<nodeid>`, `toolbar.add`, `toolbar.mode`, `toolbar.fit`, `toolbar.inspector`, `toolbar.export`, `minimap`. Each test launches with `-mnFixture <name>` so the app opens a deterministic document from `StarterDocuments`.
+- **Integration (controller-run):** a 20-item iPad Simulator checklist enumerated in the plan (document browser new/open/save, every row of the gesture table, chooser, context menu, inspector edits, Photos/Files import, export to Files and Share, code panel, minimap, hardware-keyboard shortcuts, compact-width placeholder, Layer Effect export of a grouped sample) plus the macOS regression subset: M5 checklist items 1–5, 12 and 17 and the M4 items 8 and 17.
+
