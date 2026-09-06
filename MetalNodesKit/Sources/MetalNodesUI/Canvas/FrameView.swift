@@ -27,7 +27,7 @@ struct FrameView: View {
         .commentMove(isSelected: isSelected, actions: actions)
         // After the chrome shape, so the handle keeps its own (larger) grab in the corner.
         .overlay(alignment: .bottomTrailing) {
-            CommentResizeHandle(accent: accent, isSelected: isSelected, actions: actions)
+            if isSelected { CommentResizeHandle(actions: actions) }
         }
     }
 

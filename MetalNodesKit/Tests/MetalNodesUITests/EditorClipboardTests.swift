@@ -177,6 +177,25 @@ import MetalNodesRender
         #expect(m.graph.stickies.values.first?.frame == CGRect(x: 100, y: 100, width: 160, height: 100))
     }
 
+    /// What the canvas's ⌥-drag builds on: the copies cover both sets and both are selected, so the
+    /// drag that follows has comments to carry as well as nodes.
+    @Test func duplicateCopiesTheSelectedCommentsAndSelectsThem() throws {
+        let m = model()
+        let time = node(m, "input.time")                            // at (0, 160)
+        let s = m.addSticky(at: .zero)
+        m.select(time.id)
+        m.selectComment(.sticky(s), mode: .add)
+
+        let dup = m.duplicateSelection()
+        #expect(dup.count == 1)
+        #expect(m.graph.stickies.count == 2)
+        let fresh = try #require(m.graph.stickies.values.first { $0.id != s })
+        #expect(fresh.frame == CGRect(x: 24, y: 24, width: 160, height: 100))
+        #expect(m.selection == dup)
+        #expect(m.selectedComments == [.sticky(fresh.id)])
+        #expect(m.graph.nodes[dup.first!]?.position == CGPoint(x: 24, y: 184))
+    }
+
     @Test func cutRemovesTheCommentsAlongsideTheNodes() throws {
         let m = model()
         let time = node(m, "input.time")

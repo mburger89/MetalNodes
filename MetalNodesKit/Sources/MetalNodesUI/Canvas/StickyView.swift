@@ -28,7 +28,7 @@ struct StickyView: View {
             .contentShape(Rectangle())
             .commentMove(isSelected: isSelected, actions: actions)
             .overlay(alignment: .bottomTrailing) {
-                CommentResizeHandle(accent: accent, isSelected: isSelected, actions: actions)
+                if isSelected { CommentResizeHandle(actions: actions) }
             }
     }
 }

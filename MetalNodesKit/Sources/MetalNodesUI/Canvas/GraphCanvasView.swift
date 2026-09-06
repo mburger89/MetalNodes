@@ -29,6 +29,9 @@ public struct GraphCanvasView: View {
     @State private var marquee: CGRect?                // canvas coords
     @State private var spaceHeld = false
     @State private var dragOrigins: [NodeID: CGPoint] = [:]
+    /// Only ever filled by an ⌥-drag, whose duplicate carries the selected comments as well as the
+    /// nodes: those copies have to travel with the cursor too (spec §21.4).
+    @State private var dragCommentOrigins: [CommentID: CGRect] = [:]
     /// ⌥-drag: duplication is deferred until the drag actually moves (see `beginNodeDrag`),
     /// so a zero-movement ⌥-click doesn't leave invisible copies stacked on the originals.
     @State private var pendingDuplicate = false
@@ -228,6 +231,7 @@ public struct GraphCanvasView: View {
                 transform.pan = CGSize(width: viewport.width / 2 - point.x * transform.zoom,
                                        height: viewport.height / 2 - point.y * transform.zoom)
                 model.viewState.cameras[model.activePath] = transform.camera
+                return
             case .addSticky:
                 // ⌘⇧N centres the note on the viewport, not its top-left corner (spec §21.4).
                 model.addSticky(centredAt: transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2)))
@@ -256,13 +260,8 @@ public struct GraphCanvasView: View {
 
     private var content: some View {
         ZStack(alignment: .topLeading) {
-            // Comments sit above the grid and below the wires and the nodes (spec §21.4).
-            CommentLayer(graph: model.graph, selected: model.selectedComments,
-                         visible: cullRect, keeping: commentsInFlight,
-                         onSelect: { id, mode in canvasFocused = true; model.selectComment(id, mode: mode) },
-                         onDragBegan: { id, resizing in beginCommentDrag(id, resizing: resizing) },
-                         onDrag: { dragComments(by: $0) },
-                         onDragEnded: { endCommentDrag() })
+            // Frames behind the wires, stickies above them — both below the nodes (spec §21.4).
+            commentLayer(.frames)
             WireLayer(graph: model.graph, anchors: anchors, shapes: shapes,
                       selected: model.selectedWire, pending: pendingWire) { from in
                 if let t = model.resolvedTypes[from.node]?.outputTypes[from.socket] {
@@ -270,6 +269,7 @@ public struct GraphCanvasView: View {
                 }
                 return DraculaTheme.wireDefault.color
             }
+            commentLayer(.stickies)
             let compact = transform.zoom < Self.lodZoom
             let errors = model.errorNodes
             // The selection draws last, so a node dragged over its neighbours stays on top —
@@ -317,6 +317,16 @@ public struct GraphCanvasView: View {
         .coordinateSpace(.named("canvas"))
     }
 
+    /// One band of the comment layer, wired to the same handlers (spec §21.4).
+    private func commentLayer(_ band: CommentLayer.Band) -> CommentLayer {
+        CommentLayer(band: band, graph: model.graph, selected: model.selectedComments,
+                     visible: cullRect, keeping: commentsInFlight,
+                     onSelect: { id, mode in canvasFocused = true; model.selectComment(id, mode: mode) },
+                     onDragBegan: { id, resizing in beginCommentDrag(id, resizing: resizing) },
+                     onDrag: { dragComments(by: $0) },
+                     onDragEnded: { endCommentDrag() })
+    }
+
     /// Nodes whose `NodeView` is running a gesture right now: the dragged selection and, for a
     /// socket drag, the wire's source node. Culling must not remove them (see `visibleNodes`).
     private var nodesInFlight: Set<NodeID> {
@@ -325,8 +335,11 @@ public struct GraphCanvasView: View {
         return ids
     }
 
-    /// Comments whose view is running a drag right now — the same protection `nodesInFlight` gives.
-    private var commentsInFlight: Set<CommentID> { commentDrag.map { Set($0.rects.keys) } ?? [] }
+    /// Comments in a live drag — their own, or an ⌥-drag's duplicates: the same protection
+    /// `nodesInFlight` gives node views.
+    private var commentsInFlight: Set<CommentID> {
+        (commentDrag.map { Set($0.rects.keys) } ?? []).union(dragCommentOrigins.keys)
+    }
 
     /// What `CommentLayer` culls against: the viewport grown by the margin, or nil before the
     /// viewport is known (in which case everything draws, as it does for nodes).
@@ -375,6 +388,7 @@ public struct GraphCanvasView: View {
         pendingDuplicate = InputModifiers.optionHeld && !model.selection.isEmpty
         model.beginTransaction(pendingDuplicate ? "Duplicate" : "Move")
         dragOrigins = [:]
+        dragCommentOrigins = [:]
         for id in model.selection {
             if let p = model.graph.nodes[id]?.position { dragOrigins[id] = p }
         }
@@ -384,20 +398,33 @@ public struct GraphCanvasView: View {
         if pendingDuplicate, abs(t.width) >= 1 || abs(t.height) >= 1 {
             pendingDuplicate = false
             model.duplicateSelection(offset: .zero)   // selection is now the copies, in place
+            // The copies include the selected comments (spec §21.4), so the drag must carry them
+            // too — otherwise they stay stacked on the originals with nothing to reveal them.
             dragOrigins = [:]
             for id in model.selection {
                 if let p = model.graph.nodes[id]?.position { dragOrigins[id] = p }
             }
+            dragCommentOrigins = [:]
+            for id in model.selectedComments {
+                if let r = model.graph[comment: id] { dragCommentOrigins[id] = r }
+            }
         }
-        guard !dragOrigins.isEmpty else { return }
-        var moves: [NodeID: CGPoint] = [:]
-        for (id, o) in dragOrigins { moves[id] = CGPoint(x: o.x + t.width, y: o.y + t.height) }
-        model.apply(.moveNodes(moves))
+        if !dragOrigins.isEmpty {
+            var moves: [NodeID: CGPoint] = [:]
+            for (id, o) in dragOrigins { moves[id] = CGPoint(x: o.x + t.width, y: o.y + t.height) }
+            model.apply(.moveNodes(moves))
+        }
+        if !dragCommentOrigins.isEmpty {
+            var moves: [CommentID: CGPoint] = [:]
+            for (id, r) in dragCommentOrigins { moves[id] = CGPoint(x: r.minX + t.width, y: r.minY + t.height) }
+            model.apply(.moveComments(moves))
+        }
     }
 
     private func endNodeDrag() {
         model.endTransaction()
         dragOrigins = [:]
+        dragCommentOrigins = [:]
         pendingDuplicate = false
     }
 
@@ -427,14 +454,13 @@ public struct GraphCanvasView: View {
             if let r = model.graph[comment: c] { rects[c] = r }
         }
         var nodes: [NodeID: CGPoint] = [:]
-        var movesAFrame = false
         for case .frame(let f) in rects.keys {
-            movesAFrame = true
             for n in model.members(of: f) {
                 if let p = model.graph.nodes[n]?.position { nodes[n] = p }
             }
         }
-        model.beginTransaction(movesAFrame ? "Move Frame" : "Move")
+        // "Move Frame" names the step that carries nodes along; an empty frame just moves.
+        model.beginTransaction(nodes.isEmpty ? "Move" : "Move Frame")
         commentDrag = CommentDrag(rects: rects, nodes: nodes)
     }
 

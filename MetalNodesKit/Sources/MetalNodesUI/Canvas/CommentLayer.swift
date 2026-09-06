@@ -10,10 +10,16 @@ struct CommentActions {
     var dragEnded: () -> Void
 }
 
-/// Sticky notes and comment frames, drawn below the wires and the nodes (spec §21.4). Frames go
-/// down first, then stickies, each in ascending id order — the order `EditorModel.comment(at:)`
-/// resolves ties in, so the comment SwiftUI hands a click to is the one drawn on top.
+/// Sticky notes and comment frames (spec §21.4). The two kinds live in different bands of the
+/// canvas — frames behind the wires, stickies above them and below the nodes — so the layer draws
+/// one band at a time and the canvas places each where it belongs. Within a band, comments go down
+/// in ascending id order: the order `EditorModel.comment(at:)` resolves ties in, so the comment
+/// SwiftUI hands a click to is the one drawn on top. Stickies beating frames follows from the
+/// band order, exactly as that hit test does.
 struct CommentLayer: View {
+    enum Band { case frames, stickies }
+
+    let band: Band
     let graph: Graph
     let selected: Set<CommentID>
     /// Canvas-space cull rect (the viewport plus its margin), or nil before the viewport is known.
@@ -28,13 +34,17 @@ struct CommentLayer: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(frames, id: \.id) { f in
-                FrameView(frame: f, isSelected: selected.contains(.frame(f.id)), actions: actions(for: .frame(f.id)))
-                    .offset(x: f.frame.minX, y: f.frame.minY)
-            }
-            ForEach(stickies, id: \.id) { s in
-                StickyView(note: s, isSelected: selected.contains(.sticky(s.id)), actions: actions(for: .sticky(s.id)))
-                    .offset(x: s.frame.minX, y: s.frame.minY)
+            switch band {
+            case .frames:
+                ForEach(frames, id: \.id) { f in
+                    FrameView(frame: f, isSelected: selected.contains(.frame(f.id)), actions: actions(for: .frame(f.id)))
+                        .offset(x: f.frame.minX, y: f.frame.minY)
+                }
+            case .stickies:
+                ForEach(stickies, id: \.id) { s in
+                    StickyView(note: s, isSelected: selected.contains(.sticky(s.id)), actions: actions(for: .sticky(s.id)))
+                        .offset(x: s.frame.minX, y: s.frame.minY)
+                }
             }
         }
     }
@@ -103,10 +113,9 @@ extension View {
 }
 
 /// The 12 pt corner grab that resizes a comment (spec §21.4). Drawn over the bottom-right corner
-/// and above the body's own gesture, so the handle wins there.
+/// and above the body's own gesture, so the handle wins there — and only on a selected comment, so
+/// a click in an unselected note's corner still selects and moves it.
 struct CommentResizeHandle: View {
-    let accent: Color
-    let isSelected: Bool
     let actions: CommentActions
     @State private var resizing = false
 
@@ -119,7 +128,7 @@ struct CommentResizeHandle: View {
             p.addLine(to: CGPoint(x: 0, y: Self.size))
             p.closeSubpath()
         }
-        .fill(isSelected ? DraculaTheme.selection.color.opacity(0.8) : accent.opacity(0.6))
+        .fill(DraculaTheme.selection.color.opacity(0.8))
         .frame(width: Self.size, height: Self.size)
         .contentShape(Rectangle())
         .gesture(
