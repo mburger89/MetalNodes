@@ -64,6 +64,60 @@ public struct ShaderDocument: Sendable, Hashable {
     public init() {}
 }
 
+public extension GroupDefinition {
+    /// A fresh definition with its two pseudo-nodes (spec §20.2): input at (0, 0), output at (600, 0).
+    static func make(name: String, accent: DraculaAccent = .purple) -> GroupDefinition {
+        var d = GroupDefinition(name: name, accent: accent)
+        let i = NodeInstance(kind: .groupInput, position: CGPoint(x: 0, y: 0))
+        let o = NodeInstance(kind: .groupOutput, position: CGPoint(x: 600, y: 0))
+        d.graph.nodes[i.id] = i
+        d.graph.nodes[o.id] = o
+        return d
+    }
+
+    var inputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupInput }?.id }
+    var outputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupOutput }?.id }
+
+    /// Identity of the definition's content (spec §20.7): name, sockets, accent and graph, ids included.
+    var contentHash: String {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        let data = (try? enc.encode(self)) ?? Data()
+        return ContentHash.fnv1a(data)
+    }
+}
+
+public extension ShaderDocument {
+    func graph(at path: GraphPath) -> Graph? {
+        switch path {
+        case .root: root
+        case .definition(let id): definitions[id]?.graph
+        }
+    }
+
+    /// Reads/mutates the graph at `path`. Writing to a missing definition is a programmer error.
+    subscript(path: GraphPath) -> Graph {
+        get { graph(at: path) ?? Graph() }
+        set {
+            switch path {
+            case .root: root = newValue
+            case .definition(let id):
+                precondition(definitions[id] != nil, "no definition \(id)")
+                definitions[id]!.graph = newValue
+            }
+        }
+    }
+
+    /// Ids are unique document-wide: find an instance in any graph.
+    func node(_ id: NodeID) -> (node: NodeInstance, path: GraphPath)? {
+        if let n = root.nodes[id] { return (n, .root) }
+        for d in definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
+            if let n = d.graph.nodes[id] { return (n, .definition(d.id)) }
+        }
+        return nil
+    }
+}
+
 extension ShaderDocument: Codable {
     private enum Keys: String, CodingKey { case formatVersion, root, definitions, settings }
 

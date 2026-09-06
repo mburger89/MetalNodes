@@ -43,6 +43,7 @@ public enum DraculaTheme {
         case .noise: .pink
         case .color: .yellow
         case .utility: .muted
+        case .group: .purple
         case .output: .foreground
         }
     }
