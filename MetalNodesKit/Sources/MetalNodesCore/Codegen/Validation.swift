@@ -44,10 +44,18 @@ public enum GraphValidator {
         }
 
         // A Color or Distortion Effect gets no texture argument from SwiftUI and, unlike the Layer
-        // Effect, has no layer to sample instead (spec §21.2).
-        if case .stitchable(let kind) = target, kind != .layerEffect {
-            for n in sorted where n.kind == .builtin(textureSampleID) {
-                out.append(Diagnostic(.error, "Texture Sample needs the Layer Effect target", node: n.id))
+        // Effect, has no layer to sample instead (spec §21.2). The Layer Effect does have one, but
+        // only the exported function can name it: a group function would take a `texture2d<float>`
+        // parameter that nothing in the export could supply, so a sample inside a definition is
+        // refused there too.
+        if case .stitchable(let kind) = target {
+            let message: String? = kind == .layerEffect
+                ? (path == .root ? nil : "Texture Sample inside a group needs the Fragment target")
+                : "Texture Sample needs the Layer Effect target"
+            if let message {
+                for n in sorted where n.kind == .builtin(textureSampleID) {
+                    out.append(Diagnostic(.error, message, node: n.id))
+                }
             }
         }
 

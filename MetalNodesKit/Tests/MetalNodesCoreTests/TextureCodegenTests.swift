@@ -52,7 +52,9 @@ import CoreGraphics
         #expect(!s.source.contains("mn_sampler"))
     }
 
-    @Test func groupFunctionsTakeTextureParameters() throws {
+    /// A one-node definition that samples asset 2, instantiated once in the root.
+    /// The returned id is the Texture Sample *inside* the definition.
+    private func groupDoc() -> (document: ShaderDocument, sample: NodeID) {
         var def = GroupDefinition.make(name: "Tex")
         def.outputs = [SocketDecl(name: "color", type: .concrete(.color))]
         let s = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(aid(2))])
@@ -64,12 +66,26 @@ import CoreGraphics
         let inst = NodeInstance(kind: .group(def.id)), out = NodeInstance(kind: .builtin("output.fragment"))
         d.root.nodes[inst.id] = inst; d.root.nodes[out.id] = out
         d.root.connect(SocketRef(inst.id, "color"), to: SocketRef(out.id, "color"))
-        let g = try ShaderGenerator.generate(d, registry: reg)
+        return (d, s.id)
+    }
+
+    @Test func groupFunctionsTakeTextureParameters() throws {
+        let g = try ShaderGenerator.generate(groupDoc().document, registry: reg)
         #expect(g.textures == [TextureSlot(index: 0, asset: aid(2))])
         #expect(g.source.contains("(float2 uv, float time, float2 size, float2 mouse, texture2d<float> t_20000000)"))
         #expect(g.source.contains("mn_g_Tex_"))
         #expect(g.source.contains(", tex0);"))                     // the call passes the slot
         #expect(g.source.contains("t_20000000.sample(mn_sampler, "))
+    }
+
+    @Test func layerEffectRefusesATextureSampleInsideAGroup() throws {
+        // The export has only `layer`, which cannot bind to the group function's `texture2d<float>`
+        // parameter — so the Layer Effect refuses a grouped sample even though it allows a root one.
+        var (d, sample) = groupDoc()
+        d.settings.target = .stitchable(.layerEffect)
+        let diags = GraphValidator.validate(document: d, registry: reg, target: d.settings.target)
+        #expect(diags.contains { $0.message == "Texture Sample inside a group needs the Fragment target" && $0.node == sample })
+        #expect(throws: GenerationError.self) { try ShaderGenerator.generate(d, target: d.settings.target, registry: reg) }
     }
 
     @Test func colorEffectRefusesTextureSampleAndLayerEffectSamplesTheLayer() throws {
