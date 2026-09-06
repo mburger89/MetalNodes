@@ -81,7 +81,14 @@ struct ParamControl: View {
                 Slider(value: Binding(get: { f }, set: { onChange(.float($0)) }), in: range ?? -10...10,
                        onEditingChanged: { onEditing?($0) })
                     .controlSize(.mini)
-                Text(f.formatted(.number.precision(.fractionLength(2)))).font(.caption2.monospacedDigit()).frame(width: 36, alignment: .trailing)
+                // Three digits and two decimals do not fit 36pt, and the node is a fixed 190 wide:
+                // let the readout keep its one line and take the width it needs, out of the
+                // slider's, rather than wrapping "215.41" onto two.
+                Text(f.formatted(.number.precision(.fractionLength(2))))
+                    .font(.caption2.monospacedDigit())
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(minWidth: 36, alignment: .trailing)
             }
         case .int:
             let i: Int32 = { if case .int(let x) = value { return x } else { return 0 } }()
