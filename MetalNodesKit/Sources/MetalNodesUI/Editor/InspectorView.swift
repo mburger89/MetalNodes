@@ -15,10 +15,15 @@ public struct InspectorView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                switch model.selection.count {
-                case 0: emptySelectionPane
-                case 1: nodePane(model.selection.first!)
-                default: Text("\(model.selection.count) nodes selected").font(.callout).foregroundStyle(DraculaToken.muted.color)
+                // One comment and no node: the comment's own pane (spec §21.4).
+                if model.selection.isEmpty, model.selectedComments.count == 1 {
+                    CommentPane(model: model, id: model.selectedComments.first!)
+                } else {
+                    switch model.selection.count {
+                    case 0: emptySelectionPane
+                    case 1: nodePane(model.selection.first!)
+                    default: Text("\(model.selection.count) nodes selected").font(.callout).foregroundStyle(DraculaToken.muted.color)
+                    }
                 }
             }
             .padding(12)

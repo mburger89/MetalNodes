@@ -66,6 +66,15 @@ public struct EditorCommands: Commands {
             Button("Exit Group") { model?.exitGroup() }
                 .keyboardShortcut(.upArrow, modifiers: .command)
                 .disabled(!canvasFocused || !(model?.canExitGroup ?? false))
+            // Comments (spec §21.4). The note lands at the viewport's centre, which only the
+            // canvas knows, so it goes through `canvasRequest` the way palette placement does.
+            Divider()
+            Button("Add Sticky Note") { model?.requestCanvas(.addSticky) }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(!canvasFocused)
+            Button("Frame Selection") { model?.frameSelection() }
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(!canvasFocused || (model?.selection.isEmpty ?? true))
         }
         CommandGroup(after: .sidebar) {
             Divider()

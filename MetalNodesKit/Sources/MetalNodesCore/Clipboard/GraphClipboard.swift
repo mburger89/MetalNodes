@@ -27,6 +27,9 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
         self.sourceOrigin = sourceOrigin
     }
 
+    /// Nothing to paste. Comments count: a note copies on its own (spec §21.4).
+    public var isEmpty: Bool { nodes.isEmpty && stickies.isEmpty && frames.isEmpty }
+
     /// Extent of the relative node positions (top-left of each node; excludes node size).
     public var size: CGSize {
         guard !nodes.isEmpty else { return .zero }
@@ -34,16 +37,31 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
         return CGSize(width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
     }
 
-    public static func extract(_ ids: Set<NodeID>, from graph: Graph) -> GraphClipboard {
+    /// The selected nodes and comments, positioned relative to the payload's own top-left — which
+    /// spans both, so a note above the nodes keeps its offset from them (spec §21.4).
+    public static func extract(_ ids: Set<NodeID>, comments: Set<CommentID> = [], from graph: Graph) -> GraphClipboard {
         let picked = ids.compactMap { graph.nodes[$0] }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
-        guard !picked.isEmpty else { return GraphClipboard(nodes: [], edges: []) }
-        let ox = picked.map(\.position.x).min()!, oy = picked.map(\.position.y).min()!
+        let notes = comments.compactMap { id -> StickyNote? in
+            guard case .sticky(let s) = id else { return nil }
+            return graph.stickies[s]
+        }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        let boxes = comments.compactMap { id -> CommentFrame? in
+            guard case .frame(let f) = id else { return nil }
+            return graph.frames[f]
+        }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        let origins = picked.map(\.position) + notes.map(\.frame.origin) + boxes.map(\.frame.origin)
+        guard let ox = origins.map(\.x).min(), let oy = origins.map(\.y).min() else {
+            return GraphClipboard(nodes: [], edges: [])
+        }
         let rel = picked.map { n -> NodeInstance in
             var m = n
             m.position = CGPoint(x: n.position.x - ox, y: n.position.y - oy)
             return m
         }
-        return GraphClipboard(nodes: rel, edges: graph.internalEdges(among: ids), sourceOrigin: CGPoint(x: ox, y: oy))
+        var clip = GraphClipboard(nodes: rel, edges: graph.internalEdges(among: ids), sourceOrigin: CGPoint(x: ox, y: oy))
+        clip.stickies = notes.map { var m = $0; m.frame.origin = CGPoint(x: $0.frame.minX - ox, y: $0.frame.minY - oy); return m }
+        clip.frames = boxes.map { var m = $0; m.frame.origin = CGPoint(x: $0.frame.minX - ox, y: $0.frame.minY - oy); return m }
+        return clip
     }
 
     /// Fresh IDs every call, so the same clipboard can be pasted repeatedly.
@@ -62,6 +80,14 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
         }
         return (fresh, wires)
     }
+
+    /// The comments, with fresh ids and absolute rects — the counterpart of `materialize`, kept
+    /// apart so a node-only paste never has to unpack a pair it does not use (spec §21.4).
+    public func materializeComments(at origin: CGPoint) -> (stickies: [StickyNote], frames: [CommentFrame]) {
+        (stickies.map { StickyNote(text: $0.text, frame: $0.frame.offsetBy(dx: origin.x, dy: origin.y), accent: $0.accent) },
+         frames.map { CommentFrame(title: $0.title, frame: $0.frame.offsetBy(dx: origin.x, dy: origin.y),
+                                   accent: $0.accent, collapsed: $0.collapsed) })
+    }
 }
 
 public extension GraphClipboard {
@@ -71,11 +97,12 @@ public extension GraphClipboard {
     /// Spec §13, §21.2: also carries every asset (manifest entry, and bytes when `textures` has
     /// them) referenced by a `.asset` param on a copied node or on any node inside a carried
     /// definition — the carried definitions already are the transitive closure, so no further
-    /// recursion is needed to reach nested ones.
-    static func extract(_ ids: Set<NodeID>, from graph: Graph, document doc: ShaderDocument,
-                         textures: [AssetID: Data] = [:]) -> GraphClipboard {
+    /// recursion is needed to reach nested ones. `comments` are carried as-is (spec §21.4).
+    static func extract(_ ids: Set<NodeID>, comments: Set<CommentID> = [],
+                        from graph: Graph, document doc: ShaderDocument,
+                        textures: [AssetID: Data] = [:]) -> GraphClipboard {
         let real = ids.filter { graph.nodes[$0].map { $0.kind != .groupInput && $0.kind != .groupOutput } ?? false }
-        var clip = extract(real, from: graph)
+        var clip = extract(real, comments: comments, from: graph)
         var refs = Set<GroupID>()
         for id in real {
             if case .group(let g)? = graph.nodes[id]?.kind {

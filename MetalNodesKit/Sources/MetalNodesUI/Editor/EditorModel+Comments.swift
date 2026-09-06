@@ -20,6 +20,11 @@ extension Graph {
         }
     }
 
+    /// Every comment of the graph, addressed the way selection addresses them.
+    var commentIDs: Set<CommentID> {
+        Set(stickies.keys.map(CommentID.sticky)).union(frames.keys.map(CommentID.frame))
+    }
+
     mutating func remove(comment id: CommentID) {
         switch id {
         case .sticky(let s): stickies[s] = nil
@@ -39,6 +44,8 @@ extension EditorModel {
     public static let stickySize = CGSize(width: 160, height: 100)
     /// Slack between a framed selection's bounding box and the frame around it.
     public static let framePadding: CGFloat = 24
+    /// Floor for a corner-handle resize, so a comment can never be dragged out of existence.
+    public static let minCommentSize = CGSize(width: 80, height: 40)
 
     public var selectedComments: Set<CommentID> {
         get { viewState.selectedComments }
@@ -54,6 +61,12 @@ extension EditorModel {
         apply(.addSticky(note))
         selectComment(.sticky(note.id))
         return note.id
+    }
+
+    /// ⌘⇧N: the viewport's centre is the note's centre, so the origin is half a note up and left.
+    @discardableResult
+    public func addSticky(centredAt point: CGPoint) -> StickyID {
+        addSticky(at: CGPoint(x: point.x - Self.stickySize.width / 2, y: point.y - Self.stickySize.height / 2))
     }
 
     /// Frames the selected nodes: their bounding box plus 24 pt of padding, with the title bar
@@ -117,6 +130,25 @@ extension EditorModel {
     func pruneCommentSelection() {
         let g = graph
         viewState.selectedComments = viewState.selectedComments.filter { g[comment: $0] != nil }
+    }
+
+    // MARK: Canvas geometry
+
+    /// The comments a marquee catches: rect intersection, both kinds alike (spec §21.4).
+    public func comments(intersecting rect: CGRect) -> Set<CommentID> {
+        let g = graph
+        var out = Set<CommentID>()
+        for s in g.stickies.values where s.frame.intersects(rect) { out.insert(.sticky(s.id)) }
+        for f in g.frames.values where f.frame.intersects(rect) { out.insert(.frame(f.id)) }
+        return out
+    }
+
+    /// A corner-handle drag: the top-left stays put and the size follows the drag, floored at
+    /// `minCommentSize`.
+    public static func resized(_ rect: CGRect, by delta: CGSize) -> CGRect {
+        CGRect(origin: rect.origin,
+               size: CGSize(width: max(rect.width + delta.width, minCommentSize.width),
+                            height: max(rect.height + delta.height, minCommentSize.height)))
     }
 
     // MARK: Hit-testing

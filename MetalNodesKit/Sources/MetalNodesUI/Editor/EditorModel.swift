@@ -12,6 +12,8 @@ public enum CanvasRequest: Equatable, Sendable {
     case placeGroup(GroupID)
     /// Pan so this canvas point sits at the viewport centre (minimap click/drag, spec §21.6).
     case centerOn(CGPoint)
+    /// Add a sticky note centred on the viewport (Edit ▸ Add Sticky Note, spec §21.4).
+    case addSticky
 }
 
 @MainActor
@@ -229,7 +231,7 @@ public final class EditorModel {
             // Pseudo-nodes are part of their definition's shape and cannot be deleted (spec §20.8).
             document[path].remove(nodes: ids.filter { shape(of: $0)?.isPseudo != true })
             pruneAfterRemoval()
-        case .insert(let nodes, let edges, let definitions, let assets):
+        case .insert(let nodes, let edges, let definitions, let assets, let stickies, let frames):
             // Reuse, import or insert what the payload brought, then retarget the instances (spec §20.7).
             let plan = ClipboardMerge.plan(definitions: definitions, into: document)
             for d in plan.insert { document.definitions[d.id] = d }
@@ -237,6 +239,8 @@ public final class EditorModel {
             var g = document[path]
             for n in ClipboardMerge.apply(plan, to: nodes) { g.nodes[n.id] = n }
             for e in edges { g.connect(e.from, to: e.to) }
+            for s in stickies { g.stickies[s.id] = s }
+            for f in frames { g.frames[f.id] = f }
             document[path] = g
             // Spec §13, §21.2: add what the destination lacks; an id it already has keeps its
             // own manifest entry and bytes, never overwritten.

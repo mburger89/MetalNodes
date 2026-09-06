@@ -160,6 +160,53 @@ import MetalNodesRender
         #expect(m.selectedComments.isEmpty)
     }
 
+    @Test func selectAllTakesEveryNodeAndEveryComment() {
+        let m = model()
+        let n = time(m, x: 0, y: 0)
+        let s = m.addSticky(at: .zero)
+        let f = CommentFrame(title: "F", frame: .zero)
+        m.apply(.addFrame(f))
+        m.clearSelection()
+        m.selectAll()
+        #expect(m.selection == [n])
+        #expect(m.selectedComments == [.sticky(s), .frame(f.id)])
+    }
+
+    /// The marquee hits both sets at once, so neither may clear the other on the way in.
+    @Test func marqueeSelectsNodesAndCommentsTogether() {
+        let m = model()
+        let n = time(m, x: 0, y: 0)                          // 190 × 64 at the origin
+        let s = m.addSticky(at: CGPoint(x: 300, y: 300))     // 160 × 100
+        let far = CommentFrame(title: "F", frame: CGRect(x: 1000, y: 1000, width: 100, height: 100))
+        m.apply(.addFrame(far))
+
+        let rect = CGRect(x: -10, y: -10, width: 500, height: 500)
+        #expect(m.comments(intersecting: rect) == [.sticky(s)])
+        #expect(m.comments(intersecting: CGRect(x: 900, y: 900, width: 50, height: 50)).isEmpty)
+
+        m.select(nodes: [n], comments: m.comments(intersecting: rect), mode: .replace)
+        #expect(m.selection == [n])
+        #expect(m.selectedComments == [.sticky(s)])
+        m.select(nodes: [], comments: [.frame(far.id)], mode: .add)
+        #expect(m.selection == [n])
+        #expect(m.selectedComments == [.sticky(s), .frame(far.id)])
+    }
+
+    // MARK: Canvas geometry
+
+    /// ⌘⇧N centres the note on the viewport centre, which is half its size off the top-left.
+    @Test func addStickyCentredOffsetsByHalfTheNoteSize() {
+        let m = model()
+        let id = m.addSticky(centredAt: CGPoint(x: 500, y: 400))
+        #expect(m.graph.stickies[id]?.frame == CGRect(x: 420, y: 350, width: 160, height: 100))
+    }
+
+    @Test func resizingKeepsTheOriginAndFloorsAt80x40() {
+        let rect = CGRect(x: 10, y: 20, width: 160, height: 100)
+        #expect(EditorModel.resized(rect, by: CGSize(width: 40, height: 30)) == CGRect(x: 10, y: 20, width: 200, height: 130))
+        #expect(EditorModel.resized(rect, by: CGSize(width: -500, height: -500)) == CGRect(x: 10, y: 20, width: 80, height: 40))
+    }
+
     @Test func deleteRemovesSelectedNodesAndSelectedCommentsInOneStep() {
         let m = model()
         let n = time(m, x: 0, y: 0)

@@ -118,6 +118,79 @@ import MetalNodesRender
         #expect(!m.canUndo)
     }
 
+    // MARK: Comments (spec §21.4)
+
+    @Test func copyCarriesSelectedCommentsAndPasteRemintsAndOffsetsThem() throws {
+        let pb = MemoryPasteboard()
+        let m = model(pb)
+        let time = node(m, "input.time")                            // at (0, 160)
+        let s = m.addSticky(at: CGPoint(x: 40, y: 200))
+        m.select(time.id)
+        m.selectComment(.sticky(s), mode: .add)
+        m.copySelection()
+
+        let clip = try JSONDecoder().decode(GraphClipboard.self, from: try #require(pb.read(type: EditorModel.pasteboardType)))
+        #expect(clip.sourceOrigin == CGPoint(x: 0, y: 160))         // the payload's whole bounding origin
+        #expect(clip.stickies.map(\.frame) == [CGRect(x: 40, y: 40, width: 160, height: 100)])
+        #expect(clip.frames.isEmpty)
+
+        let pasted = m.paste(at: CGPoint(x: 2000, y: 2000))
+        #expect(pasted.count == 1)
+        #expect(m.graph.stickies.count == 2)
+        let fresh = try #require(m.graph.stickies.values.first { $0.id != s })
+        #expect(fresh.frame == CGRect(x: 2040, y: 2040, width: 160, height: 100))
+        #expect(fresh.text == "Note")
+        #expect(m.selection == pasted)
+        #expect(m.selectedComments == [.sticky(fresh.id)])
+    }
+
+    @Test func aFrameTravelsWithTheNodesItSurrounds() throws {
+        let m = model()
+        let time = node(m, "input.time")
+        m.select(time.id)
+        let f = try #require(m.frameSelection())
+        let rect = try #require(m.graph.frames[f]?.frame)
+        m.select(time.id)
+        m.selectComment(.frame(f), mode: .add)
+        m.copySelection()
+
+        _ = m.paste(at: CGPoint(x: 3000, y: 3000))
+        let fresh = try #require(m.graph.frames.values.first { $0.id != f })
+        #expect(fresh.title == "Frame")
+        #expect(fresh.frame.size == rect.size)
+        // The frame is the payload's top-left, so it lands exactly on the paste point.
+        #expect(fresh.frame.origin == CGPoint(x: 3000, y: 3000))
+    }
+
+    @Test func commentsCopyOnTheirOwnAndCutTakesThemWithTheNodes() throws {
+        let pb = MemoryPasteboard()
+        let m = model(pb)
+        let s = m.addSticky(at: CGPoint(x: 10, y: 10))
+        #expect(m.selection.isEmpty)
+        #expect(m.canCopy)                                          // a comment alone is copyable
+
+        m.cutSelection()
+        #expect(m.graph.stickies.isEmpty)
+        #expect(m.graph.stickies[s] == nil)
+        _ = m.paste(at: CGPoint(x: 100, y: 100))
+        #expect(m.graph.stickies.count == 1)
+        #expect(m.graph.stickies.values.first?.frame == CGRect(x: 100, y: 100, width: 160, height: 100))
+    }
+
+    @Test func cutRemovesTheCommentsAlongsideTheNodes() throws {
+        let m = model()
+        let time = node(m, "input.time")
+        let s = m.addSticky(at: CGPoint(x: 0, y: 0))
+        m.select(time.id)
+        m.selectComment(.sticky(s), mode: .add)
+        m.cutSelection()
+        #expect(m.graph.nodes[time.id] == nil)
+        #expect(m.graph.stickies.isEmpty)
+        _ = m.paste(at: .zero)
+        #expect(m.graph.stickies.count == 1)
+        #expect(m.graph.nodes.count == 11)
+    }
+
     @Test func clipboardDataIsWhatCopyWritesAndNilWithoutASelection() throws {
         let pb = MemoryPasteboard()
         let m = model(pb)

@@ -33,6 +33,8 @@ public struct GraphCanvasView: View {
     /// so a zero-movement ⌥-click doesn't leave invisible copies stacked on the originals.
     @State private var pendingDuplicate = false
     @State private var pendingWire: PendingWire?
+    /// The comment move or resize in flight, and what it started from (spec §21.4).
+    @State private var commentDrag: CommentDrag?
     /// Latched for the duration of one background drag, so releasing or pressing space midway
     /// cannot switch a live wire drag or marquee into a pan (and strand its transaction).
     @State private var dragMode: BackgroundDragMode?
@@ -226,6 +228,9 @@ public struct GraphCanvasView: View {
                 transform.pan = CGSize(width: viewport.width / 2 - point.x * transform.zoom,
                                        height: viewport.height / 2 - point.y * transform.zoom)
                 model.viewState.cameras[model.activePath] = transform.camera
+            case .addSticky:
+                // ⌘⇧N centres the note on the viewport, not its top-left corner (spec §21.4).
+                model.addSticky(centredAt: transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2)))
                 return
             case .fitAll: rect = model.contentBounds
             case .fitSelection: rect = model.selectionBounds ?? model.contentBounds
@@ -251,6 +256,13 @@ public struct GraphCanvasView: View {
 
     private var content: some View {
         ZStack(alignment: .topLeading) {
+            // Comments sit above the grid and below the wires and the nodes (spec §21.4).
+            CommentLayer(graph: model.graph, selected: model.selectedComments,
+                         visible: cullRect, keeping: commentsInFlight,
+                         onSelect: { id, mode in canvasFocused = true; model.selectComment(id, mode: mode) },
+                         onDragBegan: { id, resizing in beginCommentDrag(id, resizing: resizing) },
+                         onDrag: { dragComments(by: $0) },
+                         onDragEnded: { endCommentDrag() })
             WireLayer(graph: model.graph, anchors: anchors, shapes: shapes,
                       selected: model.selectedWire, pending: pendingWire) { from in
                 if let t = model.resolvedTypes[from.node]?.outputTypes[from.socket] {
@@ -311,6 +323,15 @@ public struct GraphCanvasView: View {
         var ids = Set(dragOrigins.keys)
         if let w = pendingWire { ids.insert(w.source.node) }
         return ids
+    }
+
+    /// Comments whose view is running a drag right now — the same protection `nodesInFlight` gives.
+    private var commentsInFlight: Set<CommentID> { commentDrag.map { Set($0.rects.keys) } ?? [] }
+
+    /// What `CommentLayer` culls against: the viewport grown by the margin, or nil before the
+    /// viewport is known (in which case everything draws, as it does for nodes).
+    private var cullRect: CGRect? {
+        viewport == .zero ? nil : transform.visibleRect(viewport: viewport).insetBy(dx: -Self.cullMargin, dy: -Self.cullMargin)
     }
 
     private var marqueeOverlay: some View {
@@ -378,6 +399,65 @@ public struct GraphCanvasView: View {
         model.endTransaction()
         dragOrigins = [:]
         pendingDuplicate = false
+    }
+
+    // MARK: Comment drag (spec §21.4)
+
+    /// A comment drag in flight: the rects it started from — and, for a frame move, the positions
+    /// of the nodes it owned when the drag began, since membership is geometry read once (§11.5).
+    struct CommentDrag {
+        /// Set when the corner handle started this, in which case `rects` holds only that comment.
+        var resizing: CommentID?
+        var rects: [CommentID: CGRect] = [:]
+        var nodes: [NodeID: CGPoint] = [:]
+    }
+
+    private func beginCommentDrag(_ id: CommentID, resizing: Bool) {
+        canvasFocused = true
+        if model.isInTransaction { model.endTransaction() }   // defensive reset, as node drags do
+        if resizing {
+            guard let rect = model.graph[comment: id] else { return }
+            model.beginTransaction("Resize")
+            commentDrag = CommentDrag(resizing: id, rects: [id: rect])
+            return
+        }
+        // The whole comment selection moves together, exactly as the node selection does.
+        var rects: [CommentID: CGRect] = [:]
+        for c in model.selectedComments.union([id]) {
+            if let r = model.graph[comment: c] { rects[c] = r }
+        }
+        var nodes: [NodeID: CGPoint] = [:]
+        var movesAFrame = false
+        for case .frame(let f) in rects.keys {
+            movesAFrame = true
+            for n in model.members(of: f) {
+                if let p = model.graph.nodes[n]?.position { nodes[n] = p }
+            }
+        }
+        model.beginTransaction(movesAFrame ? "Move Frame" : "Move")
+        commentDrag = CommentDrag(rects: rects, nodes: nodes)
+    }
+
+    private func dragComments(by t: CGSize) {
+        guard let d = commentDrag else { return }
+        if let id = d.resizing {
+            guard let r = d.rects[id] else { return }
+            model.apply(.resizeComment(id, EditorModel.resized(r, by: t)))
+            return
+        }
+        var moves: [CommentID: CGPoint] = [:]
+        for (id, r) in d.rects { moves[id] = CGPoint(x: r.minX + t.width, y: r.minY + t.height) }
+        model.apply(.moveComments(moves))
+        if !d.nodes.isEmpty {
+            var members: [NodeID: CGPoint] = [:]
+            for (id, p) in d.nodes { members[id] = CGPoint(x: p.x + t.width, y: p.y + t.height) }
+            model.apply(.moveNodes(members))
+        }
+    }
+
+    private func endCommentDrag() {
+        model.endTransaction()
+        commentDrag = nil
     }
 
     // MARK: Wiring (spec §18.5)
@@ -533,8 +613,10 @@ public struct GraphCanvasView: View {
                 case .marquee, nil:                       // nil: pressed and released without a change
                     let moved = abs(g.translation.width) >= 4 || abs(g.translation.height) >= 4
                     if moved, let m = marquee {
+                        // Nodes and comments in one pass, so neither clears the other (spec §21.4).
                         let hit = NodeGeometry.nodes(in: model.graph, intersecting: m, shapes: shapes)
-                        model.select(nodes: hit, mode: InputModifiers.shiftHeld ? .add : .replace)
+                        model.select(nodes: hit, comments: model.comments(intersecting: m),
+                                     mode: InputModifiers.shiftHeld ? .add : .replace)
                     } else if let last = lastClick, Date.now.timeIntervalSince(last.time) < 0.4,
                               hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
                         lastClick = nil

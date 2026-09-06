@@ -28,7 +28,19 @@ extension EditorModel {
     /// The selection minus pseudo-nodes — what copy, cut, delete and group may act on (spec §20.8).
     public var editableSelection: Set<NodeID> { selection.filter { shape(of: $0)?.isPseudo != true } }
 
-    public func selectAll() { select(nodes: Set(graph.nodes.keys), mode: .replace) }
+    /// Nodes and comments in one gesture — the marquee and Select All hit both, so neither set
+    /// may clear the other on the way in (spec §21.4).
+    public func select(nodes ids: Set<NodeID>, comments: Set<CommentID>, mode: SelectionMode) {
+        selectedWire = nil
+        switch mode {
+        case .replace: selection = ids; selectedComments = comments
+        case .add: selection.formUnion(ids); selectedComments.formUnion(comments)
+        case .toggle: selection.formSymmetricDifference(ids); selectedComments.formSymmetricDifference(comments)
+        }
+        pruneSelection()
+    }
+
+    public func selectAll() { select(nodes: Set(graph.nodes.keys), comments: graph.commentIDs, mode: .replace) }
 
     public func clearSelection() {
         selection = []

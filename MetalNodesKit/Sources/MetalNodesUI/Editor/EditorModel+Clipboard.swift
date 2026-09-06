@@ -3,14 +3,15 @@ import CoreGraphics
 import MetalNodesCore
 
 extension EditorModel {
-    public var canCopy: Bool { !editableSelection.isEmpty }
+    /// Comments copy on their own, so a selected note alone is enough (spec §21.4).
+    public var canCopy: Bool { !editableSelection.isEmpty || !selectedComments.isEmpty }
     public var canPaste: Bool { pasteboard.read(type: Self.pasteboardType) != nil }
 
     /// The selection encoded as the `pasteboardType` payload — with the definitions it references
-    /// (spec §20.7) — or nil when nothing copyable is selected.
+    /// (spec §20.7) and the comments it holds (spec §21.4) — or nil when nothing copyable is selected.
     public func clipboardData() -> Data? {
-        let clip = GraphClipboard.extract(selection, from: graph, document: document, textures: textures)
-        guard !clip.nodes.isEmpty else { return nil }
+        let clip = GraphClipboard.extract(selection, comments: selectedComments, from: graph, document: document, textures: textures)
+        guard !clip.isEmpty else { return nil }
         return try? JSONEncoder().encode(clip)
     }
 
@@ -29,7 +30,7 @@ extension EditorModel {
     public func paste(at point: CGPoint? = nil) -> Set<NodeID> {
         guard let data = pasteboard.read(type: Self.pasteboardType),
               let clip = try? JSONDecoder().decode(GraphClipboard.self, from: data),
-              clip.formatVersion <= GraphClipboard.currentFormatVersion, !clip.nodes.isEmpty else { return [] }
+              clip.formatVersion <= GraphClipboard.currentFormatVersion, !clip.isEmpty else { return [] }
         let origin = point ?? CGPoint(x: clip.sourceOrigin.x + 24, y: clip.sourceOrigin.y + 24)
         return insert(clip, at: origin, undoName: "Paste")
     }
@@ -38,7 +39,7 @@ extension EditorModel {
     @discardableResult
     public func duplicateSelection(offset: CGSize = CGSize(width: 24, height: 24)) -> Set<NodeID> {
         guard canCopy else { return [] }
-        let clip = GraphClipboard.extract(selection, from: graph, document: document, textures: textures)
+        let clip = GraphClipboard.extract(selection, comments: selectedComments, from: graph, document: document, textures: textures)
         let origin = CGPoint(x: clip.sourceOrigin.x + offset.width, y: clip.sourceOrigin.y + offset.height)
         return insert(clip, at: origin, undoName: "Duplicate")
     }
@@ -46,6 +47,7 @@ extension EditorModel {
     private func insert(_ clip: GraphClipboard, at origin: CGPoint, undoName: String) -> Set<NodeID> {
         let (nodes, edges) = clip.materialize(at: origin)
         guard !refusesRecursion(nodes, definitions: clip.definitions) else { return [] }
+        let (stickies, frames) = clip.materializeComments(at: origin)
         let ids = Set(nodes.map(\.id))
         // Only ids the clipboard has both the manifest entry and bytes for become insertable
         // assets; `.insert` itself skips any the destination already has (spec §13, §21.2).
@@ -53,9 +55,12 @@ extension EditorModel {
             if let data = clip.textures[entry.key] { acc[entry.key] = (info: entry.value, data: data) }
         }
         beginTransaction(undoName)
-        apply(.insert(nodes: nodes, edges: edges, definitions: clip.definitions, assets: assets))
+        apply(.insert(nodes: nodes, edges: edges, definitions: clip.definitions, assets: assets, stickies: stickies, frames: frames))
         endTransaction()
-        select(nodes: ids, mode: .replace)
+        // Both sets at once: what was pasted is what is selected, comments included (spec §21.4).
+        select(nodes: ids,
+               comments: Set(stickies.map { CommentID.sticky($0.id) }).union(frames.map { CommentID.frame($0.id) }),
+               mode: .replace)
         return ids
     }
 
