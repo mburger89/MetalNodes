@@ -120,6 +120,10 @@ import MetalNodesCore
         if case .failure(let msg, _, _) = await c.compile(dived, generation: 1) { Issue.record("dived viewer: \(msg)\n\(dived.source)") }
         let palette = try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerDefinition: inner)
         if case .failure(let msg, _, _) = await c.compile(palette, generation: 1) { Issue.record("palette viewer: \(msg)\n\(palette.source)") }
+        // Edit from the palette, then dive: anchored inside the opened definition.
+        let outer = doc.definitions.values.first { $0.name == "Outer" }!.id
+        let anchored = try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerPath: [ii], viewerDefinition: outer)
+        if case .failure(let msg, _, _) = await c.compile(anchored, generation: 1) { Issue.record("anchored viewer: \(msg)\n\(anchored.source)") }
     }
 
     @Test func olderGenerationIsSuperseded() async throws {

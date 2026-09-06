@@ -37,6 +37,15 @@ import Foundation
         #expect(s.source.contains("u.viewerMin"))
         #expect(s.source.contains(".value;"))                         // the root reads the view value
         #expect(!s.source.contains("return float4(v"))                // the Output node is not the terminal
+        // Math's unwired `b` is the one shared slot: requested exactly once (beside the root
+        // Float's own slot) and passed down through the intermediate variant as a named parameter.
+        let slots = s.layout.fields.compactMap(\.path)
+        #expect(slots.filter { $0 == ParamPath(node: math, param: "b") }.count == 1)
+        #expect(slots.count == 2)
+        let slot = GroupCodegen.parameterName(for: ParamPath(node: math, param: "b"))
+        let outerID = doc.definitions.values.first { $0.name == "Outer" }!.id
+        let signature = "mn_g_Outer_\(GroupCodegen.hex8(outerID))_view(float2 uv, float time, float2 size, float2 mouse, float in_x, float \(slot))"
+        #expect(s.source.contains(signature))
     }
 
     @Test func viewingFromThePaletteUsesDeclaredDefaults() throws {
@@ -51,6 +60,29 @@ import Foundation
         #expect(slots == [ParamPath(node: math, param: "b")])   // Math's unwired `b`, shared by every instance
         #expect(s.source.contains("u.p0);"))                    // …and passed to the variant
         #expect(s.source.contains("u.viewerMin"))
+    }
+
+    /// Edit from the palette, then dive: the path is anchored inside the opened definition, which
+    /// gets a variant of its own because no instance of it exists to call.
+    @Test func viewingFromThePaletteAfterDivingIntoANestedInstance() throws {
+        let (doc, _, ii, math, innerID) = nested()
+        let outerID = doc.definitions.values.first { $0.name == "Outer" }!.id
+        let s = try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerPath: [ii],
+                                             viewerDefinition: outerID, registry: reg)
+        #expect(s.source.contains("mn_g_Outer_\(GroupCodegen.hex8(outerID))_view("))
+        #expect(s.source.contains("mn_g_Inner_\(GroupCodegen.hex8(innerID))_view(uv,"))   // called by Outer's variant
+        #expect(s.source.contains("_view(in.uv, u.time, u.resolution, u.mouse, 1.0"))   // Outer's declared default
+        #expect(s.source.contains("u.viewerMin"))
+        #expect(s.viewerPath == [ii])
+    }
+
+    @Test func aPathOutsideThePaletteDefinitionIsADiagnostic() {
+        let (doc, io, _, math, inner) = nested()
+        #expect(throws: GenerationError.invalid([Diagnostic(.error, "The viewed instance no longer exists")])) {
+            // `io` is a root instance, not one inside Inner.
+            try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerPath: [io],
+                                         viewerDefinition: inner, registry: reg)
+        }
     }
 
     /// Two instances of one definition, chained: only the one dived through becomes a view variant,

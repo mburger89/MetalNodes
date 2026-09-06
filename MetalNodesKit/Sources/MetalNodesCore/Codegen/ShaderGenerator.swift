@@ -62,7 +62,7 @@ public enum ShaderGenerator {
         // when the definitions and the program that call it are emitted (spec §20.4). A
         // definition previewed from the palette need not be instantiated anywhere.
         var reachable = GroupDependencies.reachable(from: doc.root, in: doc)
-        if viewer != nil, viewerPath.isEmpty, let gid = viewerDefinition, doc.definitions[gid] != nil {
+        if viewer != nil, let gid = viewerDefinition, doc.definitions[gid] != nil {
             reachable.insert(gid)
             reachable.formUnion(GroupDependencies.transitive(gid, in: doc))
         }
@@ -76,13 +76,9 @@ public enum ShaderGenerator {
         // A viewer inside a definition runs through view variants of the definitions on the path
         // (spec §20.5); one in the root is the ordinary program terminating early.
         if let v = viewer {
-            if !viewerPath.isEmpty {
-                return try viewerThroughInstances(doc, viewer: v, path: viewerPath, registry: registry,
-                                                  functions: functions, groupFunctions: groupFunctions)
-            }
-            if let gid = viewerDefinition {
-                return try viewerFromDefinition(doc, viewer: v, definition: gid, registry: registry,
-                                                functions: functions, groupFunctions: groupFunctions)
+            if !viewerPath.isEmpty || viewerDefinition != nil {
+                return try viewerInsideDefinition(doc, viewer: v, path: viewerPath, anchor: viewerDefinition,
+                                                  registry: registry, functions: functions, groupFunctions: groupFunctions)
             }
             guard doc.root.nodes[v.node] != nil else {
                 throw .invalid([Diagnostic(.error, "The viewed instance no longer exists")])
