@@ -136,8 +136,13 @@ final class MetalNodesAppUITests: XCTestCase {
     // MARK: Tests
 
     #if os(macOS)
-    /// Palette → canvas drag-in, the check M5 could not automate.
-    func testPaletteDragPlacesANode() {
+    /// Palette → canvas drag-in, the check M5 could not automate — and XCUITest cannot automate it
+    /// either: the row is `.draggable` and the canvas a `.dropDestination`, so on macOS the drop
+    /// rides a real `NSDraggingSession` that synthesized mouse events never start.
+    func testPaletteDragPlacesANode() throws {
+        // `XCTSkipIf(true,)` rather than a bare `throw XCTSkip`, which would make the body below
+        // unreachable — and a warning. The body is kept as the gesture's written record.
+        try XCTSkipIf(true, "XCUITest cannot start an AppKit NSDraggingSession; the palette drag-in is a Task 11 hand check")
         let app = launch(fixture: "starter")
         let canvas = canvas(app)
         let row = element(app, "palette.input.time")
