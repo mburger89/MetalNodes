@@ -29,7 +29,7 @@ public struct ShaderPackage: Sendable, Equatable {
     public var textures: [AssetID: Data]
     /// Assets present in `document.settings.assets` whose bytes were absent from `textures/`
     /// on read (spec §21.1: the manifest entry stays, the preview renders the placeholder).
-    public private(set) var missingTextures: Set<AssetID> = []
+    public var missingTextures: Set<AssetID> = []
 
     public init(document: ShaderDocument, viewState: EditorViewState = EditorViewState(), textures: [AssetID: Data] = [:]) {
         self.document = document

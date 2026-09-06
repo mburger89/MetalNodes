@@ -17,49 +17,29 @@ struct DocumentHostView: View {
     let device: MTLDevice
     let compiler: ShaderCompiler
     @Environment(\.undoManager) private var undoManager
-    @State private var model: EditorModel?
+    @State private var bridge: DocumentBridge?
 
     var body: some View {
         Group {
-            if let model {
-                EditorView(model: model, device: device)
-                    // Model → file. View state is persisted next to the document (spec §3), so a
-                    // camera move marks the window dirty too. Each write is guarded on a real
-                    // difference, so a value that arrived *from* the file is never written back.
-                    .onChange(of: model.document) { _, d in if file.package.document != d { file.package.document = d } }
-                    .onChange(of: model.viewState) { _, v in if file.package.viewState != v { file.package.viewState = v } }
-                    // Keyed on the counter, not the bytes: `onChange` compares its value on every
-                    // body evaluation, and comparing the image dictionary itself is a deep compare
-                    // of every imported texture (spec §21.2).
-                    .onChange(of: model.texturesVersion) { _, _ in
-                        if file.package.textures != model.textures { file.package.textures = model.textures }
-                    }
-                    // File → model. Watched per field rather than on the whole package: a field
-                    // the mirror above just wrote already equals the model's, so only a change
-                    // that did *not* come from the model gets this far, and `reseed` then checks
-                    // the package as a whole so one revert is one reload.
-                    .onChange(of: file.package.document) { _, _ in reseed() }
-                    .onChange(of: file.package.viewState) { _, _ in reseed() }
-                    .onChange(of: file.package.textures) { _, _ in reseed() }
+            if let bridge {
+                EditorView(model: bridge.model, device: device)
+                    // Model → file: the three observable fields the bridge mirrors. Keyed on
+                    // `texturesVersion`, not the bytes (spec §21.2).
+                    .onChange(of: bridge.model.document) { _, _ in bridge.mirror(into: &file.package) }
+                    .onChange(of: bridge.model.viewState) { _, _ in bridge.mirror(into: &file.package) }
+                    .onChange(of: bridge.model.texturesVersion) { _, _ in bridge.mirror(into: &file.package) }
+                    // File → model: the bridge decides whether this is an external change.
+                    .onChange(of: file.package) { _, incoming in bridge.apply(incoming) }
             } else {
                 Color.clear.onAppear(perform: makeModel)
             }
         }
         .onChange(of: undoManager) { _, manager in
-            if let manager, let model { model.adoptUndoManager(manager) }
+            if let manager, let bridge { bridge.model.adoptUndoManager(manager) }
         }
+        #if os(macOS)
         .frame(minWidth: 960, minHeight: 620)
-    }
-
-    /// Pulls the file back into the model when the two have genuinely diverged — i.e. the file
-    /// was replaced under the editor. A no-op for anything the model itself just mirrored out.
-    private func reseed() {
-        guard let model else { return }
-        let incoming = file.package
-        guard incoming.document != model.document
-                || incoming.viewState != model.viewState
-                || incoming.textures != model.textures else { return }
-        model.reload(package: incoming)
+        #endif
     }
 
     private func makeModel() {
@@ -69,6 +49,6 @@ struct DocumentHostView: View {
                             undoManager: undoManager, textureStore: TextureStore(device: device))
         m.missingTextures = file.package.missingTextures
         m.start()
-        model = m
+        bridge = DocumentBridge(model: m)
     }
 }
