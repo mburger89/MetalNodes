@@ -15,11 +15,9 @@ import Testing
         return (doc, find("math.math", "multiply"), find("math.math", "sine"), find("input.time"), find("input.float"), find("vector.combine"))
     }
 
-    private func resolved(_ doc: ShaderDocument) -> [NodeID: ResolvedNode] { (try? ShaderGenerator.generate(doc))?.resolved ?? [:] }
-
     @Test func groupCutsTheBoundaryAndDedupesBySourceSocket() throws {
         let (doc, mul, sine, time, speed, comb) = sample()
-        let r = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: nil))
+        let r = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
         let def = r.document.definitions[r.definition]!
         #expect(def.name == "Group")
         #expect(def.inputs.map(\.name) == ["time", "out"])           // Time.time and Float.out — one each
@@ -46,7 +44,7 @@ import Testing
         doc.root.connect(SocketRef(src.id, "out"), to: SocketRef(a.id, "a"))
         doc.root.connect(SocketRef(src.id, "out"), to: SocketRef(b.id, "a"))
         doc.root.connect(SocketRef(a.id, "out"), to: SocketRef(out.id, "color"))
-        let r = try #require(GroupOperations.group([a.id, b.id], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: "Pair"))
+        let r = try #require(GroupOperations.group([a.id, b.id], in: .root, of: doc, registry: reg, name: "Pair"))
         let def = r.document.definitions[r.definition]!
         #expect(def.inputs.count == 1 && def.inputs[0].name == "out")
         #expect(def.graph.inputs[SocketRef(a.id, "a")] == SocketRef(def.inputNode!, "out"))
@@ -55,12 +53,12 @@ import Testing
 
     @Test func groupThenUngroupIsIdentityModuloIDs() throws {
         let (doc, mul, sine, _, _, _) = sample()
-        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: nil))
+        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
         let u = try #require(GroupOperations.ungroup(g.instance, in: .root, of: g.document))
-        #expect(u.document.root.nodes.count == doc.root.nodes.count)
-        #expect(u.document.root.inputs.count == doc.root.inputs.count)
+        #expect(u.document.root.nodes.count == doc.root.nodes.count)     // same node count
+        #expect(u.document.root.inputs.count == doc.root.inputs.count)   // same edge count
         #expect(u.nodes.count == 2)
-        // Same multiset of (kind, params) and same wiring shape.
+        // Same wiring shape.
         func signature(_ g: Graph) -> [String] {
             g.inputs.map { to, from in
                 let tk = g.nodes[to.node]!.kind, fk = g.nodes[from.node]!.kind
@@ -68,8 +66,22 @@ import Testing
             }.sorted()
         }
         #expect(signature(u.document.root) == signature(doc.root))
+        // Same multiset of (kind, params) across root nodes — a structural comparison, not a text
+        // comparison: generated MSL's SSA numbering depends on `TopoSort.order`'s uuid tie-break,
+        // which shifts once `ungroup` mints fresh node ids, so comparing `source` strings is flaky
+        // (controller ruling R10).
+        func nodeSignature(_ doc: ShaderDocument) -> [String] {
+            doc.root.nodes.values.map { n in
+                let params = n.params.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+                return "\(n.kind)|\(params)"
+            }.sorted()
+        }
+        #expect(nodeSignature(u.document) == nodeSignature(doc))
         #expect(u.document.definitions.count == 1)                    // the definition is kept (spec §20.6)
-        #expect(try ShaderGenerator.generate(u.document).source == (try ShaderGenerator.generate(doc).source))
+        // Both still generate without throwing and agree on the shader's uniform shape.
+        let originalLayout = try ShaderGenerator.generate(doc).layout
+        let ungroupedLayout = try ShaderGenerator.generate(u.document).layout
+        #expect(ungroupedLayout.fields.count == originalLayout.fields.count)
     }
 
     @Test func ungroupCarriesUnwiredExposedValuesOntoTheInlinedNodes() throws {
@@ -90,9 +102,60 @@ import Testing
         #expect(u.document.root.inputs[SocketRef(out.id, "color")]?.node == inlined.id)
     }
 
+    /// M2 fix: a `GroupOutput` fed straight from `GroupInput` (no real node in between) must not
+    /// drop the wire on ungroup — the external target picks up whatever fed the instance's input.
+    @Test func ungroupPreservesAPassThroughWire() throws {
+        var def = GroupDefinition.make(name: "PassThrough")
+        def.inputs = [SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(0)))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.graph.connect(SocketRef(def.inputNode!, "x"), to: SocketRef(def.outputNode!, "out"))
+        var doc = ShaderDocument(); doc.definitions[def.id] = def
+        let speed = NodeInstance(kind: .builtin("input.float"), params: ["value": .float(0.5)])
+        let inst = NodeInstance(kind: .group(def.id))
+        let sink = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [speed, inst, sink] { doc.root.nodes[n.id] = n }
+        doc.root.connect(SocketRef(speed.id, "out"), to: SocketRef(inst.id, "x"))
+        doc.root.connect(SocketRef(inst.id, "out"), to: SocketRef(sink.id, "color"))
+        let u = try #require(GroupOperations.ungroup(inst.id, in: .root, of: doc))
+        #expect(u.document.root.inputs[SocketRef(sink.id, "color")] == SocketRef(speed.id, "out"))
+        #expect(u.nodes.isEmpty)   // a pure pass-through has no real node to inline
+    }
+
+    /// I2 fix: exposed socket types come from resolving the whole graph at `path`, not a `.float`
+    /// fallback — a non-float boundary must keep its real type.
+    @Test func exposedSocketTypesComeFromResolutionNotAFloatFallback() throws {
+        var doc = ShaderDocument()
+        let uv = NodeInstance(kind: .builtin("input.uv"))
+        let sep = NodeInstance(kind: .builtin("vector.separate"))
+        let comb = NodeInstance(kind: .builtin("vector.combine"))
+        for n in [uv, sep, comb] { doc.root.nodes[n.id] = n }
+        doc.root.connect(SocketRef(uv.id, "uv"), to: SocketRef(sep.id, "v"))          // float2 → float3 (widened at emission)
+        doc.root.connect(SocketRef(sep.id, "x"), to: SocketRef(comb.id, "x"))
+        doc.root.connect(SocketRef(sep.id, "y"), to: SocketRef(comb.id, "y"))
+        doc.root.connect(SocketRef(sep.id, "z"), to: SocketRef(comb.id, "z"))
+        let r = try #require(GroupOperations.group([sep.id], in: .root, of: doc, registry: reg, name: nil))
+        let def = r.document.definitions[r.definition]!
+        #expect(def.inputs.map { GroupCodegen.concrete($0.type) } == [.float2])   // UV's own output type, not the destination's
+        #expect(def.outputs.map { GroupCodegen.concrete($0.type) } == [.float, .float, .float])
+    }
+
+    /// I2 fix: resolution works over the graph *inside a definition* too — a boundary source that
+    /// is a `GroupInput` pseudo-node must resolve to the enclosing definition's declared type.
+    @Test func exposedSocketTypeResolvesInsideADefinition() throws {
+        var def = GroupDefinition.make(name: "D")
+        def.inputs = [SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(0)))]
+        let math = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("multiply")])
+        def.graph.nodes[math.id] = math
+        def.graph.connect(SocketRef(def.inputNode!, "x"), to: SocketRef(math.id, "a"))
+        var doc = ShaderDocument(); doc.definitions[def.id] = def
+        let r = try #require(GroupOperations.group([math.id], in: .definition(def.id), of: doc, registry: reg, name: nil))
+        let inner = r.document.definitions[r.definition]!
+        #expect(inner.inputs.map { GroupCodegen.concrete($0.type) } == [.float])
+    }
+
     @Test func makeUniqueRetargetsOnlyThatInstance() throws {
         let (doc, mul, sine, _, _, _) = sample()
-        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: nil))
+        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
         var d = g.document
         let second = NodeInstance(kind: .group(g.definition), position: CGPoint(x: 900, y: 900))
         d.root.nodes[second.id] = second
@@ -107,7 +170,7 @@ import Testing
 
     @Test func renameSocketRewritesEveryReference() throws {
         let (doc, mul, sine, time, _, _) = sample()
-        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: nil))
+        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
         let r = try #require(GroupOperations.renameSocket(g.definition, kind: .input, from: "time", to: "t", in: g.document))
         let def = r.definitions[g.definition]!
         #expect(def.inputs.map(\.name) == ["t", "out"])
@@ -119,7 +182,7 @@ import Testing
 
     @Test func removeSocketDeletesOrphansEverywhere() throws {
         let (doc, mul, sine, _, _, _) = sample()
-        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: nil))
+        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
         let r = try #require(GroupOperations.removeSocket(g.definition, kind: .input, name: "time", in: g.document))
         #expect(r.definitions[g.definition]!.inputs.map(\.name) == ["out"])
         #expect(r.root.inputs[SocketRef(g.instance, "time")] == nil)
@@ -129,10 +192,10 @@ import Testing
 
     @Test func groupingRefusesPseudoNodesAndRecursion() throws {
         let (doc, mul, sine, _, _, _) = sample()
-        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, resolved: resolved(doc), name: nil))
+        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
         let def = g.document.definitions[g.definition]!
-        #expect(GroupOperations.group([mul, def.inputNode!], in: .definition(g.definition), of: g.document, registry: reg, resolved: [:], name: nil) == nil)
-        #expect(GroupOperations.group([mul], in: .definition(g.definition), of: g.document, registry: reg, resolved: [:], name: nil) != nil)  // nested group inside is fine
+        #expect(GroupOperations.group([mul, def.inputNode!], in: .definition(g.definition), of: g.document, registry: reg, name: nil) == nil)
+        #expect(GroupOperations.group([mul], in: .definition(g.definition), of: g.document, registry: reg, name: nil) != nil)  // nested group inside is fine
     }
 
     @Test func namesAreUnique() {

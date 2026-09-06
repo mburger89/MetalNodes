@@ -32,4 +32,19 @@ public enum TopoSort {
         }
         return result
     }
+
+    /// Dependencies-first order over **every** node in `graph`, not just what's reachable from one
+    /// terminal (spec §20.6: resolving boundary types needs every node typed, including ones with
+    /// no path to any particular output). DFS from each node in sorted-uuid order, each node once.
+    public static func orderAll(_ graph: Graph) -> [NodeID] {
+        var result: [NodeID] = []
+        var done = Set<NodeID>()
+        for id in graph.nodes.keys.sorted(by: { $0.raw.uuidString < $1.raw.uuidString }) where !done.contains(id) {
+            for n in order(graph, from: id) where !done.contains(n) {
+                done.insert(n)
+                result.append(n)
+            }
+        }
+        return result
+    }
 }

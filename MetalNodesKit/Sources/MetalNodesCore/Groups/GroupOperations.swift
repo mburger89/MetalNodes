@@ -29,7 +29,7 @@ public enum GroupOperations {
     }
 
     public static func group(_ ids: Set<NodeID>, in path: GraphPath, of doc: ShaderDocument, registry: NodeRegistry,
-                             resolved: [NodeID: ResolvedNode], name: String?) -> (document: ShaderDocument, definition: GroupID, instance: NodeID)? {
+                             name: String?) -> (document: ShaderDocument, definition: GroupID, instance: NodeID)? {
         let g = doc[path]
         let picked = ids.compactMap { g.nodes[$0] }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
         guard picked.count == ids.count, !picked.isEmpty,
@@ -38,15 +38,16 @@ public enum GroupOperations {
         // by construction (D would already contain itself), but a nested instance of D itself must be refused.
         if case .definition(let host) = path, picked.contains(where: { $0.kind == .group(host) }) { return nil }
 
-        func outType(_ ref: SocketRef) -> SocketType {
-            if let t = resolved[ref.node]?.outputTypes[ref.socket] { return t }
-            if let s = doc.shape(of: g.nodes[ref.node]!, in: path, registry: registry), let d = s.output(named: ref.socket),
-               case .concrete(let c) = d.type { return c }
-            return .float
-        }
+        // Type every node in the graph at `path` — not just what a caller happened to resolve
+        // already — so a boundary source inside a definition, or one with no path to any output,
+        // still gets its real type (spec §20.6). An unknown type refuses the group rather than
+        // silently guessing `.float`.
+        let order = TopoSort.orderAll(g)
+        let resolved = TypeResolver.resolve(g, path: path, document: doc, registry: registry, order: order).nodes
+        func outType(_ ref: SocketRef) -> SocketType? { resolved[ref.node]?.outputTypes[ref.socket] }
 
         var def = GroupDefinition.make(name: uniqueDefinitionName(name ?? "Group", in: doc))
-        let gin = def.inputNode!, gout = def.outputNode!
+        guard let gin = def.inputNode, let gout = def.outputNode else { return nil }
         let minX = picked.map(\.position.x).min()!, minY = picked.map(\.position.y).min()!
         let maxX = picked.map(\.position.x).max()!
         for n in picked {
@@ -61,22 +62,22 @@ public enum GroupOperations {
         var inputBySource: [SocketRef: String] = [:]
         for (to, from) in g.inputs.sorted(by: { ($0.key.node.raw.uuidString, $0.key.socket) < ($1.key.node.raw.uuidString, $1.key.socket) })
         where ids.contains(to.node) && !ids.contains(from.node) {
-            let name = inputBySource[from] ?? {
+            if inputBySource[from] == nil {
+                guard let t = outType(from) else { return nil }
                 let n = uniqueSocketName(from.socket, among: def.inputs.map(\.name))
-                let t = outType(from)
                 def.inputs.append(SocketDecl(name: n, type: .concrete(t), default: .value(zero(t))))
                 inputBySource[from] = n
-                return n
-            }()
-            def.graph.connect(SocketRef(gin, name), to: to)
+            }
+            def.graph.connect(SocketRef(gin, inputBySource[from]!), to: to)
         }
         // Outbound: from ∈ S, to ∉ S — one output per distinct internal source socket.
         var outputBySource: [SocketRef: String] = [:]
         for (to, from) in g.inputs.sorted(by: { ($0.key.node.raw.uuidString, $0.key.socket) < ($1.key.node.raw.uuidString, $1.key.socket) })
         where ids.contains(from.node) && !ids.contains(to.node) {
             if outputBySource[from] == nil {
+                guard let t = outType(from) else { return nil }
                 let n = uniqueSocketName(from.socket, among: def.outputs.map(\.name))
-                def.outputs.append(SocketDecl(name: n, type: .concrete(outType(from))))
+                def.outputs.append(SocketDecl(name: n, type: .concrete(t)))
                 outputBySource[from] = n
                 def.graph.connect(from, to: SocketRef(gout, n))
             }
@@ -128,10 +129,21 @@ public enum GroupOperations {
             }
         }
         // Outputs: whatever fed GroupOutput.<name> now feeds every external target of the instance's output.
+        // A pass-through (GroupOutput fed directly by GroupInput, with no real node in between) has no
+        // inlined source to point at — the target instead picks up whatever fed the instance's own input.
         for decl in def.outputs {
-            guard let internalSource = def.graph.inputs[SocketRef(gout, decl.name)], let src = map[internalSource.node] else { continue }
+            guard let internalSource = def.graph.inputs[SocketRef(gout, decl.name)] else { continue }
+            let resolvedSource: SocketRef?
+            if internalSource.node == gin {
+                resolvedSource = g.inputs[SocketRef(instance, internalSource.socket)]
+            } else if let src = map[internalSource.node] {
+                resolvedSource = SocketRef(src, internalSource.socket)
+            } else {
+                resolvedSource = nil
+            }
+            guard let resolvedSource else { continue }
             for (to, from) in g.inputs where from == SocketRef(instance, decl.name) {
-                g.connect(SocketRef(src, internalSource.socket), to: to)
+                g.connect(resolvedSource, to: to)
             }
         }
         g.remove(nodes: [instance])
@@ -168,29 +180,33 @@ public enum GroupOperations {
     public static func addSocket(_ id: GroupID, kind: SocketKind, decl: SocketDecl, in doc: ShaderDocument) -> ShaderDocument? {
         guard var def = doc.definitions[id] else { return nil }
         var d = decl
-        d.name = uniqueSocketName(decl.name, among: (def.inputs + def.outputs).map(\.name))
+        // Inputs and outputs are separate namespaces (spec §20.6, ruling R11) — codegen keeps them apart.
+        let existing = (kind == .input ? def.inputs : def.outputs).map(\.name)
+        d.name = uniqueSocketName(decl.name, among: existing)
         if kind == .input { def.inputs.append(d) } else { def.outputs.append(d) }
         var out = doc; out.definitions[id] = def; return out
     }
 
-    /// Renames everywhere (spec §20.6). Nil on an unknown socket or a clash after sanitising.
+    /// Renames everywhere (spec §20.6). Nil on an unknown socket or a clash (within the same
+    /// namespace — inputs and outputs are separate, ruling R11) after sanitising.
     public static func renameSocket(_ id: GroupID, kind: SocketKind, from old: String, to newName: String, in doc: ShaderDocument) -> ShaderDocument? {
-        guard var def = doc.definitions[id] else { return nil }
+        guard var def = doc.definitions[id], let gin = def.inputNode, let gout = def.outputNode else { return nil }
+        let names = (kind == .input ? def.inputs : def.outputs).map(\.name)
+        guard names.contains(old) else { return nil }
         let new = StitchableCodegen.sanitizedName(newName)
         guard new != old else { return doc }
-        guard !(def.inputs + def.outputs).contains(where: { $0.name == new }) else { return nil }
-        let gin = def.inputNode, gout = def.outputNode
+        guard !names.contains(new) else { return nil }
         switch kind {
         case .input:
             guard let i = def.inputs.firstIndex(where: { $0.name == old }) else { return nil }
             def.inputs[i].name = new
             def.graph.inputs = Dictionary(uniqueKeysWithValues: def.graph.inputs.map { to, from in
-                (to, from == SocketRef(gin!, old) ? SocketRef(gin!, new) : from)
+                (to, from == SocketRef(gin, old) ? SocketRef(gin, new) : from)
             })
         case .output:
             guard let i = def.outputs.firstIndex(where: { $0.name == old }) else { return nil }
             def.outputs[i].name = new
-            if let f = def.graph.inputs[SocketRef(gout!, old)] { def.graph.inputs[SocketRef(gout!, old)] = nil; def.graph.inputs[SocketRef(gout!, new)] = f }
+            if let f = def.graph.inputs[SocketRef(gout, old)] { def.graph.inputs[SocketRef(gout, old)] = nil; def.graph.inputs[SocketRef(gout, new)] = f }
         }
         var out = doc
         out.definitions[id] = def
@@ -213,16 +229,16 @@ public enum GroupOperations {
 
     /// Removes the socket and every wire that used it (spec §4.5, §20.6).
     public static func removeSocket(_ id: GroupID, kind: SocketKind, name: String, in doc: ShaderDocument) -> ShaderDocument? {
-        guard var def = doc.definitions[id] else { return nil }
+        guard var def = doc.definitions[id], let gin = def.inputNode, let gout = def.outputNode else { return nil }
         switch kind {
         case .input:
             guard def.inputs.contains(where: { $0.name == name }) else { return nil }
             def.inputs.removeAll { $0.name == name }
-            def.graph.inputs = def.graph.inputs.filter { $0.value != SocketRef(def.inputNode!, name) }
+            def.graph.inputs = def.graph.inputs.filter { $0.value != SocketRef(gin, name) }
         case .output:
             guard def.outputs.contains(where: { $0.name == name }) else { return nil }
             def.outputs.removeAll { $0.name == name }
-            def.graph.inputs[SocketRef(def.outputNode!, name)] = nil
+            def.graph.inputs[SocketRef(gout, name)] = nil
         }
         var out = doc
         out.definitions[id] = def
