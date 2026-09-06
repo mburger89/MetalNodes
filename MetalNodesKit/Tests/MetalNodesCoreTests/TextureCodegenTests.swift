@@ -106,6 +106,21 @@ import CoreGraphics
     /// The Color/Distortion Effect refusal is a property of the target, not of each node: however
     /// many samples the document holds — including ones inside definitions, whose nodes the root
     /// canvas never shows — the reader is told once.
+    /// Ungroup leaves the definition in My Functions with no instance. Nothing exports it, so the
+    /// Layer Effect has no quarrel with the sample inside it — the document must still generate.
+    @Test func layerEffectIgnoresATextureSampleInAnUninstantiatedDefinition() throws {
+        var (d, sample) = groupDoc()
+        let gid = d.definitions.keys.first!
+        for n in d.root.nodes.values where n.kind == .group(gid) { d.root.remove(node: n.id) }
+        d.settings.target = .stitchable(.layerEffect)
+        d.settings.exportName = "fx"
+        let message = "Texture Sample inside a group needs the Fragment target"
+        let diags = GraphValidator.validate(document: d, registry: reg, target: d.settings.target)
+        #expect(!diags.contains { $0.message == message })
+        #expect(!diags.contains { $0.node == sample })
+        #expect(throws: Never.self) { try ShaderGenerator.generate(d, target: d.settings.target, registry: reg) }
+    }
+
     @Test func colorEffectReportsTheTargetRefusalOnce() throws {
         var d = doc()                                   // two root-level Texture Samples
         var def = GroupDefinition.make(name: "Tex")     // and a third inside a definition

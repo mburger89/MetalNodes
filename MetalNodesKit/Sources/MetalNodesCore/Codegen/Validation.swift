@@ -33,9 +33,14 @@ public enum GraphValidator {
         // function can name it: a group function would take a `texture2d<float>` parameter that
         // nothing in the export could supply. So a sample inside a definition is refused — once per
         // node, since each is its own place to fix.
+        //
+        // Only definitions the export would actually emit, though: an unused definition (My
+        // Functions keeps the one an ungroup leaves behind) reaches no `texture2d<float>` parameter
+        // and would otherwise fail the whole document over a node the canvas cannot show.
         if kind == .layerEffect {
-            return doc.definitions.values
-                .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+            let reachable = GroupDependencies.reachable(from: doc.root, in: doc)
+            return reachable.sorted { $0.raw.uuidString < $1.raw.uuidString }
+                .compactMap { doc.definitions[$0] }
                 .flatMap { samples(in: $0.graph) }
                 .map { Diagnostic(.error, "Texture Sample inside a group needs the Fragment target", node: $0) }
         }
