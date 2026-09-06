@@ -37,10 +37,11 @@ public enum GraphValidator {
         // Only definitions the export would actually emit, though: an unused definition (My
         // Functions keeps the one an ungroup leaves behind) reaches no `texture2d<float>` parameter
         // and would otherwise fail the whole document over a node the canvas cannot show.
+        let reachable = GroupDependencies.reachable(from: doc.root, in: doc)
+            .sorted { $0.raw.uuidString < $1.raw.uuidString }
+            .compactMap { doc.definitions[$0] }
         if kind == .layerEffect {
-            let reachable = GroupDependencies.reachable(from: doc.root, in: doc)
-            return reachable.sorted { $0.raw.uuidString < $1.raw.uuidString }
-                .compactMap { doc.definitions[$0] }
+            return reachable
                 .flatMap { samples(in: $0.graph) }
                 .map { Diagnostic(.error, "Texture Sample inside a group needs the Fragment target", node: $0) }
         }
@@ -50,9 +51,11 @@ public enum GraphValidator {
         // than of any one node, hence a single diagnostic however many samples the document holds —
         // anchored on one in the root when there is one, so the reader is pointed at a node the
         // canvas actually shows.
-        let anchor = samples(in: doc.root).first ?? doc.definitions.values
-            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
-            .lazy.flatMap { samples(in: $0.graph) }.first
+        //
+        // Scoped to the reachable definitions for the same reason as the branch above: a sample in a
+        // definition nothing instantiates is in no program this target emits, and refusing over it
+        // would stop the preview on a node the canvas cannot draw.
+        let anchor = samples(in: doc.root).first ?? reachable.lazy.flatMap { samples(in: $0.graph) }.first
         guard let anchor else { return [] }
         return [Diagnostic(.error, "Texture Sample needs the Layer Effect target", node: anchor)]
     }

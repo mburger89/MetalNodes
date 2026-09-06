@@ -121,6 +121,22 @@ import CoreGraphics
         #expect(throws: Never.self) { try ShaderGenerator.generate(d, target: d.settings.target, registry: reg) }
     }
 
+    /// The Color/Distortion refusal is scoped the same way: an uninstantiated definition is not part
+    /// of the program the export emits, so a Texture Sample stranded in one must not stop the preview
+    /// — and must not anchor an error on a node the canvas cannot draw.
+    @Test func colorEffectIgnoresATextureSampleInAnUninstantiatedDefinition() throws {
+        var (d, sample) = groupDoc()
+        let gid = d.definitions.keys.first!
+        for n in d.root.nodes.values where n.kind == .group(gid) { d.root.remove(node: n.id) }
+        d.settings.target = .stitchable(.colorEffect)
+        d.settings.exportName = "fx"
+        let message = "Texture Sample needs the Layer Effect target"
+        let diags = GraphValidator.validate(document: d, registry: reg, target: d.settings.target)
+        #expect(!diags.contains { $0.message == message })
+        #expect(!diags.contains { $0.node == sample })
+        #expect(throws: Never.self) { try ShaderGenerator.generate(d, target: d.settings.target, registry: reg) }
+    }
+
     @Test func colorEffectReportsTheTargetRefusalOnce() throws {
         var d = doc()                                   // two root-level Texture Samples
         var def = GroupDefinition.make(name: "Tex")     // and a third inside a definition
