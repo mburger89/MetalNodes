@@ -114,6 +114,41 @@ import MetalNodesCore
         #expect(NodeGeometry.estimatedSize(for: ramp).height == 108)
     }
 
+    /// A group instance lays out its definition's exposed sockets, and a pseudo-node mirrors them
+    /// (`GroupInput`'s outputs are the definition's inputs) — both have to get real frames, or
+    /// culling, marquee hits and zoom-to-fit skip them entirely (spec §20.2).
+    @Test func groupInstanceAndPseudoNodesGetFrames() throws {
+        let doc = ShaderDocument.sampleWithGroup()
+        let wobble = try #require(doc.definitions.values.first)     // 1 input "t", 1 output "out"
+        let inst = try #require(doc.root.nodes.values.first { $0.kind == .group(wobble.id) })
+        let root: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .root, registry: reg) }
+        // header 26 + padding 16 + (1 input + 1 output) × 22
+        #expect(NodeGeometry.frame(for: inst, shapes: root) == CGRect(x: 220, y: 200, width: 190, height: 86))
+
+        let inner: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .definition(wobble.id), registry: reg) }
+        let inputID = try #require(wobble.inputNode)
+        let gi = try #require(wobble.graph.nodes[inputID])
+        // Group Input exposes the definition's one input as its own output: header 26 + 16 + 1 × 22
+        #expect(NodeGeometry.frame(for: gi, shapes: inner) == CGRect(x: 0, y: 0, width: 190, height: 64))
+        let outputID = try #require(wobble.outputNode)
+        let go = try #require(wobble.graph.nodes[outputID])
+        #expect(NodeGeometry.frame(for: go, shapes: inner) == CGRect(x: 600, y: 0, width: 190, height: 64))
+    }
+
+    @Test func socketAnchorsFollowExposedSockets() throws {
+        let doc = ShaderDocument.sampleWithGroup()
+        let wobble = try #require(doc.definitions.values.first)
+        let inst = try #require(doc.root.nodes.values.first { $0.kind == .group(wobble.id) })
+        let root: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .root, registry: reg) }
+        // Instance at (220, 200): exposed input "t" is row 0, output "out" is row 1.
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(inst.id, "t"), in: doc.root, shapes: root) == CGPoint(x: 220, y: 242))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(inst.id, "out"), in: doc.root, shapes: root) == CGPoint(x: 410, y: 264))
+
+        let inner: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .definition(wobble.id), registry: reg) }
+        let gi = try #require(wobble.inputNode)
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(gi, "t"), in: wobble.graph, shapes: inner) == CGPoint(x: 190, y: 42))
+    }
+
     @Test func nodesOnTopDrawLast() {
         let doc = ShaderDocument.sample()
         let uv = doc.root.nodes.values.first { $0.kind == .builtin("input.uv") }!

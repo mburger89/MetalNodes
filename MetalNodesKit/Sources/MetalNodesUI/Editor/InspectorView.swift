@@ -31,19 +31,21 @@ public struct InspectorView: View {
 
     @ViewBuilder
     private func nodePane(_ id: NodeID) -> some View {
-        if let node = model.document.root.nodes[id], case .builtin(let defID) = node.kind, let def = model.registry[defID] {
+        if let node = model.graph.nodes[id], let shape = model.shape(of: node) {
             let resolved = model.resolvedTypes[id]
             HStack {
-                Text(node.customTitle ?? def.title).font(.headline)
+                Text(node.customTitle ?? shape.title).font(.headline)
                 Spacer()
-                Text(def.category.displayName).font(.caption2)
+                Text(shape.category.displayName).font(.caption2)
                     .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(DraculaTheme.token(for: def.category).color.opacity(0.25))
+                    .background(DraculaTheme.token(for: shape.category).color.opacity(0.25))
                     .clipShape(Capsule())
             }
-            Text(def.id).font(.caption.monospaced()).foregroundStyle(DraculaToken.muted.color)
+            if case .builtin(let defID) = node.kind {
+                Text(defID).font(.caption.monospaced()).foregroundStyle(DraculaToken.muted.color)
+            }
 
-            TextField("Title", text: $titleDraft, prompt: Text(def.title))
+            TextField("Title", text: $titleDraft, prompt: Text(shape.title))
                 .textFieldStyle(.roundedBorder)
                 .onAppear { titleDraft = node.customTitle ?? "" }
                 .onChange(of: id) { _, _ in titleDraft = node.customTitle ?? "" }
@@ -52,9 +54,9 @@ public struct InspectorView: View {
 
             Divider()
 
-            ForEach(def.inputs, id: \.name) { decl in
+            ForEach(shape.inputs, id: \.name) { decl in
                 let ref = SocketRef(id, decl.name)
-                if let src = model.document.root.source(feeding: ref) {
+                if let src = model.graph.source(feeding: ref) {
                     HStack {
                         Text(decl.label).font(.caption)
                         Spacer()
@@ -68,15 +70,16 @@ public struct InspectorView: View {
                                  onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
                 }
             }
-            ForEach(def.params, id: \.name) { p in
+            ForEach(shape.params, id: \.name) { p in
                 ParamControl(label: p.label, kind: p.kind, value: node.params[p.name] ?? p.defaultValue,
                              onChange: { model.apply(.setParam(id, p.name, $0)) },
                              onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
             }
 
-            if !def.outputs.isEmpty {
+            // A pseudo-node's "outputs" are the definition's inputs and carry no ◉ (spec §20.8).
+            if !shape.outputs.isEmpty && !shape.isPseudo {
                 Divider()
-                ForEach(def.outputs, id: \.name) { decl in
+                ForEach(shape.outputs, id: \.name) { decl in
                     let ref = SocketRef(id, decl.name)
                     let viewed = model.viewer == ref
                     HStack {

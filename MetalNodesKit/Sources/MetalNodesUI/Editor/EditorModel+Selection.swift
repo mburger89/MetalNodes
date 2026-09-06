@@ -62,11 +62,11 @@ extension EditorModel {
 
     public func frame(of id: NodeID) -> CGRect? {
         guard let n = graph.nodes[id] else { return nil }
-        return NodeGeometry.frame(for: n, registry: registry)
+        return NodeGeometry.frame(for: n, shapes: shape(of:))
     }
 
-    public var selectionBounds: CGRect? { NodeGeometry.bounds(of: selection, in: graph, registry: registry) }
-    public var contentBounds: CGRect? { NodeGeometry.bounds(of: graph.nodes.keys, in: graph, registry: registry) }
+    public var selectionBounds: CGRect? { NodeGeometry.bounds(of: selection, in: graph, shapes: shape(of:)) }
+    public var contentBounds: CGRect? { NodeGeometry.bounds(of: graph.nodes.keys, in: graph, shapes: shape(of:)) }
 
     /// Topmost node under a canvas point. "Topmost" is the last in the canvas's draw order —
     /// the selection above everything else, then UUID order — so hit-testing agrees with what
@@ -75,7 +75,7 @@ extension EditorModel {
         let onTop = selection
         return graph.nodes.values
             .sorted { NodeGeometry.drawOrder($0, onTop: onTop) < NodeGeometry.drawOrder($1, onTop: onTop) }
-            .last { NodeGeometry.frame(for: $0, registry: registry)?.contains(point) == true }?
+            .last { NodeGeometry.frame(for: $0, shapes: shape(of:))?.contains(point) == true }?
             .id
     }
 }

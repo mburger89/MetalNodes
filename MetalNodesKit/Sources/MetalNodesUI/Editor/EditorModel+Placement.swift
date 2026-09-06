@@ -15,8 +15,8 @@ extension EditorModel {
     /// Connects only if the resolved/declared types convert (spec §7.2). Returns whether it did.
     @discardableResult
     public func connectIfCompatible(_ from: SocketRef, to: SocketRef) -> Bool {
-        guard let ft = DropResolver.outputType(of: from, graph: graph, registry: registry, resolved: resolvedTypes),
-              let tt = DropResolver.inputType(of: to, graph: graph, registry: registry, resolved: resolvedTypes),
+        guard let ft = DropResolver.outputType(of: from, graph: graph, shapes: shape(of:), resolved: resolvedTypes),
+              let tt = DropResolver.inputType(of: to, graph: graph, shapes: shape(of:), resolved: resolvedTypes),
               DropResolver.compatible(ft, tt) else { return false }
         apply(.connect(from: from, to: to))
         return true

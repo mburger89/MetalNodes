@@ -3,7 +3,7 @@ import MetalNodesCore
 
 struct NodeView: View {
     let node: NodeInstance
-    let def: NodeDef
+    let shape: NodeShape
     let resolved: ResolvedNode?
     let graph: Graph
     let isSelected: Bool
@@ -11,6 +11,8 @@ struct NodeView: View {
     var isViewed = false
     var hasError = false
     var onViewerToggle: () -> Void = {}
+    /// Double-click on the header: dives into a group instance, no-op for everything else (spec §20.8).
+    var onOpen: () -> Void = {}
     let onChange: (DocumentChange) -> Void
     let onSelect: (SelectionMode) -> Void
     let onDragBegan: () -> Void
@@ -25,37 +27,54 @@ struct NodeView: View {
     @State private var dragging = false
     @State private var wasSelectedAtStart = false
     @State private var socketDragging = false
+    /// Last header click, for synthesising the double-click that dives in: `headerDrag` claims
+    /// single clicks with `minimumDistance: 0`, so a `TapGesture(count: 2)` never fires (M2 lesson).
+    @State private var lastHeaderClick: (time: Date, point: CGPoint)?
     static let width: CGFloat = NodeGeometry.width
 
     var body: some View {
         Group {
-            if def.style == .dot { dotBody } else { standardBody }
+            if shape.style == .dot { dotBody } else { standardBody }
         }
     }
 
-    /// The outline colour: an error wins over the selection, which wins over the plain border.
+    /// The outline colour: an error wins over the selection, which wins over a group instance's
+    /// accent ring, which wins over the plain border.
     /// The selection glow (the shadow) is unaffected, so an errored selected node still reads as
     /// selected (spec §19.5).
     private var outlineColor: Color {
-        hasError ? DraculaTheme.error.color : (isSelected ? DraculaTheme.selection.color : DraculaToken.background.color)
+        if hasError { return DraculaTheme.error.color }
+        if isSelected { return DraculaTheme.selection.color }
+        return isGroupInstance ? accentColor : DraculaToken.background.color
     }
 
-    private var outlineWidth: CGFloat { hasError || isSelected ? 2 : 1 }
+    private var outlineWidth: CGFloat { hasError || isSelected || isGroupInstance ? 2 : 1 }
+
+    /// The definition's accent, falling back to the category's token (spec §20.2).
+    private var accentColor: Color {
+        shape.accent.map { DraculaTheme.token(for: $0).color } ?? DraculaTheme.token(for: shape.category).color
+    }
+
+    /// A group instance — not a pseudo-node, which is part of a definition rather than a call of one.
+    private var isGroupInstance: Bool { shape.category == .group && !shape.isPseudo }
 
     private var standardBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if !compact {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(def.inputs, id: \.name) { inputRow($0) }
+                    ForEach(shape.inputs, id: \.name) { inputRow($0) }
                     // Params marked `showsInBody == false` are inspector-only (spec §19.5).
-                    ForEach(def.params.filter(\.showsInBody), id: \.name) { param in
-                        ParamControl(label: param.label, kind: param.kind,
-                                     value: node.params[param.name] ?? param.defaultValue,
-                                     onChange: { onChange(.setParam(node.id, param.name, $0)) },
-                                     onEditing: onEditing)
+                    // A pseudo-node has none of its own — it only mirrors its definition's sockets.
+                    if !shape.isPseudo {
+                        ForEach(shape.params.filter(\.showsInBody), id: \.name) { param in
+                            ParamControl(label: param.label, kind: param.kind,
+                                         value: node.params[param.name] ?? param.defaultValue,
+                                         onChange: { onChange(.setParam(node.id, param.name, $0)) },
+                                         onEditing: onEditing)
+                        }
                     }
-                    ForEach(def.outputs, id: \.name) { outputRow($0) }
+                    ForEach(shape.outputs, id: \.name) { outputRow($0) }
                 }
                 .padding(8)
             }
@@ -63,6 +82,14 @@ struct NodeView: View {
         .frame(width: Self.width)
         .background(RoundedRectangle(cornerRadius: 8).fill(DraculaToken.surface.color))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(outlineColor, lineWidth: outlineWidth))
+        // Doubled border: a group instance reads as "this is a function" (spec §12, §20.2). The
+        // outer ring is the outline above — accent normally, and the selection/error colour when
+        // one of those applies, so selection stays legible — and this is the inner one.
+        .overlay {
+            if isGroupInstance {
+                RoundedRectangle(cornerRadius: 5).stroke(accentColor, lineWidth: 1).padding(3)
+            }
+        }
         .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 6, y: isSelected ? 0 : 3)
         .contentShape(Rectangle())
         .onTapGesture { onSelect(InputModifiers.selectionMode()) }
@@ -77,12 +104,12 @@ struct NodeView: View {
     /// anchors are still reported and socket drags still start from them exactly as on a standard
     /// node (spec §19.5).
     private var dotBody: some View {
-        let type = resolved?.outputTypes[def.outputs.first?.name ?? ""] ?? .float
+        let type = resolved?.outputTypes[shape.outputs.first?.name ?? ""] ?? .float
         return ZStack {
             Circle().fill(DraculaToken.surface.color)
             Circle().fill(DraculaTheme.token(for: type).color).padding(6)
             Circle().stroke(outlineColor, lineWidth: outlineWidth)
-            if let i = def.inputs.first {
+            if let i = shape.inputs.first {
                 let inType = resolved?.inputTypes[i.name] ?? concrete(i.type)
                 SocketView(type: inType, dimmed: dragType.map { !DropResolver.compatible($0, inType) } ?? false, hitSize: Self.dotSocketHitSize)
                     .opacity(0.001)
@@ -91,7 +118,7 @@ struct NodeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .offset(x: -SocketView.size / 2)
             }
-            if let o = def.outputs.first {
+            if let o = shape.outputs.first {
                 SocketView(type: type, dimmed: dragType != nil, hitSize: Self.dotSocketHitSize)
                     .opacity(0.001)
                     .socketAnchor(SocketRef(node.id, o.name))
@@ -110,7 +137,7 @@ struct NodeView: View {
         HStack(spacing: 4) {
             if compact {
                 VStack(spacing: 2) {
-                    ForEach(def.inputs, id: \.name) { d in
+                    ForEach(shape.inputs, id: \.name) { d in
                         SocketView(type: resolved?.inputTypes[d.name] ?? concrete(d.type), dimmed: dragType != nil)
                             .scaleEffect(0.6).socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
                     }
@@ -122,10 +149,11 @@ struct NodeView: View {
                     .foregroundStyle(DraculaTheme.error.color)
                     .accessibilityLabel("Error")
             }
-            Text(node.customTitle ?? def.title).font(.caption.weight(.semibold)).lineLimit(1)
+            Text(node.customTitle ?? shape.title).font(.caption.weight(.semibold)).lineLimit(1)
             Spacer()
-            // Nothing to view on an output-only node (spec §19.3): no badge.
-            if !def.outputs.isEmpty {
+            // Nothing to view on an output-only node (spec §19.3), nor on a pseudo-node, whose
+            // outputs are the enclosing definition's inputs (spec §20.8): no badge.
+            if !shape.outputs.isEmpty && !shape.isPseudo {
                 Image(systemName: isViewed ? "circle.circle.fill" : "circle.circle")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(isViewed ? DraculaTheme.viewerFlag.color : DraculaToken.background.color.opacity(0.55))
@@ -136,7 +164,7 @@ struct NodeView: View {
             }
             if compact {
                 VStack(spacing: 2) {
-                    ForEach(def.outputs, id: \.name) { d in
+                    ForEach(shape.outputs, id: \.name) { d in
                         SocketView(type: resolved?.outputTypes[d.name] ?? concrete(d.type), dimmed: dragType != nil)
                             .scaleEffect(0.6).socketAnchor(SocketRef(node.id, d.name)).frame(width: 6, height: 6)
                     }
@@ -146,7 +174,7 @@ struct NodeView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .foregroundStyle(DraculaToken.background.color)
-        .background(DraculaTheme.token(for: def.category).color, in: UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
+        .background(accentColor, in: UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
         .contentShape(Rectangle())
         .gesture(headerDrag)
     }
@@ -172,7 +200,21 @@ struct NodeView: View {
                 let wasDragging = dragging
                 dragging = false
                 if wasDragging { onDragEnded() }
-                if abs(g.translation.width) < 1 && abs(g.translation.height) < 1, wasSelectedAtStart {
+                guard abs(g.translation.width) < 1 && abs(g.translation.height) < 1 else {
+                    lastHeaderClick = nil
+                    return
+                }
+                // Second click of a double-click: open, and do nothing else — the selection must
+                // not toggle underneath the dive (the move it also started was a no-op, so its
+                // transaction registers nothing).
+                if let last = lastHeaderClick, Date.now.timeIntervalSince(last.time) < 0.4,
+                   hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
+                    lastHeaderClick = nil
+                    onOpen()
+                    return
+                }
+                lastHeaderClick = (time: .now, point: g.location)
+                if wasSelectedAtStart {
                     let mode = InputModifiers.selectionMode()
                     // A click (no movement) on an already-selected node collapses the selection to it.
                     if mode == .replace {

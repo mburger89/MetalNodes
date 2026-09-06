@@ -65,6 +65,23 @@ import MetalNodesCore
         #expect(none == nil)
     }
 
+    /// Wiring must see a group instance's exposed sockets and a pseudo-node's mirrored ones,
+    /// not just builtin definitions (spec §20.2).
+    @Test func resolvesGroupInstanceAndPseudoSockets() throws {
+        let doc = ShaderDocument.sampleWithGroup()
+        let wobble = try #require(doc.definitions.values.first)     // input "t": float, output "out": float
+        let inst = try #require(doc.root.nodes.values.first { $0.kind == .group(wobble.id) })
+        let root: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .root, registry: reg) }
+        let first = DropResolver.firstCompatibleInput(on: inst.id, for: .float, graph: doc.root, shapes: root, resolved: [:])
+        #expect(first == SocketRef(inst.id, "t"))
+        #expect(DropResolver.outputType(of: SocketRef(inst.id, "out"), graph: doc.root, shapes: root, resolved: [:]) == .float)
+
+        // Group Output's inputs are the definition's declared outputs.
+        let inner: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .definition(wobble.id), registry: reg) }
+        let go = try #require(wobble.outputNode)
+        #expect(DropResolver.inputType(of: SocketRef(go, "out"), graph: wobble.graph, shapes: inner, resolved: [:]) == .float)
+    }
+
     @Test func socketNearPointPicksTheClosestAnchorWithinRadiusOnly() {
         let sep = node("vector.separate")
         let x = SocketRef(sep.id, "x"), y = SocketRef(sep.id, "y")
