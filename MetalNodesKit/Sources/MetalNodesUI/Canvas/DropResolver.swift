@@ -89,32 +89,9 @@ enum DropResolver {
     }
 }
 
-// MARK: Registry entry points
+// MARK: The `+` sockets
 
-/// As in `NodeGeometry`: for callers holding a bare `Graph` read as a document root.
 extension DropResolver {
-    static func inputType(of ref: SocketRef, graph: Graph, registry: NodeRegistry,
-                          resolved: [NodeID: ResolvedNode]) -> SocketType? {
-        inputType(of: ref, graph: graph, shapes: NodeGeometry.rootShapes(in: graph, registry: registry), resolved: resolved)
-    }
-
-    static func outputType(of ref: SocketRef, graph: Graph, registry: NodeRegistry,
-                           resolved: [NodeID: ResolvedNode]) -> SocketType? {
-        outputType(of: ref, graph: graph, shapes: NodeGeometry.rootShapes(in: graph, registry: registry), resolved: resolved)
-    }
-
-    static func firstCompatibleInput(on node: NodeID, for type: SocketType, graph: Graph, registry: NodeRegistry,
-                                     resolved: [NodeID: ResolvedNode]) -> SocketRef? {
-        firstCompatibleInput(on: node, for: type, graph: graph,
-                             shapes: NodeGeometry.rootShapes(in: graph, registry: registry), resolved: resolved)
-    }
-
-    static func resolve(point: CGPoint, source: SocketRef, dragType: SocketType, anchors: [SocketRef: CGPoint],
-                        graph: Graph, registry: NodeRegistry, resolved: [NodeID: ResolvedNode]) -> DropTarget {
-        resolve(point: point, source: source, dragType: dragType, anchors: anchors, graph: graph,
-                shapes: NodeGeometry.rootShapes(in: graph, registry: registry), resolved: resolved)
-    }
-
     /// The `+` socket a drop exposes an output at: `GroupOutput`'s trailing input (spec §20.6).
     static func isPlusInput(_ ref: SocketRef, in graph: Graph) -> Bool {
         ref.socket == NodeShape.plusSocketName && graph.nodes[ref.node]?.kind == .groupOutput

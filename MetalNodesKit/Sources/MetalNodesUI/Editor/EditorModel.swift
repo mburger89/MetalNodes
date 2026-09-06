@@ -139,6 +139,7 @@ public final class EditorModel {
         textures = package.textures
         missingTextures = package.missingTextures
         selectedWire = nil
+        shapesVersion += 1                      // a whole new document: nothing cached still holds
         pruneAfterRemoval()
 
         undoManager.removeAllActions()
@@ -168,8 +169,48 @@ public final class EditorModel {
     /// definition, else the definition opened from the palette, else the root.
     public var activePath: GraphPath { viewState.activePath(in: document) }
     public var graph: Graph { document[activePath] }
-    public func shape(of node: NodeInstance) -> NodeShape? { document.shape(of: node, in: activePath, registry: registry) }
-    public func shape(of id: NodeID) -> NodeShape? { document.shape(of: id, registry: registry) }
+
+    // MARK: Shapes (spec §21.8)
+
+    /// One `NodeShape` per node of the active graph — pseudo-nodes included, since inside a
+    /// definition they are nodes of that graph. Nodes with no shape (an unknown builtin, a dangling
+    /// instance) have no entry.
+    ///
+    /// Rebuilt lazily, because the canvas asks for a shape once per node per layout pass and
+    /// resolving one walks the document: the cache stands until the document changes (`shapesVersion`)
+    /// or the editor moves to another graph (the path). Reading `activePath` is also what registers
+    /// this accessor's observation dependency on `viewState` and `document`, so a view laying out
+    /// from the cache still updates on every edit.
+    public var shapes: [NodeID: NodeShape] {
+        let path = activePath
+        if let key = shapesCacheKey, key.version == shapesVersion, key.path == path { return shapesCache }
+        let g = document[path]
+        var built = [NodeID: NodeShape](minimumCapacity: g.nodes.count)
+        for (id, node) in g.nodes { built[id] = document.shape(of: node, in: path, registry: registry) }
+        shapesCache = built
+        shapesCacheKey = (shapesVersion, path)
+        shapeCacheRebuilds += 1
+        return built
+    }
+
+    /// The cached shapes and the document version + graph they were built for.
+    @ObservationIgnored private var shapesCache: [NodeID: NodeShape] = [:]
+    @ObservationIgnored private var shapesCacheKey: (version: Int, path: GraphPath)?
+    /// Bumped after every document mutation, which is what makes the cache stale. Not observed:
+    /// `shapes` reads `document` anyway (through `activePath`), so views already track edits.
+    @ObservationIgnored private var shapesVersion = 0
+    /// How often `shapes` actually recomputed. Internal, for the tests that assert the cache holds.
+    @ObservationIgnored private(set) var shapeCacheRebuilds = 0
+
+    public func shape(of node: NodeInstance) -> NodeShape? {
+        shapes[node.id] ?? document.shape(of: node, in: activePath, registry: registry)
+    }
+
+    /// Document-wide, so the inspector and the viewer picker can name a node inside another graph;
+    /// the active graph's nodes come from the cache.
+    public func shape(of id: NodeID) -> NodeShape? {
+        shapes[id] ?? document.shape(of: id, registry: registry)
+    }
 
     /// First compile, undebounced.
     public func start() {
@@ -319,6 +360,10 @@ public final class EditorModel {
             document = doc
             pruneAfterRemoval()
         }
+        // Every mutation above has landed, so anything cached off the old document is stale. Bumped
+        // here rather than before the switch because `.removeNodes` reads `shapes` while deciding
+        // what it may delete, and that read must not outlive its own edit (spec §21.8).
+        shapesVersion += 1
 
         if document.settings.assets != assetsBefore { refreshTextureBindings() }
 

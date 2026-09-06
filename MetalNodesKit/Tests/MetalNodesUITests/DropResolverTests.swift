@@ -8,6 +8,9 @@ import MetalNodesCore
     let doc = ShaderDocument.sample()
     func node(_ defID: String) -> NodeInstance { doc.root.nodes.values.first { $0.kind == .builtin(defID) }! }
     var resolved: [NodeID: ResolvedNode] { (try? ShaderGenerator.generate(doc))?.resolved ?? [:] }
+    /// What the canvas passes for the root graph — `EditorModel.shape(of:)` with the active path
+    /// at the root.
+    var shapes: (NodeInstance) -> NodeShape? { { doc.shape(of: $0, in: .root, registry: reg) } }
 
     /// Anchors as if every input socket sat 20 pt right of its node's origin, one row per input.
     var anchors: [SocketRef: CGPoint] {
@@ -29,7 +32,7 @@ import MetalNodesCore
         let target = SocketRef(sep.id, "v")
         let p = CGPoint(x: anchors[target]!.x + 10, y: anchors[target]!.y - 8)   // ~12.8 pt away
         let r = DropResolver.resolve(point: p, source: SocketRef(uv.id, "uv"), dragType: .float2,
-                                     anchors: anchors, graph: doc.root, registry: reg, resolved: resolved)
+                                     anchors: anchors, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(r == .socket(target))
     }
 
@@ -38,11 +41,11 @@ import MetalNodesCore
         // Texture never converts; only `output.fragment.color` is nearby and it can't take a texture.
         let p = anchors[SocketRef(out.id, "color")]!
         let r = DropResolver.resolve(point: p, source: SocketRef(uv.id, "uv"), dragType: .texture,
-                                     anchors: anchors, graph: doc.root, registry: reg, resolved: resolved)
+                                     anchors: anchors, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(r == .node(out.id))          // falls through to the body rule
         let ownOutput = anchors[SocketRef(uv.id, "uv")]!
         let r2 = DropResolver.resolve(point: ownOutput, source: SocketRef(uv.id, "uv"), dragType: .float2,
-                                      anchors: anchors, graph: doc.root, registry: reg, resolved: resolved)
+                                      anchors: anchors, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(r2 == .empty)                // own node is excluded entirely
     }
 
@@ -50,18 +53,18 @@ import MetalNodesCore
         let uv = node("input.uv"), mix = node("math.mix")
         let inside = CGPoint(x: mix.position.x + 100, y: mix.position.y + 10)   // header, far from sockets
         let r = DropResolver.resolve(point: inside, source: SocketRef(uv.id, "uv"), dragType: .float2,
-                                     anchors: anchors, graph: doc.root, registry: reg, resolved: resolved)
+                                     anchors: anchors, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(r == .node(mix.id))
         let r2 = DropResolver.resolve(point: CGPoint(x: -500, y: -500), source: SocketRef(uv.id, "uv"), dragType: .float2,
-                                      anchors: anchors, graph: doc.root, registry: reg, resolved: resolved)
+                                      anchors: anchors, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(r2 == .empty)
     }
 
     @Test func firstCompatibleInputRespectsDeclarationOrder() {
         let mix = node("math.mix")
-        let first = DropResolver.firstCompatibleInput(on: mix.id, for: .float, graph: doc.root, registry: reg, resolved: resolved)
+        let first = DropResolver.firstCompatibleInput(on: mix.id, for: .float, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(first == SocketRef(mix.id, "a"))
-        let none = DropResolver.firstCompatibleInput(on: mix.id, for: .texture, graph: doc.root, registry: reg, resolved: resolved)
+        let none = DropResolver.firstCompatibleInput(on: mix.id, for: .texture, graph: doc.root, shapes: shapes, resolved: resolved)
         #expect(none == nil)
     }
 
