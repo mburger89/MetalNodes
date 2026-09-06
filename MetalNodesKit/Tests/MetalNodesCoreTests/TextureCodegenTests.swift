@@ -102,6 +102,36 @@ import CoreGraphics
         #expect(s.source.contains("tex0.sample(mn_sampler, "))     // the preview samples the asset
     }
 
+
+    /// The Color/Distortion Effect refusal is a property of the target, not of each node: however
+    /// many samples the document holds — including ones inside definitions, whose nodes the root
+    /// canvas never shows — the reader is told once.
+    @Test func colorEffectReportsTheTargetRefusalOnce() throws {
+        var d = doc()                                   // two root-level Texture Samples
+        var def = GroupDefinition.make(name: "Tex")     // and a third inside a definition
+        def.outputs = [SocketDecl(name: "color", type: .concrete(.color))]
+        let inner = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(aid(1))])
+        def.graph.nodes[inner.id] = inner
+        def.graph.connect(SocketRef(inner.id, "color"), to: SocketRef(def.outputNode!, "color"))
+        d.definitions[def.id] = def
+        let inst = NodeInstance(kind: .group(def.id))
+        d.root.nodes[inst.id] = inst
+        d.settings.target = .stitchable(.colorEffect)
+
+        let message = "Texture Sample needs the Layer Effect target"
+        let diags = GraphValidator.validate(document: d, registry: reg, target: d.settings.target)
+        #expect(diags.filter { $0.message == message }.count == 1)
+        #expect(diags.contains { $0.message == message && $0.node == id(2) })   // a node in the root
+
+        do {
+            _ = try ShaderGenerator.generate(d, target: d.settings.target, registry: reg)
+            Issue.record("expected the Color Effect to refuse a Texture Sample")
+        } catch {
+            guard case .invalid(let thrown) = error else { return }
+            #expect(thrown.filter { $0.message == message }.count == 1)
+        }
+    }
+
     @Test func gradientAndCheckerAreOrdinaryColorNodes() throws {
         var d = ShaderDocument()
         let g = NodeInstance(kind: .builtin("texture.gradient")), c = NodeInstance(kind: .builtin("texture.checker"))

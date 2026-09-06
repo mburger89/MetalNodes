@@ -14,17 +14,53 @@ public enum GraphValidator {
 
     /// The whole document: the root and every definition (spec §20.2, §20.4).
     public static func validate(document doc: ShaderDocument, registry: NodeRegistry, target: OutputTarget) -> [Diagnostic] {
-        var out = validate(graph: doc.root, path: .root, document: doc, registry: registry, target: target)
+        var out = validate(graph: doc.root, path: .root, document: doc, registry: registry)
         for d in doc.definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
-            out += validate(graph: d.graph, path: .definition(d.id), document: doc, registry: registry, target: target)
+            out += validate(graph: d.graph, path: .definition(d.id), document: doc, registry: registry)
             if GroupDependencies.transitive(d.id, in: doc).contains(d.id) || GroupDependencies.direct(d).contains(d.id) {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
         }
-        return out
+        return out + textureTargetDiagnostics(doc, target: target)
     }
 
-    public static func validate(graph: Graph, path: GraphPath, document doc: ShaderDocument, registry: NodeRegistry, target: OutputTarget) -> [Diagnostic] {
+    /// What the SwiftUI targets make of Texture Sample (spec §21.2). Document-wide, because that is
+    /// the scale each rule works at.
+    private static func textureTargetDiagnostics(_ doc: ShaderDocument, target: OutputTarget) -> [Diagnostic] {
+        guard case .stitchable(let kind) = target else { return [] }
+
+        // The Layer Effect has a layer to sample instead of an asset, but only the exported
+        // function can name it: a group function would take a `texture2d<float>` parameter that
+        // nothing in the export could supply. So a sample inside a definition is refused — once per
+        // node, since each is its own place to fix.
+        if kind == .layerEffect {
+            return doc.definitions.values
+                .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+                .flatMap { samples(in: $0.graph) }
+                .map { Diagnostic(.error, "Texture Sample inside a group needs the Fragment target", node: $0) }
+        }
+
+        // A Color or Distortion Effect gets no texture argument from SwiftUI and has no layer
+        // either, so it refuses Texture Sample outright. That is a property of the target rather
+        // than of any one node, hence a single diagnostic however many samples the document holds —
+        // anchored on one in the root when there is one, so the reader is pointed at a node the
+        // canvas actually shows.
+        let anchor = samples(in: doc.root).first ?? doc.definitions.values
+            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+            .lazy.flatMap { samples(in: $0.graph) }.first
+        guard let anchor else { return [] }
+        return [Diagnostic(.error, "Texture Sample needs the Layer Effect target", node: anchor)]
+    }
+
+    /// Every Texture Sample in `graph`, ordered by id so a diagnostic always names the same one.
+    private static func samples(in graph: Graph) -> [NodeID] {
+        graph.nodes.values
+            .filter { $0.kind == .builtin(textureSampleID) }
+            .map(\.id)
+            .sorted { $0.raw.uuidString < $1.raw.uuidString }
+    }
+
+    public static func validate(graph: Graph, path: GraphPath, document doc: ShaderDocument, registry: NodeRegistry) -> [Diagnostic] {
         var out: [Diagnostic] = []
         var shapes: [NodeID: NodeShape] = [:]
         let sorted = graph.nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
@@ -40,22 +76,6 @@ public enum GraphValidator {
                 out.append(Diagnostic(.error, "Group Output is only valid inside a definition", node: n.id))
             default:
                 if let s = doc.shape(of: n, in: path, registry: registry) { shapes[n.id] = s }
-            }
-        }
-
-        // A Color or Distortion Effect gets no texture argument from SwiftUI and, unlike the Layer
-        // Effect, has no layer to sample instead (spec §21.2). The Layer Effect does have one, but
-        // only the exported function can name it: a group function would take a `texture2d<float>`
-        // parameter that nothing in the export could supply, so a sample inside a definition is
-        // refused there too.
-        if case .stitchable(let kind) = target {
-            let message: String? = kind == .layerEffect
-                ? (path == .root ? nil : "Texture Sample inside a group needs the Fragment target")
-                : "Texture Sample needs the Layer Effect target"
-            if let message {
-                for n in sorted where n.kind == .builtin(textureSampleID) {
-                    out.append(Diagnostic(.error, message, node: n.id))
-                }
             }
         }
 
