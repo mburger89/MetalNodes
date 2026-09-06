@@ -99,12 +99,14 @@ private struct FramePane: View {
 }
 
 /// The accent menu both comment panes share, laid out like the definition pane's.
+/// The closure is a plain main-actor value and is wrapped, not passed, into the binding: Swift 6.2's
+/// IR generation crashes on the thunk for a `@MainActor @Sendable` closure used as `Binding.set`.
 private struct AccentPicker: View {
     let accent: DraculaAccent
-    let onChange: @MainActor @Sendable (DraculaAccent) -> Void
+    let onChange: (DraculaAccent) -> Void
 
     var body: some View {
-        Picker("Accent", selection: Binding(get: { accent }, set: onChange)) {
+        Picker("Accent", selection: Binding(get: { accent }, set: { onChange($0) })) {
             ForEach(DraculaAccent.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
         }
         .pickerStyle(.menu)
