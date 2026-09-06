@@ -9,11 +9,14 @@ Swift 6 · SwiftUI · Metal · macOS 26 (iPadOS 27 planned)
 ## Features
 
 - **Live preview.** Parameters live in a uniform buffer, so scrubbing a value never recompiles. Only topology changes go through the Metal compiler, off the main actor, with a pipeline cache.
-- **40 builtin nodes in 8 categories** — input, math, vector, SDF, noise, color, utility, output — covering every socket type (`float`…`float4`, `color`, `int`, `bool`) with implicit conversions and generic nodes.
+- **43 builtin nodes in 9 categories** — input, math, vector, SDF, noise, color, texture, utility, output — covering every socket type (`float`…`float4`, `color`, `int`, `bool`) with implicit conversions and generic nodes.
 - **Node groups.** Group a selection (⌘G), dive in, edit the definition and every instance updates. Expose sockets by wiring into `+`, rename or remove them from the inspector, make an instance unique, ungroup. Each definition compiles to one real MSL function called once per instance. Nesting is allowed; recursion is refused.
 - **Viewer flag.** Preview any socket, including one inside a group definition, without rewiring the output.
 - **Two output targets.** A fullscreen fragment shader (uv, time, resolution, mouse → color) and SwiftUI `colorEffect` / `distortionEffect` / `layerEffect` stitchable functions, with a `.metal` + Swift snippet export.
 - **Editor essentials.** Palette with search and drag-in, ⇧A search popover, marquee and modifier selection, re-drag wiring, copy/paste that carries group definitions, snapshot undo with named steps, inspector, breadcrumb navigation, error outlines mapped from compiler diagnostics.
+- **Documents and textures.** `.mnshader` packages (JSON + texture files) via the standard document workflow. Texture Sample, Gradient and Checker nodes; images drop onto the canvas or the inspector and bind as `texture2d` slots (or `layer.sample` in a Layer Effect export). Missing textures show a placeholder and a warning.
+- **Comments.** Sticky notes (⌘⇧N) and frames (⌘⇧C) that carry their nodes when dragged, with accent colours; undoable like everything else.
+- **Generated-code panel and minimap.** Live MSL with syntax highlighting, selection-linked lines through group functions, and one-click copy (⌘⌥C); a minimap that pans on click (⌘⌥M). `.metal` export alongside the Swift snippet.
 - **Dracula theme** throughout, via tokens.
 
 ## Requirements
@@ -69,6 +72,8 @@ docs/superpowers/plans/   One implementation plan per milestone
 | Duplicate | ⌘D |
 | Frame all / selection | Home / F |
 | Paste at cursor | ⌘⇧V |
+| Sticky note / Frame selection | ⌘⇧N / ⌘⇧C |
+| Generated code / Minimap | ⌘⌥C / ⌘⌥M |
 | Export | ⌘E |
 | View a socket | click the ◉ badge |
 
@@ -80,8 +85,8 @@ docs/superpowers/plans/   One implementation plan per milestone
 | M2 Canvas interaction, undo, clipboard, inspector | done |
 | M3 Full node library, viewer, stitchable target, export | done |
 | M4 Node groups | done |
-| M5 Package persistence with textures, comment frames and stickies, generated-code panel, minimap, `.metal` export, cross-document paste | next |
-| M6 iPadOS UI layer | planned |
+| M5 Package persistence with textures, comment frames and stickies, generated-code panel, minimap, `.metal` export, cross-document paste | done |
+| M6 iPadOS UI layer | next |
 
 ## Development notes
 
