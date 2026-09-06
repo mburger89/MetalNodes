@@ -28,7 +28,12 @@ struct DocumentHostView: View {
                     // difference, so a value that arrived *from* the file is never written back.
                     .onChange(of: model.document) { _, d in if file.package.document != d { file.package.document = d } }
                     .onChange(of: model.viewState) { _, v in if file.package.viewState != v { file.package.viewState = v } }
-                    .onChange(of: model.textures) { _, t in if file.package.textures != t { file.package.textures = t } }
+                    // Keyed on the counter, not the bytes: `onChange` compares its value on every
+                    // body evaluation, and comparing the image dictionary itself is a deep compare
+                    // of every imported texture (spec §21.2).
+                    .onChange(of: model.texturesVersion) { _, _ in
+                        if file.package.textures != model.textures { file.package.textures = model.textures }
+                    }
                     // File → model. Watched per field rather than on the whole package: a field
                     // the mirror above just wrote already equals the model's, so only a change
                     // that did *not* come from the model gets this far, and `reseed` then checks
