@@ -45,13 +45,13 @@ public struct EditorView: View {
         HSplitView {
             PaletteView(model: model).frame(minWidth: 200, idealWidth: 220, maxWidth: 320)
             canvasColumn.frame(minWidth: 480)
-            previewPane.frame(minWidth: 320, idealWidth: 420)
+            previewColumn.frame(minWidth: 320, idealWidth: 420)
         }
         #else
         HStack(spacing: 0) {
             PaletteView(model: model).frame(width: 220)
             canvasColumn
-            previewPane.frame(width: 420)
+            previewColumn.frame(width: 420)
         }
         #endif
     }
@@ -61,6 +61,27 @@ public struct EditorView: View {
             BreadcrumbBar(model: model)
             GraphCanvasView(model: model)
         }
+    }
+
+    /// The generated-code panel (spec §21.5) lives below the preview, in a draggable split on
+    /// macOS and a plain stack on iPad; `showsCode` (View ▸ Generated Code, ⌘⌥C) toggles it.
+    @ViewBuilder
+    private var previewColumn: some View {
+        #if os(macOS)
+        VSplitView {
+            previewPane
+            if model.viewState.showsCode {
+                CodePanel(model: model).frame(minHeight: 160)
+            }
+        }
+        #else
+        VStack(spacing: 0) {
+            previewPane
+            if model.viewState.showsCode {
+                CodePanel(model: model).frame(minHeight: 160)
+            }
+        }
+        #endif
     }
 
     private var previewPane: some View {

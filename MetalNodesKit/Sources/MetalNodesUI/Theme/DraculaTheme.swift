@@ -33,6 +33,10 @@ public enum DraculaTheme {
     public static let viewerFlag: DraculaToken = .green
     public static let wireDefault: DraculaToken = .muted
     public static let canvasGrid: Color = DraculaToken.surface.color.opacity(0.55)
+    /// Code-panel comment colour (spec §21.5) — the official Dracula "Comment" hex already lives on `.muted`.
+    public static let comment: DraculaToken = .muted
+    /// Code-panel selected-line background (spec §21.5) — the official Dracula "Current Line" hex already lives on `.surface`.
+    public static let currentLine: DraculaToken = .surface
 
     public static func token(for category: NodeCategory) -> DraculaToken {
         switch category {

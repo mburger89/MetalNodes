@@ -35,6 +35,8 @@ public final class EditorModel {
     public nonisolated static let pasteboardType = "com.maxburger.metalnodes.graph"
     public private(set) var diagnostics: [Diagnostic] = []
     public private(set) var generatedSource = ""
+    /// Alongside `generatedSource`, for the code panel's selected-node line highlight (spec §21.5).
+    public private(set) var generatedLineMap = LineMap()
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]
     public var debounceInterval: Duration = .milliseconds(150)
     /// A transient message for the preview pane's diagnostics strip (a refused recursive
@@ -377,6 +379,7 @@ public final class EditorModel {
             // Same program as the last settled compile (typically an undo of a cosmetic edit): its
             // outcome still stands. Refresh what depends on the document and skip the compiler (§19.1).
             generatedSource = shader.source
+            generatedLineMap = shader.lineMap
             resolvedTypes = shader.resolved
             if last.succeeded, let p = preview.pipeline {
                 diagnostics = missing
@@ -386,6 +389,7 @@ public final class EditorModel {
         }
         diagnostics = missing
         generatedSource = shader.source
+        generatedLineMap = shader.lineMap
         resolvedTypes = shader.resolved
 
         switch await compiler.compile(shader, generation: gen, fastMath: doc.settings.fastMath) {

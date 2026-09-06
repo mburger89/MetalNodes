@@ -83,6 +83,11 @@ public struct EditorCommands: Commands {
             Toggle("Minimap", isOn: Binding(get: { model?.viewState.showsMinimap ?? true },
                                             set: { model?.viewState.showsMinimap = $0 }))
                 .keyboardShortcut("m", modifiers: [.command, .option])
+            // View state, not a document edit (spec §21.5) — written straight to `viewState`,
+            // the same way the canvas writes its camera (not routed through `apply`, not undoable).
+            Button("Generated Code") { model?.viewState.showsCode.toggle() }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+                .disabled(model == nil)
         }
     }
 }
