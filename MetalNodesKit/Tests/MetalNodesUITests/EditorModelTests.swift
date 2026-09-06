@@ -26,6 +26,15 @@ actor WarningCompiler: ShaderCompiling {
     }
 }
 
+/// Fails every time and counts how often it was asked — the outcome that must be *reused* for unchanged source.
+actor CountingFailingCompiler: ShaderCompiling {
+    private(set) var calls = 0
+    func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool) async -> CompileResult {
+        calls += 1
+        return .failure(message: "synthetic", lines: [CompileLine(line: 999, message: "nowhere")], generation: generation)
+    }
+}
+
 @MainActor
 @Suite struct EditorModelTests {
     private func model(_ compiler: any ShaderCompiling) -> EditorModel {
@@ -218,5 +227,80 @@ actor WarningCompiler: ShaderCompiling {
         let m = EditorModel(document: doc, compiler: c)
         m.start(); await m.awaitIdle()
         #expect(await c.fastMathFlags == [false])
+    }
+
+    @Test func unchangedSourceSkipsTheCompiler() async {
+        // `RecordingCompiler` answers `.superseded`, which never settles a program; a failing
+        // compiler does (its diagnostics stand until the source changes), so count with that.
+        let c = CountingFailingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        #expect(await c.calls == 1)
+        #expect(!m.diagnostics.isEmpty)
+        let uv = node(m, "input.uv")
+        m.apply(.moveNodes([uv.id: CGPoint(x: 5, y: 5)]))        // cosmetic: no compile at all
+        m.undo(); await m.awaitIdle()                              // restore: topology, but same source
+        #expect(await c.calls == 1)
+        #expect(!m.diagnostics.isEmpty)                            // the standing failure is kept
+        var s = m.document.settings; s.fastMath = false
+        m.apply(.setSettings(s)); await m.awaitIdle()              // same source, different cache key
+        #expect(await c.calls == 2)
+    }
+
+    @Test func changingTheTargetRecompiles() async {
+        let c = RecordingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        var s = m.document.settings; s.target = .stitchable(.colorEffect)
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 2)
+        #expect(m.generatedSource.contains("half4 metalNodesShader("))
+    }
+
+    /// The export name is the stitchable function's name, so it is baked into the generated source.
+    @Test func renamingUnderAStitchableTargetRecompiles() async {
+        let c = RecordingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        var s = m.document.settings; s.target = .stitchable(.colorEffect)
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 2)
+
+        s = m.document.settings; s.exportName = "aurora"
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 3)
+        #expect(m.generatedSource.contains("half4 aurora("))
+    }
+
+    @Test func renamingUnderTheFragmentTargetDoesNotRecompile() async {
+        let c = RecordingCompiler()
+        let m = model(c)
+        m.start(); await m.awaitIdle()
+        #expect(await c.generations.count == 1)
+        var s = m.document.settings; s.exportName = "aurora"
+        m.apply(.setSettings(s)); await m.awaitIdle()
+        #expect(await c.generations.count == 1)
+    }
+
+    @Test func copySwiftSnippetWritesPlainTextOnlyForStitchableTargets() throws {
+        let pb = MemoryPasteboard()
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler(), pasteboard: pb)
+        #expect(!m.copySwiftSnippet())
+        var s = m.document.settings; s.target = .stitchable(.colorEffect); s.exportName = "demo"
+        m.apply(.setSettings(s))
+        #expect(m.copySwiftSnippet())
+        let text = String(decoding: try #require(pb.read(type: "public.utf8-plain-text")), as: UTF8.self)
+        #expect(text.contains("ShaderLibrary.demo("))
+    }
+
+    @Test func exportFilesFollowTheDocumentTarget() throws {
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler())
+        #expect(try m.exportFiles().map(\.name) == ["metalNodesShader.metal"])
+        var s = m.document.settings; s.target = .stitchable(.layerEffect)
+        m.apply(.setSettings(s))
+        #expect(try m.exportFiles().map(\.name) == ["metalNodesShader.metal", "metalNodesShader.swift"])
+        let before = m.exportRequest
+        m.requestExport()
+        #expect(m.exportRequest == before + 1)
     }
 }

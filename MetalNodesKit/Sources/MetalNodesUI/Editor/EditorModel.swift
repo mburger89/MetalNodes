@@ -33,11 +33,17 @@ public final class EditorModel {
     public private(set) var generatedSource = ""
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]
     public var debounceInterval: Duration = .milliseconds(150)
+    /// Bumped by File ▸ Export Shader…; the macOS view presents the save panel on change.
+    public private(set) var exportRequest = 0
+    public func requestExport() { exportRequest += 1 }
 
     private let compiler: any ShaderCompiling
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
     private var compileTask: Task<Void, Never>?
+    /// The last **non-superseded** compile's outcome, keyed on the program it settled: reused to
+    /// skip the compiler when the generated source and fast-math flag come back unchanged (spec §19.1).
+    private var lastCompiled: (source: String, fastMath: Bool, succeeded: Bool)?
     /// Bumped by every `start()`/`scheduleCompile()` so `awaitIdle` can tell whether a
     /// new edit landed while it was suspended (`Task` is a struct — no identity to compare).
     private var scheduleCount = 0
@@ -111,17 +117,23 @@ public final class EditorModel {
         case .removeNodes(let ids):
             document.root.remove(nodes: ids)
             pruneSelection()
+            _ = pruneViewer()
         case .insert(let nodes, let edges):
             for n in nodes { document.root.nodes[n.id] = n }
             for e in edges { document.root.connect(e.from, to: e.to) }
         case .setSettings(let s):
-            // Spec §18.2: settings are cosmetic unless `fastMath` flips — that one is part of the
-            // pipeline cache key, so it needs a rebuild; preview size and time mode do not.
+            // Spec §18.2: settings are cosmetic unless `fastMath` or `target` flips — both are
+            // part of what gets compiled, so they need a rebuild; preview size and time mode do not.
+            // Under a stitchable target `exportName` also names the generated function, so a rename
+            // changes the source too (spec §19.4).
             recompile = s.fastMath != document.settings.fastMath
+                || s.target != document.settings.target
+                || (s.target.stitchableKind != nil && s.exportName != document.settings.exportName)
             document.settings = s
         case .restore(let doc):
             document = doc
             pruneSelection()
+            _ = pruneViewer()
         }
 
         switch change.changeClass {
@@ -145,7 +157,7 @@ public final class EditorModel {
         viewState.selection = viewState.selection.filter { document.root.nodes[$0] != nil }
     }
 
-    private func scheduleCompile() {
+    func scheduleCompile() {
         scheduleCount += 1
         debounceTask?.cancel()
         debounceTask = Task { [debounceInterval] in
@@ -162,8 +174,9 @@ public final class EditorModel {
         let doc = document
         let registry = registry
 
+        let viewer = viewState.viewer
         let result: Result<GeneratedShader, GenerationError> = await Task.detached(priority: .userInitiated) {
-            generateResult(doc, registry: registry)
+            generateResult(doc, target: doc.settings.target, viewer: viewer, registry: registry)
         }.value
 
         let shader: GeneratedShader
@@ -178,6 +191,18 @@ public final class EditorModel {
             preview.lastError = nil
             return                                   // keep last-good pipeline
         }
+
+        if let last = lastCompiled, last.source == shader.source, last.fastMath == doc.settings.fastMath {
+            // Same program as the last settled compile (typically an undo of a cosmetic edit): its
+            // outcome still stands. Refresh what depends on the document and skip the compiler (§19.1).
+            generatedSource = shader.source
+            resolvedTypes = shader.resolved
+            if last.succeeded, let p = preview.pipeline {
+                diagnostics = []
+                preview.uniforms = UniformImage.rebuild(layout: p.shader.layout, document: document, registry: registry)
+            }
+            return
+        }
         diagnostics = []
         generatedSource = shader.source
         resolvedTypes = shader.resolved
@@ -188,6 +213,7 @@ public final class EditorModel {
             preview.pipeline = pipeline
             preview.uniforms = UniformImage.rebuild(layout: pipeline.shader.layout, document: document, registry: registry)
             preview.lastError = nil
+            lastCompiled = (shader.source, doc.settings.fastMath, true)
         case .failure(let message, let lines, let g):
             guard g == generation else { return }
             preview.lastError = message
@@ -197,9 +223,31 @@ public final class EditorModel {
                 mapped.append(Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line)))
             }
             diagnostics = mapped.isEmpty ? [Diagnostic(.error, message)] : mapped
+            lastCompiled = (shader.source, doc.settings.fastMath, false)
         case .superseded:
             break
         }
+    }
+
+    public var errorNodes: Set<NodeID> { Set(diagnostics.filter { $0.severity == .error }.compactMap(\.node)) }
+
+    public func exportFiles() throws(GenerationError) -> [ExportFile] {
+        try ShaderExport.files(for: document, registry: registry)
+    }
+
+    /// Puts the `.swift` snippet on the pasteboard as plain text. False for the fragment target.
+    @discardableResult
+    public func copySwiftSnippet() -> Bool {
+        guard let files = try? exportFiles(), let swift = files.first(where: { $0.name.hasSuffix(".swift") }) else { return false }
+        pasteboard.write(Data(swift.contents.utf8), type: "public.utf8-plain-text")
+        return true
+    }
+
+    /// "Title.socket" for a source ref, used by the inspector's "← source" labels and the
+    /// viewer picker. Falls back to the node's custom title, then its definition's title.
+    public func socketLabel(_ ref: SocketRef) -> String {
+        guard let n = document.root.nodes[ref.node], case .builtin(let d) = n.kind else { return ref.socket }
+        return "\(n.customTitle ?? registry[d]?.title ?? d).\(ref.socket)"
     }
 }
 
@@ -207,9 +255,10 @@ public final class EditorModel {
 /// `GenerationError` from `ShaderGenerator.generate`'s typed throw, rather than `any Error`.
 /// `nonisolated` so it actually runs on the `Task.detached` background thread instead of
 /// hopping back to the main actor (this module defaults new declarations to `@MainActor`).
-nonisolated private func generateResult(_ doc: ShaderDocument, registry: NodeRegistry) -> Result<GeneratedShader, GenerationError> {
+nonisolated private func generateResult(_ doc: ShaderDocument, target: OutputTarget, viewer: SocketRef?,
+                                        registry: NodeRegistry) -> Result<GeneratedShader, GenerationError> {
     do {
-        return .success(try ShaderGenerator.generate(doc, target: .fragment, registry: registry))
+        return .success(try ShaderGenerator.generate(doc, target: target, viewer: viewer, registry: registry))
     } catch {
         return .failure(error)
     }

@@ -6,6 +6,9 @@ import MetalNodesRender
 public struct EditorView: View {
     let model: EditorModel
     let device: MTLDevice
+    @State private var exportError: String?
+    /// A panel is on screen; a second request must not stack another one behind it.
+    @State private var exporting = false
 
     public init(model: EditorModel, device: MTLDevice) {
         self.model = model
@@ -18,6 +21,22 @@ public struct EditorView: View {
             .preferredColorScheme(.dark)
             .tint(DraculaToken.purple.color)
             .focusedSceneValue(\.editorModel, model)
+            .onChange(of: model.exportRequest) { _, _ in
+                #if os(macOS)
+                // A modal panel must not run inside SwiftUI's update transaction (it returns
+                // immediately without showing); hop to the next main-actor turn first.
+                Task { @MainActor in
+                    guard !exporting else { return }
+                    exporting = true
+                    defer { exporting = false }
+                    do { exportError = ExportPanelMac.run(files: try model.exportFiles()) }
+                    catch { exportError = "The graph has errors; fix them before exporting." }
+                }
+                #endif
+            }
+            .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+                Button("OK") { exportError = nil }
+            } message: { Text(exportError ?? "") }
     }
 
     @ViewBuilder
@@ -41,6 +60,16 @@ public struct EditorView: View {
         VStack(spacing: 8) {
             PreviewView(state: model.preview, device: device)
                 .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    GeometryReader { geo in
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                if case .active(let p) = phase { setMouse(p, in: geo.size) }
+                            }
+                            .gesture(DragGesture(minimumDistance: 0).onChanged { g in setMouse(g.location, in: geo.size) })
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(DraculaToken.surface.color))
             HStack {
@@ -52,11 +81,40 @@ public struct EditorView: View {
                     .foregroundStyle(DraculaToken.muted.color)
             }
             .controlSize(.small)
+            if let v = model.viewer {
+                HStack(spacing: 6) {
+                    Image(systemName: "circle.circle.fill").foregroundStyle(DraculaTheme.viewerFlag.color)
+                    Text("Viewing \(model.socketLabel(v))").font(.caption).lineLimit(1)
+                    if model.viewedType == .float || model.viewedType == .int {
+                        TextField("Min", value: rangeBinding(lower: true), format: .number.precision(.fractionLength(2))).frame(width: 56)
+                        TextField("Max", value: rangeBinding(lower: false), format: .number.precision(.fractionLength(2))).frame(width: 56)
+                    }
+                    Spacer()
+                    Button("Clear") { model.setViewer(nil) }
+                }
+                .controlSize(.small)
+                .textFieldStyle(.roundedBorder)
+            }
             diagnosticsList
             Divider()
             InspectorView(model: model)
         }
         .padding(10)
+    }
+
+    private func setMouse(_ p: CGPoint, in size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        model.preview.mouse = SIMD2(Float(min(max(p.x / size.width, 0), 1)), Float(1 - min(max(p.y / size.height, 0), 1)))
+    }
+
+    private func rangeBinding(lower: Bool) -> Binding<Float> {
+        Binding(
+            get: { lower ? model.preview.viewerRange.lowerBound : model.preview.viewerRange.upperBound },
+            set: { x in
+                let r = model.preview.viewerRange
+                let lo = lower ? x : r.lowerBound, hi = lower ? r.upperBound : x
+                model.preview.viewerRange = lo...max(hi, lo + 0.0001)
+            })
     }
 
     private var diagnosticsList: some View {

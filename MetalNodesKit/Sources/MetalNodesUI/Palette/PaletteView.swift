@@ -17,7 +17,7 @@ public struct PaletteView: View {
                 .padding(8)
             List {
                 ForEach(PaletteSearch.grouped(results), id: \.category) { group in
-                    Section(group.category.rawValue.capitalized) {
+                    Section(group.category.displayName) {
                         ForEach(group.defs, id: \.id) { row($0) }
                     }
                 }

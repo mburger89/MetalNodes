@@ -53,6 +53,7 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         image.setReserved(time: t,
                           resolution: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)),
                           mouse: state.mouse)
+        image.setViewerRange(state.viewerRange)
 
         inflight.wait()
         let buffer = ring!.next()

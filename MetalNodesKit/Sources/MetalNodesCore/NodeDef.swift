@@ -29,13 +29,23 @@ public struct ParamDecl: Sendable, Hashable {
     public var label: String
     public var kind: ParamKind
     public var defaultValue: ParamValue
+    /// False hides the control from the node body; the inspector still shows it (spec §19.5).
+    public var showsInBody: Bool
 
-    public init(name: String, label: String? = nil, kind: ParamKind, defaultValue: ParamValue) {
+    public init(name: String, label: String? = nil, kind: ParamKind, defaultValue: ParamValue, showsInBody: Bool = true) {
         self.name = name
         self.label = label ?? name.capitalized
         self.kind = kind
         self.defaultValue = defaultValue
+        self.showsInBody = showsInBody
     }
+}
+
+/// How the canvas draws a node (spec §19.5).
+public enum NodeStyle: Sendable, Hashable {
+    case standard
+    /// A 24 × 24 dot with one input on the left and one output on the right (Reroute).
+    case dot
 }
 
 public enum NodeCategory: String, Codable, Sendable, CaseIterable {
@@ -51,11 +61,13 @@ public struct EmitContext: Sendable {
     public var params: [String: String]
     public var enums: [String: String]
     public var types: [String: SocketType]
+    /// The four system values (`uv`, `time`, `resolution`, `mouse`), spelled for the target program.
+    public var sys: [String: String]
 
     public init(inputs: [String: String], outputs: [String: String], params: [String: String],
-                enums: [String: String], types: [String: SocketType]) {
+                enums: [String: String], types: [String: SocketType], sys: [String: String] = [:]) {
         self.inputs = inputs; self.outputs = outputs; self.params = params
-        self.enums = enums; self.types = types
+        self.enums = enums; self.types = types; self.sys = sys
     }
 }
 
@@ -79,13 +91,15 @@ public struct NodeDef: Sendable, Identifiable {
     public var generics: [String: [SocketType]]
     public var requires: [String]
     public var body: NodeBody
+    public var style: NodeStyle
 
     public init(id: String, title: String, category: NodeCategory,
                 inputs: [SocketDecl] = [], outputs: [SocketDecl] = [], params: [ParamDecl] = [],
-                generics: [String: [SocketType]] = [:], requires: [String] = [], body: NodeBody) {
+                generics: [String: [SocketType]] = [:], requires: [String] = [], body: NodeBody,
+                style: NodeStyle = .standard) {
         self.id = id; self.title = title; self.category = category
         self.inputs = inputs; self.outputs = outputs; self.params = params
-        self.generics = generics; self.requires = requires; self.body = body
+        self.generics = generics; self.requires = requires; self.body = body; self.style = style
     }
 
     public func input(named n: String) -> SocketDecl? { inputs.first { $0.name == n } }

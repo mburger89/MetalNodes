@@ -57,3 +57,21 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
         return (fresh, wires)
     }
 }
+
+extension GraphClipboard {
+    private enum Keys: String, CodingKey { case formatVersion, sourceOrigin, nodes, edges, stickies, frames, definitions }
+
+    /// Tolerant decoding: every key but the payload itself is optional, so a clipboard written by
+    /// an older build (or one that predates `stickies`/`frames`/`definitions`) still pastes.
+    /// Encoding stays synthesized, so a round trip is unchanged.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? GraphClipboard.currentFormatVersion
+        sourceOrigin = try c.decodeIfPresent(CGPoint.self, forKey: .sourceOrigin) ?? .zero
+        nodes = try c.decodeIfPresent([NodeInstance].self, forKey: .nodes) ?? []
+        edges = try c.decodeIfPresent([Edge].self, forKey: .edges) ?? []
+        stickies = try c.decodeIfPresent([StickyNote].self, forKey: .stickies) ?? []
+        frames = try c.decodeIfPresent([CommentFrame].self, forKey: .frames) ?? []
+        definitions = try c.decodeIfPresent([GroupDefinition].self, forKey: .definitions) ?? []
+    }
+}

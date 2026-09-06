@@ -26,7 +26,7 @@ public struct NodeRegistry: Sendable {
     public subscript(id: String) -> NodeDef? { defs[id] }
     public var all: [NodeDef] { defs.values.sorted { $0.id < $1.id } }
 
-    nonisolated(unsafe) static let placeholderPattern = /\{(in|out|param|type)\.([A-Za-z_][A-Za-z0-9_]*)\}/
+    nonisolated(unsafe) static let placeholderPattern = /\{(in|out|param|type|sys)\.([A-Za-z_][A-Za-z0-9_]*)\}/
 
     private static func validate(_ def: NodeDef) throws(RegistryError) {
         var seen = Set<String>()
@@ -60,6 +60,7 @@ public struct NodeRegistry: Sendable {
             case "out": def.output(named: name) != nil
             case "param": def.param(named: name) != nil
             case "type": def.generics[name] != nil
+            case "sys": EmitEnvironment.sysNames.contains(name)
             default: false
             }
             if !ok { throw RegistryError.unknownPlaceholder(def: def.id, placeholder: "\(kind).\(name)") }

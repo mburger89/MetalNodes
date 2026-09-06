@@ -16,6 +16,8 @@ public final class PreviewState {
     public var mouse = SIMD2<Float>(0, 0)
     public var drawableSize = CGSize(width: 1, height: 1)
     public var lastError: String?
+    /// The manual low/high used to normalize a viewed float/int socket into 0...1 (spec §19.3).
+    public var viewerRange: ClosedRange<Float> = 0...1
 
     public init() {}
 }

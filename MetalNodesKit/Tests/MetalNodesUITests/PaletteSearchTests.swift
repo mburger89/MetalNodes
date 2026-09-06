@@ -11,7 +11,7 @@ import MetalNodesCore
         #expect(r.count == all.count)
         #expect(r.first?.category == .input)
         let g = PaletteSearch.grouped(r)
-        #expect(g.map(\.category) == [.input, .math, .vector, .noise, .output])   // no sdf/color/utility in M1's library
+        #expect(g.map(\.category) == [.input, .math, .vector, .sdf, .noise, .color, .utility, .output])
         #expect(g.allSatisfy { !$0.defs.isEmpty })
     }
 
@@ -23,8 +23,9 @@ import MetalNodesCore
 
     @Test func idMatchesSurfaceLast() {
         let r = PaletteSearch.filter("vector", in: all).map(\.id)
-        // No title contains "vector"; ids do — all three vector nodes, sorted by title.
-        #expect(r == ["vector.combine", "vector.length", "vector.separate"])
+        // "Vector 2"/"Vector 3" titles prefix-match first; the vector.* ids surface after, sorted by title.
+        #expect(r == ["input.float2", "input.float3",
+                      "vector.combine", "vector.dot", "vector.length", "vector.normalize", "vector.rotate2d", "vector.separate"])
     }
 
     @Test func caseInsensitive() {
@@ -43,5 +44,10 @@ import MetalNodesCore
         let t = NodeDefTransfer(defID: "noise.value")
         let data = try JSONEncoder().encode(t)
         #expect(try JSONDecoder().decode(NodeDefTransfer.self, from: data).defID == "noise.value")
+    }
+
+    @Test func categoryDisplayNamesUppercaseTheAcronym() {
+        #expect(NodeCategory.sdf.displayName == "SDF")
+        #expect(NodeCategory.noise.displayName == "Noise")
     }
 }

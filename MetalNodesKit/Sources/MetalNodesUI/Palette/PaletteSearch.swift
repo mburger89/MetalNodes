@@ -39,3 +39,10 @@ enum PaletteSearch {
         }
     }
 }
+
+extension NodeCategory {
+    /// Palette / inspector label. `rawValue.capitalized` would print "Sdf".
+    var displayName: String {
+        self == .sdf ? "SDF" : rawValue.capitalized
+    }
+}

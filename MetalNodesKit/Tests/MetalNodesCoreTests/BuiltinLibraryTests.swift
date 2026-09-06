@@ -2,13 +2,20 @@ import Testing
 @testable import MetalNodesCore
 
 @Suite struct BuiltinLibraryTests {
-    @Test func registryContainsTheM1Set() {
+    @Test func registryContainsTheV1Set() {
         let ids = Set(NodeRegistry.builtin.all.map(\.id))
         let expected: Set<String> = [
             "input.uv", "input.time", "input.resolution", "input.float", "input.color",
             "math.math", "math.mix", "math.smoothstep",
             "vector.combine", "vector.separate", "vector.length",
             "noise.value", "output.fragment",
+            "input.float2", "input.float3", "input.int", "input.bool", "input.mouse",
+            "math.clamp", "math.step", "math.maprange",
+            "vector.dot", "vector.normalize", "vector.rotate2d",
+            "sdf.circle", "sdf.box", "sdf.union", "sdf.subtract",
+            "noise.perlin", "noise.simplex", "noise.voronoi", "noise.fbm",
+            "color.ramp", "color.hsv2rgb", "color.rgb2hsv", "color.invert", "color.mixcolor",
+            "utility.reroute", "utility.compare", "utility.switch",
         ]
         #expect(ids == expected)
     }

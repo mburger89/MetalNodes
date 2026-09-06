@@ -65,10 +65,13 @@ extension EditorModel {
     public var selectionBounds: CGRect? { NodeGeometry.bounds(of: selection, in: document.root, registry: registry) }
     public var contentBounds: CGRect? { NodeGeometry.bounds(of: document.root.nodes.keys, in: document.root, registry: registry) }
 
-    /// Topmost node under a canvas point — "topmost" is the last in UUID order, matching the draw order Task 15 fixes.
+    /// Topmost node under a canvas point. "Topmost" is the last in the canvas's draw order —
+    /// the selection above everything else, then UUID order — so hit-testing agrees with what
+    /// is actually drawn on top (spec §19.6).
     public func node(at point: CGPoint) -> NodeID? {
-        document.root.nodes.values
-            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        let onTop = selection
+        return document.root.nodes.values
+            .sorted { NodeGeometry.drawOrder($0, onTop: onTop) < NodeGeometry.drawOrder($1, onTop: onTop) }
             .last { NodeGeometry.frame(for: $0, registry: registry)?.contains(point) == true }?
             .id
     }

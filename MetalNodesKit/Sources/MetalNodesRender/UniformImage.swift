@@ -24,6 +24,14 @@ public struct UniformImage: Sendable, Equatable {
         write(.float2(mouse), into: layout.reserved("mouse"))
     }
 
+    /// Manual low/high for normalizing a viewed float/int socket (spec §19.3). A no-op when the
+    /// layout has no viewer fields (a non-viewer program).
+    public mutating func setViewerRange(_ r: ClosedRange<Float>) {
+        guard layout.hasReserved("viewerMin") else { return }
+        write(.float(r.lowerBound), into: layout.reserved("viewerMin"))
+        write(.float(r.upperBound), into: layout.reserved("viewerMax"))
+    }
+
     /// Fresh image from the document: every field takes the instance's stored
     /// value, else the definition's default. Called on every pipeline publish.
     public static func rebuild(layout: UniformLayout, document: ShaderDocument, registry: NodeRegistry) -> UniformImage {

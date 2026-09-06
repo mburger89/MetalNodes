@@ -938,3 +938,361 @@ round-trip, `fastMath` in the cache key, LRU eviction, `CompileLine`
 severity parsing, marquee/frame intersection math, zoom-to-fit math, wire
 hit-testing distance, drop resolution order (pure function over anchors).
 Views verified by build plus the manual checklist in the plan's last task.
+
+---
+
+## 19. M3 addendum — library, viewer, stitchable target, error mapping (added 2026-09-04)
+
+Binding mechanics for milestone M3, in the same spirit as §18. Where this
+section and an earlier one disagree, this section wins for M3.
+
+### 19.1 Scope and order
+
+1. **Codegen environment** — templates stop spelling `u.time` / `in.uv`;
+   they use `{sys.uv}`, `{sys.time}`, `{sys.resolution}`, `{sys.mouse}`, and
+   the emitter substitutes per target. Uniform reads go through the same
+   environment (`u.p0` for the fragment target, a bare argument name for a
+   stitchable function).
+2. **Viewer flag** (§9.3) — a second program from the same graph, always a
+   *fragment* program for the preview, terminating at the flagged output.
+3. **Stitchable target** (§9.5) — `colorEffect`, `distortionEffect`,
+   `layerEffect`; preview wrapper; export of `.metal` + `.swift`.
+4. **Library to the v1 set** — 27 new definitions (40 total), see 19.5.
+5. **Error mapping** (§9.4) — diagnostics already carry `NodeID`; nodes
+   with an error get a red outline and badge.
+6. **Carry-overs from M2** — paste at the cursor, selected nodes draw on top,
+   no recompile when the generated source is unchanged, Undo menu titles
+   carry the action name, tolerant clipboard decoding.
+
+Decisions taken with the user for M3: constants ship as **separate nodes**
+(Float, Vector 2, Vector 3, Color, Integer, Boolean — the type resolver only
+infers from connected inputs); **Texture Sample is deferred to M5** with
+package persistence; **Color Ramp has up to 4 stops**, edited in the
+inspector; export is a **File ▸ Export Shader…** save panel writing both
+files side by side, plus "Copy Swift snippet" in the inspector.
+
+### 19.2 Emit environment
+
+```swift
+struct EmitEnvironment: Sendable {
+    var uniform: @Sendable (UniformField) -> String   // how a slot is read
+    var sys: [String: String]                          // uv, time, resolution, mouse
+}
+```
+
+| Target | `uniform(p0: float)` | `uniform(p3: int)` | `uniform(p4: bool)` | `sys.uv` | `sys.time` | `sys.resolution` | `sys.mouse` |
+|---|---|---|---|---|---|---|---|
+| fragment (and viewer) | `u.p0` | `u.p3` | `bool(u.p4)` | `in.uv` | `u.time` | `u.resolution` | `u.mouse` |
+| stitchable function | `p0` | `int(p3)` | `bool(p4)` | `uv` | `time` | `size` | `mouse` |
+
+SwiftUI's `Shader.Argument` has no integer or boolean form, so int/bool
+uniforms are `float` arguments cast on read. `uv` inside a stitchable
+function is `float2(position.x / size.x, 1.0 - position.y / size.y)` — the
+same bottom-left convention as the fragment target.
+
+The registry rejects any `{sys.x}` whose name is not one of the four.
+
+### 19.3 Viewer
+
+- `generate(doc, target:, viewer: SocketRef?)`. A valid viewer (node exists,
+  socket is one of its outputs) replaces the terminal: the topological order
+  starts from the viewed node (DCE as usual) and the program ends with a wrap
+  of that output's variable per the §9.3 table. `float` and `int` map through
+  two extra reserved uniforms `viewerMin`, `viewerMax` (sorted with the
+  others, present only in viewer programs):
+  `return float4(float3(saturate((v - u.viewerMin) / max(u.viewerMax - u.viewerMin, 1e-6))), 1.0);`
+- A viewer program is always a fragment program regardless of
+  `settings.target`; export never passes a viewer.
+- An invalid viewer (node or socket gone) is cleared before generation —
+  `EditorModel` prunes it exactly as it prunes the selection.
+- Setting the viewer is a view-state change (no undo) that schedules a
+  compile. The range control (min/max) is transient preview state, written
+  into the uniform image every frame, so dragging it never recompiles.
+- UI: a green ◉ badge in every node header toggles the viewer on the node's
+  **first** output; the inspector's output rows each carry a ◉ to pick any
+  output; View ▸ Toggle Viewer (⌘⇧V) acts on the single selected node. The
+  preview pane shows "Viewing *Node*.*socket*" with Clear, and Min/Max fields
+  when the viewed type is `float` or `int`.
+
+### 19.4 Stitchable target
+
+Signatures (`NAME` = `settings.exportName` sanitised to an identifier,
+default `metalNodesShader`; `…args` = `float2 mouse` followed by one argument
+per user uniform slot **in layout order**, int/bool as `float`):
+
+| Kind | Export signature | Return |
+|---|---|---|
+| colorEffect | `[[stitchable]] half4 NAME(float2 position, half4 currentColor, float2 size, float time, …args)` | `return half4(color);` |
+| distortionEffect | `[[stitchable]] float2 NAME(float2 position, float2 size, float time, …args)` | `return float2(color.x, 1.0 - color.y) * size;` — the Fragment Output's `color.xy` is the **source uv** (a plain UV → Output graph is the identity) |
+| layerEffect | `[[stitchable]] half4 NAME(float2 position, SwiftUI::Layer layer, float2 size, float time, …args)` | as colorEffect; `layer` is unused until Texture Sample lands (M5) |
+
+`GeneratedShader.source` is the **preview** program: the same function
+*without* `[[stitchable]]`-only dependencies (no `SwiftUI::Layer` parameter,
+no `<SwiftUI/SwiftUI_Metal.h>`), plus a fragment `shaderMain` that computes
+`position = float2(in.uv.x, 1.0 - in.uv.y) * u.resolution` and calls the
+function with values read from `Uniforms`; a distortion preview returns
+`float4(result / u.resolution, 0.0, 1.0)`. `GeneratedShader.exportSource`
+is the file to ship (nil for the fragment target). Switching `settings.target`
+is a topology change.
+
+Export writes `NAME.metal` and `NAME.swift`; the Swift file is a `View`
+extension whose parameters are named after the node title + parameter label
+(camel-cased, de-duplicated), in argument order, calling
+`.colorEffect(ShaderLibrary.NAME(.float2(size), .float(time), .float2(mouse), …))`
+(`distortionEffect`/`layerEffect` take `maxSampleOffset: .zero`).
+`Shader.Argument` has no vector-taking overload, so the Swift call spells a
+vector slot by component — `.float2(v.x, v.y)`, `.float3(v.x, v.y, v.z)`,
+`.float4(v.x, v.y, v.z, v.w)`. A `color` slot is a `half4` parameter (that is
+what SwiftUI's `.color(_:)` passes, premultiplied), read as `float4(NAME)`
+inside the function; the preview keeps it as a `float4` in `Uniforms` and
+narrows explicitly at the call, since MSL has no implicit vector conversion.
+
+### 19.5 Library additions (27)
+
+| Category | Definitions |
+|---|---|
+| Input | `input.float2` Vector 2, `input.float3` Vector 3, `input.int` Integer, `input.bool` Boolean, `input.mouse` Mouse (position, from the preview's pointer, bottom-left normalised) |
+| Math | `math.clamp`, `math.step`, `math.maprange` (all generic over float/float2/float3/float4, scalar edges cast with `{type.T}`) |
+| Vector | `vector.dot` (→ float), `vector.normalize`, `vector.rotate2d` (uv, angle, center → `mn_rotate2d`) |
+| SDF | `sdf.circle`, `sdf.box` (`mn_sdBox`), `sdf.union` (`min`), `sdf.subtract` (`max(a, -b)`) — all `float` distances in uv space |
+| Noise | `noise.perlin`, `noise.simplex`, `noise.voronoi` (distance to nearest feature point), `noise.fbm` (`octaves` int param 1…8, on value noise) — all `mn_` stdlib, all remapped to 0…1 |
+| Color | `color.ramp` (stops enum 2/3/4 as a variant; `col0…col3` and `pos1`, `pos2` value params hidden from the node body; endpoints fixed at 0 and 1), `color.hsv2rgb`, `color.rgb2hsv`, `color.invert`, `color.mixcolor` (mode variants mix/add/multiply/screen, alpha from `a`) |
+| Utility | `utility.reroute` (generic pass-through drawn as a **dot**, `NodeStyle.dot`, 24 × 24), `utility.compare` (op variants less/greater/equal/notEqual → `bool`, equal within 1e-4), `utility.switch` (`cond ? a : b`, generic) |
+
+Kept as XYZ (float3) rather than the table's XYZW: `vector.combine`,
+`vector.separate`. Multi-statement bodies that need temporaries go through a
+stdlib function rather than a template, so two instances never collide on a
+local name.
+
+Two `NodeDef` additions: `style: NodeStyle` (`.standard` / `.dot`) and
+`ParamDecl.showsInBody` (default true; false hides the control from the node
+body, the inspector still shows it). `NodeGeometry` counts only body-visible
+params.
+
+Generic resolution gains one rule: if every connected input of a generic is
+the **same** type and that type is in the allowed set, use it exactly (so a
+`color` through a Reroute stays `color`); otherwise widen as before.
+
+### 19.6 Error mapping
+
+`EditorModel.errorNodes` = nodes named by an error-severity diagnostic. Such a
+node draws a 2 pt `red` outline (selection glow still applies) and a red
+`exclamationmark.circle.fill` at the leading edge of its header; the inspector
+already lists the messages. Warnings do not outline.
+
+### 19.7 Testing (adds to §14 and §18.10)
+
+- Golden viewer programs for every viewable socket type (one constant node
+  per type, viewer on it).
+- Golden stitchable export + preview for the §14 small document, all three
+  kinds; the layer export contains `SwiftUI::Layer` and the preview does not.
+- Swift snippet golden with an int and a bool slot (both emitted as `.float`).
+- Real-device smoke: every node, every variant of every `.variants` node,
+  every viewer type, every stitchable kind's preview.
+- `xcrun -sdk macosx metal -c NAME.metal` on an exported file (integration
+  script step; `[[stitchable]]` is not exercised by the runtime compiler).
+- Model: viewer toggle/prune schedules exactly one compile; unchanged source
+  skips the compile; `settings.target` change recompiles.
+
+
+---
+
+## 20. M4 addendum — groups (added 2026-09-05)
+
+Binding mechanics for milestone M4, in the spirit of §18/§19. Where this
+section and §3/§4/§9 differ in detail, this section wins for M4.
+
+### 20.1 Scope and order
+
+1. **Node shapes** — one description of "what a node looks like" (`NodeShape`:
+   title, category/accent, inputs, outputs, params, generics, style) resolved
+   from the registry for builtins and from the enclosing/target definition
+   for group instances, `GroupInput` and `GroupOutput`. Every consumer that
+   used `NodeDef` for layout, wiring, typing or drawing goes through it.
+2. **Graph paths** — the editor binds to the active path derived from view
+   state; every `DocumentChange` applies to the active graph; cameras and
+   selection are per path.
+3. **Codegen** — one MSL function per definition, called from wherever an
+   instance appears; uniform slots follow §9.2.
+4. **The five operations** (§4) as pure document transforms, plus socket
+   add/remove/rename.
+5. **Clipboard** — definitions travel with the payload and dedupe on paste.
+6. **UI** — breadcrumb, dive-in/out, group headers, palette "My Functions",
+   inspector panes for instances and definitions, recursion refusal.
+7. **Viewer inside a definition** through the dived-through instance.
+
+Decisions taken with the user: exposed sockets support **add, remove,
+rename** (no reorder); **nested** groups; paste dedupe implemented and
+tested **in-document** (cross-document arrives with persistence in M5);
+viewer-in-definition **included**.
+
+### 20.2 Shapes
+
+```swift
+public struct NodeShape: Sendable, Hashable {
+    public var title: String
+    public var category: NodeCategory          // .group for instances and pseudo-nodes
+    public var accent: DraculaAccent?          // group header colour (definition.accent)
+    public var inputs: [SocketDecl]
+    public var outputs: [SocketDecl]
+    public var params: [ParamDecl]             // empty for groups
+    public var generics: [String: [SocketType]]
+    public var style: NodeStyle
+}
+```
+
+`ShaderDocument.shape(of node: NodeInstance, in path: GraphPath, registry:)`:
+builtin → the `NodeDef`; `.group(id)` → `definitions[id]` (inputs, outputs,
+title = name, accent); `.groupInput` (only valid inside a definition D) →
+outputs = `D.inputs`, title "Group Input"; `.groupOutput` → inputs =
+`D.outputs`, title "Group Output". `NodeCategory` gains `.group` (palette
+section "My Functions", theme token purple). A group instance draws a
+**doubled border** (2 pt outer + 1 pt inner ring, both `accent`).
+
+A definition is created with its two pseudo-nodes already present
+(`GroupDefinition.make(name:)`), and validation requires exactly one of each.
+Pseudo-nodes cannot be deleted, copied, cut or grouped; they can be moved.
+
+### 20.3 Graph paths
+
+`GraphPath` stays `.root | .definition(GroupID)`. View state gains
+`editingDefinition: GroupID?` (a definition opened from the palette, with no
+instance) beside `editingStack: [NodeID]` (the instances dived through,
+outermost first). The active path: `editingStack.last`'s definition, else
+`editingDefinition`, else `.root`. `ShaderDocument.graph(at:)` /
+`subscript(path)` read and mutate the right `Graph`; `ShaderDocument.node(_
+id:)` finds an instance in any graph (ids are unique document-wide). Every
+`DocumentChange` applies to the active path; selection is cleared on dive
+in/out; cameras stay keyed by path.
+
+### 20.4 Codegen
+
+**One function per reachable definition**, inner-most first, then the root
+(or stitchable) program. Function name `mn_g_<sanitized name>_<8 hex of id>`.
+
+```metal
+struct G_1a2b3c4d_Out { float value; float2 uv; };      // one field per output, always a struct
+G_1a2b3c4d_Out mn_g_Fbm_1a2b3c4d(float2 uv, float time, float2 size, float2 mouse,
+                                  float2 in_uv, float in_scale,        // exposed inputs, in order
+                                  int p2, float p5) {                  // every uniform the body needs
+    …                                                                   // the definition graph, SSA
+    G_1a2b3c4d_Out out; out.value = v7; out.uv = v3; return out;
+}
+```
+
+- The four system values are always the first four parameters; inside the
+  function the environment maps `{sys.*}` to them. Exposed inputs follow, as
+  `in_<socket>`. Then **every uniform slot the body reads** (its own unwired
+  inputs and value params, plus those of nested instances' functions, and
+  the *shared* unwired exposed inputs of nested instances), as parameters
+  named by the slot. Functions are therefore target-agnostic: the **call
+  site** spells the uniforms (`u.p2` under a fragment program, `p2` inside a
+  stitchable function) and passes its own `{sys.*}` values through.
+- **Slots (§9.2, made concrete):** an unwired exposed input of an instance in
+  the **root** graph is per-instance: `ParamPath(node: instanceID, param:
+  socket)`, value stored in `instance.params[socket]`, default from the
+  definition's `SocketDecl.default`. Everything inside a definition —
+  unwired inputs and value params of its nodes, including the unwired
+  exposed inputs of a *nested* instance — is shared by all instances:
+  `ParamPath(node: thatNodeID, param:)`, requested once. `instancePath`
+  therefore stays length 1 in M4.
+- A `GroupInput`'s output socket evaluates to its parameter; a
+  `GroupOutput`'s inputs become the struct's fields. An unwired `GroupOutput`
+  input is an ordinary unwired input: a shared uniform slot with the
+  socket's declared default (`.required` outputs report "must be
+  connected").
+- Call site: `G_…_Out rN = mn_g_…(<sys>, <converted input exprs>, <uniform
+  exprs>); <T> vK = rN.<socket>;` — one SSA variable per output socket as for
+  any node, so downstream conversion and the line map work unchanged.
+- The stdlib closure includes every `requires` of every emitted function.
+- Recursion is refused at edit time (§4.6) and, defensively, by validation
+  ("Definition contains itself").
+
+### 20.5 Viewer inside a definition
+
+`generate(doc, viewer:, viewerPath: [NodeID])`: `viewerPath` is the editing
+stack. Empty and the viewed node in the root → today's behaviour. Otherwise
+the viewed node lives in the definition of the last instance; codegen emits a
+**view variant** of every definition on the path whose single output is the
+viewed value (the inner variant's for the outer ones), calls the outermost
+variant at the dived-through instance's position in the root order, and
+wraps the result per §9.3. Opened from the palette with no instance
+(`editingDefinition` set, `viewerPath == []`): the root program is replaced by
+a synthetic call of the definition's view variant with its declared defaults
+as arguments. Deleting any instance on the path clears the viewer.
+
+### 20.6 Operations
+
+- **Group (⌘G)** on ≥ 1 selected non-pseudo nodes in any graph. Cut: inbound
+  crossing edges → inputs, deduplicated by **source socket**, named after
+  the source socket (`uv`, `out`, …; de-duplicated with a numeric suffix,
+  typed from the source's resolved output type); outbound crossing edges →
+  outputs, one per distinct source socket inside the selection, named after
+  it. The definition's graph gets the nodes with their relative positions
+  preserved (offset so the bounding box starts at (220, 0)), a `GroupInput`
+  at x = 0 and a `GroupOutput` right of the bounding box. The instance is
+  placed at the bounding box's origin, external wires rewired to it. Name
+  `Group`, `Group 2`, … Refused when the selection includes a pseudo-node or
+  would create recursion.
+- **Dive in** (double-click an instance, or the inspector button) pushes the
+  instance; breadcrumb click / ⌘↑ pops to that level. "Edit" from the
+  palette sets `editingDefinition` with an empty stack.
+- **Make Unique** deep-copies the definition (new `GroupID`, name `X 2`;
+  nested instances keep pointing at their definitions) and retargets only
+  that instance. **Ungroup (⌘⇧G)** inlines with fresh ids at the instance's
+  position plus the internal offsets, reconnecting inbound wires to whatever
+  each `GroupInput` output fed and outbound wires from whatever fed each
+  `GroupOutput` input; unwired exposed inputs become unwired internal inputs
+  carrying the instance's stored value. Unused definitions are **kept**
+  (still listed under "My Functions"; deletable from the inspector when no
+  instance remains).
+- **Sockets**: add by wiring into the pseudo-nodes' `+` socket — a
+  `GroupOutput` shows a trailing `+` input that accepts any type and creates
+  an output named after the wire's source socket; a `GroupInput` shows a
+  trailing `+` output; dragging it onto an input creates an input named after
+  that target socket, typed from it. Rename and remove in the definition
+  inspector; removal deletes the orphaned wires on every instance and inside
+  the definition in the same undo transaction (§4.5). Renaming rewrites the
+  `SocketRef`s on every instance and inside the definition.
+
+### 20.7 Clipboard
+
+`GraphClipboard.extract` includes every definition transitively referenced by
+the copied instances. On paste (§6): same `GroupID` present with the same
+`contentHash` → reuse; present with a different hash → insert a copy under a
+fresh id named `<name> (imported)` and retarget the pasted instances; absent
+→ insert as-is. `GroupDefinition.contentHash` hashes name, sockets and the
+graph (ids included — a definition is identical only when it is literally the
+same). Pseudo-nodes never copy.
+
+### 20.8 UI
+
+- Breadcrumb bar above the canvas: `Shader › Fbm › Turbulence`, each segment
+  a button; the last is bold. Always visible, so the layout never jumps.
+- Group instance: header in the definition's accent (purple by default),
+  doubled border, title = definition name (instance `customTitle` overrides),
+  no params; unwired exposed inputs show `ParamControl`s bound to
+  `instance.params`.
+- Pseudo-nodes: header "Group Input"/"Group Output" in the definition's
+  accent, a `+` socket as in 20.6, no ◉ badge, cannot be deleted.
+- Inspector: instance pane (title, "Edit Group" → dive, "Make Unique",
+  "Ungroup", exposed input controls); definition pane while editing (name,
+  accent picker, input/output lists with rename and remove, "Delete
+  definition" when unused); palette "My Functions" lists definitions with
+  drag-in (`NodeDefTransfer` gains `groupID`), double-click to place, and an
+  "Edit" button.
+- Recursion refusal: the drop/paste/group is ignored and a notice "Fbm cannot
+  contain itself" shows in the preview pane's diagnostics strip for 3 s.
+
+### 20.9 Testing (adds to §14)
+
+Cut correctness incl. dedup by source socket; group → ungroup identity modulo
+ids (nodes, params, edges, positions); make-unique isolation; recursion
+refusal (direct and transitive); socket remove deletes orphans in one undo;
+rename rewrites refs; codegen goldens for a one-level and a nested group,
+shared vs per-instance slots (two instances, one definition → one shared
+slot, two per-instance slots); viewer through an instance and from the
+palette; clipboard dedupe (same hash reuse, different hash import, absent
+insert); every group program compiles on the device (fragment, stitchable,
+viewer); model tests for dive-in/out (selection, active graph),
+`DocumentChange` on a definition graph, `pruneViewer` on instance deletion.

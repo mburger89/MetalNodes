@@ -98,4 +98,28 @@ import MetalNodesCore
         #expect(NodeGeometry.visibleNodes(in: doc.root, transform: t, viewport: vp, registry: reg, margin: 200,
                                           keeping: [NodeID()]).count == plain.count)       // unknown id is ignored
     }
+
+    @Test func dotNodesAreSmallAndAnchorOnTheirEdges() throws {
+        let reg = NodeRegistry.builtin
+        let r = NodeInstance(kind: .builtin("utility.reroute"), position: CGPoint(x: 100, y: 50))
+        var g = Graph(); g.nodes[r.id] = r
+        #expect(NodeGeometry.frame(for: r, registry: reg) == CGRect(x: 100, y: 50, width: 24, height: 24))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(r.id, "in"), in: g, registry: reg) == CGPoint(x: 100, y: 62))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(r.id, "out"), in: g, registry: reg) == CGPoint(x: 124, y: 62))
+    }
+
+    @Test func hiddenParamsDoNotCountAsBodyRows() throws {
+        let ramp = try #require(NodeRegistry.builtin["color.ramp"])
+        // header 26 + padding 16 + rows (1 input + 1 visible param + 1 output) × 22
+        #expect(NodeGeometry.estimatedSize(for: ramp).height == 108)
+    }
+
+    @Test func nodesOnTopDrawLast() {
+        let doc = ShaderDocument.sample()
+        let uv = doc.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
+        let vis = NodeGeometry.visibleNodes(in: doc.root, transform: CanvasTransform(pan: .zero, zoom: 0.15),
+                                            viewport: CGSize(width: 4000, height: 4000), registry: .builtin, margin: 200, onTop: [uv.id])
+        #expect(vis.last?.id == uv.id)
+        #expect(vis.count == doc.root.nodes.count)
+    }
 }

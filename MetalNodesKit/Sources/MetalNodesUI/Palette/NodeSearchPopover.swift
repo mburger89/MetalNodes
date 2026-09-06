@@ -27,7 +27,7 @@ struct NodeSearchPopover: View {
                             Circle().fill(DraculaTheme.token(for: def.category).color).frame(width: 8, height: 8)
                             Text(def.title)
                             Spacer()
-                            Text(def.category.rawValue).font(.caption2).foregroundStyle(DraculaToken.muted.color)
+                            Text(def.category.displayName).font(.caption2).foregroundStyle(DraculaToken.muted.color)
                         }
                         .padding(.vertical, 2)
                         .contentShape(Rectangle())

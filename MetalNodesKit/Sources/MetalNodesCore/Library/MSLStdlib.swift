@@ -25,7 +25,7 @@ public enum MSLStdlib {
         return out
     }
 
-    private static let all: [MSLFunction] = [
+    static let core: [MSLFunction] = [
         MSLFunction(name: "hash21", dependencies: [], source: """
         float mn_hash21(float2 p) {
             p = fract(p * float2(123.34, 456.21));
@@ -46,4 +46,6 @@ public enum MSLStdlib {
         }
         """),
     ]
+
+    private static let all: [MSLFunction] = core + vector + sdf + noise + color
 }

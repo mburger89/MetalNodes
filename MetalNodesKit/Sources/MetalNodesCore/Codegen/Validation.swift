@@ -11,12 +11,16 @@ public enum GraphValidator {
             .first
     }
 
+    /// A viewer must name an existing builtin node's output of a viewable (non-texture) type.
+    public static func isValidViewer(_ ref: SocketRef, in graph: Graph, registry: NodeRegistry) -> Bool {
+        guard let n = graph.nodes[ref.node], case .builtin(let id) = n.kind, let def = registry[id],
+              let decl = def.output(named: ref.socket) else { return false }
+        if case .concrete(.texture) = decl.type { return false }
+        return true
+    }
+
     public static func validate(_ graph: Graph, registry: NodeRegistry, target: OutputTarget) -> [Diagnostic] {
         var out: [Diagnostic] = []
-
-        if case .stitchable = target {
-            out.append(Diagnostic(.error, "SwiftUI stitchable output is not yet supported"))
-        }
 
         // Definitions and kinds.
         var defs: [NodeID: NodeDef] = [:]

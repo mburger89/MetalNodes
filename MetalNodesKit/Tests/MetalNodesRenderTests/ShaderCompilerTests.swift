@@ -37,19 +37,45 @@ import MetalNodesCore
         }
     }
 
-    @Test func everyMathVariantCompiles() async throws {
+    @Test func everyVariantOfEveryVariantsNodeCompiles() async throws {
         let c = try compiler()
-        let def = NodeRegistry.builtin["math.math"]!
-        guard case .variants(_, let table) = def.body else { return }
-        for op in table.keys.sorted() {
-            var doc = ShaderDocument()
-            let n = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase(op)])
-            let out = NodeInstance(kind: .builtin("output.fragment"))
-            doc.root.nodes[n.id] = n; doc.root.nodes[out.id] = out
-            doc.root.connect(SocketRef(n.id, "out"), to: SocketRef(out.id, "color"))
-            if case .failure(let msg, _, _) = await c.compile(try ShaderGenerator.generate(doc), generation: 1) {
-                Issue.record("math.\(op) failed: \(msg)")
+        for def in NodeRegistry.builtin.all {
+            guard case .variants(let param, let table) = def.body else { continue }
+            for op in table.keys.sorted() {
+                var doc = ShaderDocument()
+                let n = NodeInstance(kind: .builtin(def.id), params: [param: .enumCase(op)])
+                let out = NodeInstance(kind: .builtin("output.fragment"))
+                doc.root.nodes[n.id] = n; doc.root.nodes[out.id] = out
+                if let first = def.outputs.first {
+                    doc.root.connect(SocketRef(n.id, first.name), to: SocketRef(out.id, "color"))
+                }
+                let shader = try ShaderGenerator.generate(doc)
+                if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) {
+                    Issue.record("\(def.id).\(op) failed: \(msg)\n\(shader.source)")
+                }
             }
+        }
+    }
+
+    @Test func everyViewableTypeCompilesAsAViewerProgram() async throws {
+        let c = try compiler()
+        for (def, socket) in [("input.float", "out"), ("input.float2", "out"), ("input.float3", "out"), ("input.color", "out"),
+                              ("input.int", "out"), ("input.bool", "out")] {
+            var doc = ShaderDocument()
+            let n = NodeInstance(kind: .builtin(def)), out = NodeInstance(kind: .builtin("output.fragment"))
+            doc.root.nodes[n.id] = n; doc.root.nodes[out.id] = out
+            let shader = try ShaderGenerator.generate(doc, viewer: SocketRef(n.id, socket))
+            if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) { Issue.record("\(def) viewer failed: \(msg)\n\(shader.source)") }
+        }
+    }
+
+    @Test func everyStitchableKindPreviewCompiles() async throws {
+        let c = try compiler()
+        for kind in StitchableKind.allCases {
+            var doc = ShaderDocument.sample()
+            doc.settings.target = .stitchable(kind)
+            let shader = try ShaderGenerator.generate(doc, target: doc.settings.target)
+            if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) { Issue.record("\(kind) preview failed: \(msg)\n\(shader.source)") }
         }
     }
 

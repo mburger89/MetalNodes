@@ -18,8 +18,6 @@ public struct UniformField: Sendable, Hashable {
 }
 
 public struct UniformLayout: Sendable, Hashable {
-    public static let reservedNames = ["resolution", "mouse", "time"]
-
     public let fields: [UniformField]
     public let totalSize: Int
     private let byPath: [ParamPath: Int]
@@ -33,6 +31,11 @@ public struct UniformLayout: Sendable, Hashable {
     }
 
     public func field(for path: ParamPath) -> UniformField? { byPath[path].map { fields[$0] } }
+
+    /// Names of the path-less (reserved) fields, in struct order.
+    public var reservedNames: [String] { fields.filter { $0.path == nil }.map(\.name) }
+
+    public func hasReserved(_ name: String) -> Bool { fields.contains { $0.path == nil && $0.name == name } }
 
     public func reserved(_ name: String) -> UniformField {
         guard let f = fields.first(where: { $0.path == nil && $0.name == name }) else {
@@ -50,13 +53,17 @@ public struct UniformLayout: Sendable, Hashable {
 }
 
 public enum UniformLayoutBuilder {
-    public static func build(_ requests: [(path: ParamPath, type: SocketType)]) -> UniformLayout {
+    public typealias Reserved = (name: String, type: SocketType)
+
+    /// Every program has these three (spec §9.6).
+    public static let standardReserved: [Reserved] = [("resolution", .float2), ("mouse", .float2), ("time", .float)]
+    /// Viewer programs add the manual range for float/int visualisation (spec §19.3).
+    public static let viewerReserved: [Reserved] = standardReserved + [("viewerMin", .float), ("viewerMax", .float)]
+
+    public static func build(_ requests: [(path: ParamPath, type: SocketType)],
+                             reserved: [Reserved] = standardReserved) -> UniformLayout {
         struct Pending { let path: ParamPath?; let name: String?; let type: SocketType }
-        var pending: [Pending] = [
-            Pending(path: nil, name: "resolution", type: .float2),
-            Pending(path: nil, name: "mouse", type: .float2),
-            Pending(path: nil, name: "time", type: .float),
-        ]
+        var pending: [Pending] = reserved.map { Pending(path: nil, name: $0.name, type: $0.type) }
         pending += requests.filter { $0.type.isUniformable }.map { Pending(path: $0.path, name: nil, type: $0.type) }
 
         // Stable sort, alignment descending.
