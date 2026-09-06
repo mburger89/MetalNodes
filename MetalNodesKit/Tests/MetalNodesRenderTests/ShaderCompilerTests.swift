@@ -79,6 +79,16 @@ import MetalNodesCore
         }
     }
 
+    @Test func groupProgramsCompile() async throws {
+        let c = try compiler()
+        var doc = ShaderDocument.sampleWithGroup()
+        for target in OutputTarget.all {
+            doc.settings.target = target
+            let shader = try ShaderGenerator.generate(doc, target: target)
+            if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) { Issue.record("\(target.title): \(msg)\n\(shader.source)") }
+        }
+    }
+
     @Test func olderGenerationIsSuperseded() async throws {
         let c = try compiler()
         let shader = try ShaderGenerator.generate(ShaderDocument.sample())

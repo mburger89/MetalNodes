@@ -54,26 +54,42 @@ public enum ShaderGenerator {
         let (resolved, typeDiags) = TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order)
         if !typeDiags.isEmpty { throw .invalid(structural + typeDiags) }
 
+        // One function per reachable definition, inner-most first, so each is already built
+        // when the definitions and the program that call it are emitted (spec §20.4).
+        let groupOrder = GroupDependencies.innerFirst(GroupDependencies.reachable(from: doc.root, in: doc), in: doc)
+        var functions: [GroupID: GroupFunction] = [:]
+        for gid in groupOrder {
+            functions[gid] = try GroupCodegen.function(for: doc.definitions[gid]!, document: doc, registry: registry, functions: functions)
+        }
+        let groupFunctions = groupOrder.compactMap { functions[$0] }
+
         // A viewer is a preview concept: always a fragment program (spec §19.3).
         let effectiveTarget: OutputTarget = viewer == nil ? target : .fragment
         switch effectiveTarget {
         case .fragment:
-            return assembleFragment(doc, order: order, terminal: terminal, viewer: viewer, resolved: resolved, registry: registry)
+            return assembleFragment(doc, order: order, terminal: terminal, viewer: viewer, resolved: resolved, registry: registry,
+                                    functions: functions, groupFunctions: groupFunctions)
         case .stitchable(let kind):
-            return assembleStitchable(doc, kind: kind, order: order, terminal: terminal, resolved: resolved, registry: registry) // T4
+            return assembleStitchable(doc, kind: kind, order: order, terminal: terminal, resolved: resolved, registry: registry,
+                                      functions: functions, groupFunctions: groupFunctions)
         }
     }
 
     private static func assembleFragment(_ doc: ShaderDocument, order: [NodeID], terminal: NodeID, viewer: SocketRef?,
-                                         resolved: [NodeID: ResolvedNode], registry: NodeRegistry) -> GeneratedShader {
-        let emitted = Emitter.emit(order: order, graph: doc.root, registry: registry, resolved: resolved,
+                                         resolved: [NodeID: ResolvedNode], registry: NodeRegistry,
+                                         functions: [GroupID: GroupFunction], groupFunctions: [GroupFunction]) -> GeneratedShader {
+        let emitted = Emitter.emit(order: order, graph: doc.root, path: .root, document: doc, registry: registry, resolved: resolved,
                                    env: .fragment,
-                                   reserved: viewer == nil ? UniformLayoutBuilder.standardReserved : UniformLayoutBuilder.viewerReserved)
+                                   reserved: viewer == nil ? UniformLayoutBuilder.standardReserved : UniformLayoutBuilder.viewerReserved,
+                                   functions: functions)
         var b = SourceBuilder()
         b.add("#include <metal_stdlib>\nusing namespace metal;\n")
         b.add(emitted.layout.mslStruct + "\n")
         b.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
-        for f in MSLStdlib.resolve(emitted.requiredStdlib) { b.add(f.source + "\n") }
+        for f in MSLStdlib.resolve(emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib)) { b.add(f.source + "\n") }
+        // Group function bodies are one chunk: their statements' owners are nodes in another
+        // graph, which the root line map cannot address (M4 limitation, spec §9.4).
+        for fn in groupFunctions { b.add(fn.source) }
         b.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")
         for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
         if let v = viewer, let variable = emitted.outputVars[v], let type = resolved[v.node]?.outputTypes[v.socket],
@@ -86,12 +102,14 @@ public enum ShaderGenerator {
     }
 
     private static func assembleStitchable(_ doc: ShaderDocument, kind: StitchableKind, order: [NodeID], terminal: NodeID,
-                                           resolved: [NodeID: ResolvedNode], registry: NodeRegistry) -> GeneratedShader {
+                                           resolved: [NodeID: ResolvedNode], registry: NodeRegistry,
+                                           functions: [GroupID: GroupFunction], groupFunctions: [GroupFunction]) -> GeneratedShader {
         let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
-        let emitted = Emitter.emit(order: order, graph: doc.root, registry: registry, resolved: resolved, env: .stitchableFunction)
+        let emitted = Emitter.emit(order: order, graph: doc.root, path: .root, document: doc, registry: registry, resolved: resolved,
+                                   env: .stitchableFunction, functions: functions)
         let args = StitchableCodegen.arguments(layout: emitted.layout)
         let color = emitted.inputExpressions[terminal]?["color"] ?? "float4(0.0, 0.0, 0.0, 1.0)"
-        let stdlib = MSLStdlib.resolve(emitted.requiredStdlib)
+        let stdlib = MSLStdlib.resolve(emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib))
 
         func function(into b: inout SourceBuilder, forExport: Bool) {
             b.add(StitchableCodegen.signature(kind: kind, name: name, args: args, forExport: forExport) + " {")
@@ -106,6 +124,7 @@ public enum ShaderGenerator {
         var export = SourceBuilder()
         export.add("#include <metal_stdlib>" + (kind == .layerEffect ? "\n#include <SwiftUI/SwiftUI_Metal.h>" : "") + "\nusing namespace metal;\n")
         for f in stdlib { export.add(f.source + "\n") }
+        for fn in groupFunctions { export.add(fn.source) }
         function(into: &export, forExport: true)
 
         var preview = SourceBuilder()
@@ -113,6 +132,7 @@ public enum ShaderGenerator {
         preview.add(emitted.layout.mslStruct + "\n")
         preview.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
         for f in stdlib { preview.add(f.source + "\n") }
+        for fn in groupFunctions { preview.add(fn.source) }
         function(into: &preview, forExport: false)
         preview.add("")
         preview.add("fragment float4 \(fragmentFunctionName)(VertexOut in [[stage_in]],\n                           constant Uniforms &u [[buffer(0)]]) {")

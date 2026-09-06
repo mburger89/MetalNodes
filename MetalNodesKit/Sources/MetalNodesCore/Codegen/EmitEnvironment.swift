@@ -18,6 +18,15 @@ public struct EmitEnvironment: Sendable {
         uniform: { f in f.type == .bool ? "bool(u.\(f.name))" : "u.\(f.name)" },
         sys: ["uv": "in.uv", "time": "u.time", "resolution": "u.resolution", "mouse": "u.mouse"])
 
+    /// Inside a group function (spec §20.4): uniforms are parameters named after their slot's
+    /// path, so the function is the same whatever the caller's target.
+    public static let groupFunction = EmitEnvironment(
+        uniform: { f in
+            guard let p = f.path else { return f.name }
+            return GroupCodegen.parameterName(for: p)
+        },
+        sys: ["uv": "uv", "time": "time", "resolution": "size", "mouse": "mouse"])
+
     /// Inside a stitchable function: uniforms are arguments named after their slots; SwiftUI has
     /// no int/bool `Shader.Argument`, so those arrive as `float` and are cast on read, and
     /// `.color(_:)` arrives as a premultiplied `half4` that is widened to `float4`.

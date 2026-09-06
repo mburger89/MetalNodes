@@ -9,6 +9,10 @@ enum Emitter {
         var requiredStdlib: [String] = []
         var outputVars: [SocketRef: String] = [:]
         var inputExpressions: [NodeID: [String: String]] = [:]
+        /// Every slot this graph needs, deduplicated in first-use order: its own unwired inputs
+        /// and value params plus the ones its group calls pass through (spec §20.4). The layout
+        /// is built from exactly this list.
+        var uniformRequests: [(path: ParamPath, type: SocketType)] = []
     }
 
     /// Which `{in.x}` / `{param.x}` names a body references (rule 4).
@@ -33,51 +37,59 @@ enum Emitter {
         return nil
     }
 
-    static func emit(order: [NodeID], graph: Graph, registry: NodeRegistry,
-                     resolved: [NodeID: ResolvedNode],
+    static func emit(order: [NodeID], graph: Graph, path: GraphPath = .root, document doc: ShaderDocument? = nil,
+                     registry: NodeRegistry, resolved: [NodeID: ResolvedNode],
                      env: EmitEnvironment = .fragment,
-                     reserved: [UniformLayoutBuilder.Reserved] = UniformLayoutBuilder.standardReserved) -> Output {
-        // Pass 1: collect uniform requests in a deterministic order.
+                     reserved: [UniformLayoutBuilder.Reserved] = UniformLayoutBuilder.standardReserved,
+                     functions: [GroupID: GroupFunction] = [:]) -> Output {
+        let doc = doc ?? { var d = ShaderDocument(); d.root = graph; return d }()
+        func shape(_ inst: NodeInstance) -> NodeShape? { doc.shape(of: inst, in: path, registry: registry) }
+
+        // Pass 1: collect uniform requests in a deterministic, deduplicated order.
         var requests: [(path: ParamPath, type: SocketType)] = []
-        for id in order {
-            guard let inst = graph.nodes[id], case .builtin(let defID) = inst.kind,
-                  let def = registry[defID], let r = resolved[id] else { continue }
-            let refs = referencedNames(in: def.body, chosen: chosenVariant(def, inst))
-            let custom: Bool = { if case .custom = def.body { return true } else { return false } }()
-            for decl in def.inputs where (custom || refs.inputs.contains(decl.name)) {
-                if graph.inputs[SocketRef(id, decl.name)] != nil { continue }
-                if case .value = decl.default { requests.append((ParamPath(node: id, param: decl.name), r.inputTypes[decl.name]!)) }
+        var requested = Set<ParamPath>()
+        func request(_ p: ParamPath, _ type: SocketType) {
+            guard type.isUniformable, requested.insert(p).inserted else { return }
+            requests.append((p, type))
+        }
+        /// An unwired input with a `.value` default is a slot (spec §9.2).
+        func requestUnwiredInputs(_ id: NodeID, _ decls: [SocketDecl], _ r: ResolvedNode) {
+            for decl in decls where graph.inputs[SocketRef(id, decl.name)] == nil {
+                if case .value = decl.default { request(ParamPath(node: id, param: decl.name), r.inputTypes[decl.name]!) }
             }
-            for p in def.params where (custom || refs.params.contains(p.name)) {
-                if case .value(let t, _) = p.kind { requests.append((ParamPath(node: id, param: p.name), t)) }
+        }
+        for id in order {
+            guard let inst = graph.nodes[id], let r = resolved[id] else { continue }
+            switch inst.kind {
+            case .builtin(let defID):
+                guard let def = registry[defID] else { continue }
+                let refs = referencedNames(in: def.body, chosen: chosenVariant(def, inst))
+                let custom: Bool = { if case .custom = def.body { return true } else { return false } }()
+                requestUnwiredInputs(id, def.inputs.filter { custom || refs.inputs.contains($0.name) }, r)
+                for p in def.params where (custom || refs.params.contains(p.name)) {
+                    if case .value(let t, _) = p.kind { request(ParamPath(node: id, param: p.name), t) }
+                }
+            case .group(let gid):
+                // The instance's own unwired exposed inputs, then everything its function needs.
+                if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
+                for p in functions[gid]?.uniformParams ?? [] { request(p.path, p.type) }
+            case .groupOutput:
+                if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
+            case .groupInput:
+                break
             }
         }
         var out = Output(layout: UniformLayoutBuilder.build(requests, reserved: reserved))
+        out.uniformRequests = requests
 
         func uniformExpr(_ path: ParamPath) -> String {
             env.uniform(out.layout.field(for: path)!)
         }
 
-        // Pass 2: statements.
-        var varCounter = 0
-        for id in order {
-            guard let inst = graph.nodes[id], case .builtin(let defID) = inst.kind,
-                  let def = registry[defID], let r = resolved[id] else { continue }
-            out.requiredStdlib += def.requires
-
-            // Declare outputs.
-            var outputs: [String: String] = [:]
-            for decl in def.outputs {
-                let name = "v\(varCounter)"; varCounter += 1
-                outputs[decl.name] = name
-                out.outputVars[SocketRef(id, decl.name)] = name
-                out.bodyLines.append("\(r.outputTypes[decl.name]!.mslName) \(name);")
-                out.lineOwners.append(id)
-            }
-
-            // Input expressions.
+        /// Wired → the source variable converted; unwired → the slot, `{sys.uv}`, or a marker.
+        func inputExpressions(_ id: NodeID, _ decls: [SocketDecl], _ r: ResolvedNode) -> [String: String] {
             var inputs: [String: String] = [:]
-            for decl in def.inputs {
+            for decl in decls {
                 let dst = r.inputTypes[decl.name]!
                 if let src = graph.inputs[SocketRef(id, decl.name)], let v = out.outputVars[src],
                    let srcType = resolved[src.node]?.outputTypes[src.socket] {
@@ -92,31 +104,89 @@ enum Emitter {
                     }
                 }
             }
-            out.inputExpressions[id] = inputs
-            var params: [String: String] = [:], enums: [String: String] = [:]
-            for p in def.params {
-                switch p.kind {
-                case .value: if out.layout.field(for: ParamPath(node: id, param: p.name)) != nil { params[p.name] = uniformExpr(ParamPath(node: id, param: p.name)) }
-                case .enumeration:
-                    if case .enumCase(let c)? = inst.params[p.name] { enums[p.name] = c }
-                    else if case .enumCase(let c) = p.defaultValue { enums[p.name] = c }
-                case .asset: break
+            return inputs
+        }
+
+        // Pass 2: statements.
+        var varCounter = 0
+        /// One SSA variable per output socket, so downstream conversion works the same for every kind.
+        func declareOutputs(_ id: NodeID, _ decls: [SocketDecl], _ r: ResolvedNode) -> [String: String] {
+            var outputs: [String: String] = [:]
+            for decl in decls {
+                let name = "v\(varCounter)"; varCounter += 1
+                outputs[decl.name] = name
+                out.outputVars[SocketRef(id, decl.name)] = name
+                out.bodyLines.append("\(r.outputTypes[decl.name]!.mslName) \(name);")
+                out.lineOwners.append(id)
+            }
+            return outputs
+        }
+        for id in order {
+            guard let inst = graph.nodes[id], let r = resolved[id] else { continue }
+            switch inst.kind {
+            case .builtin(let defID):
+                guard let def = registry[defID] else { continue }
+                out.requiredStdlib += def.requires
+                let outputs = declareOutputs(id, def.outputs, r)
+                let inputs = inputExpressions(id, def.inputs, r)
+                out.inputExpressions[id] = inputs
+                var params: [String: String] = [:], enums: [String: String] = [:]
+                for p in def.params {
+                    switch p.kind {
+                    case .value: if out.layout.field(for: ParamPath(node: id, param: p.name)) != nil { params[p.name] = uniformExpr(ParamPath(node: id, param: p.name)) }
+                    case .enumeration:
+                        if case .enumCase(let c)? = inst.params[p.name] { enums[p.name] = c }
+                        else if case .enumCase(let c) = p.defaultValue { enums[p.name] = c }
+                    case .asset: break
+                    }
+                }
+                let ctx = EmitContext(inputs: inputs, outputs: outputs, params: params, enums: enums, types: r.generics, sys: env.sys)
+
+                let lines: [String]
+                switch def.body {
+                case .template(let t): lines = substitute(t, ctx)
+                case .variants(let param, let table):
+                    // The instance-provided case may be stale/invalid (hand-edited or renamed
+                    // since save); never force-unwrap it. Fall back to the def's default case.
+                    let defaultCase: String? = { if case .enumCase(let c) = def.param(named: param)!.defaultValue { return c } else { return nil } }()
+                    let chosen = enums[param].flatMap { table[$0] != nil ? $0 : nil } ?? defaultCase
+                    lines = substitute(chosen.flatMap { table[$0] } ?? "", ctx)
+                case .custom(let f): lines = f(ctx)
+                }
+                for l in lines { out.bodyLines.append(l); out.lineOwners.append(id) }
+
+            case .groupInput:
+                // Each exposed input arrives as a function parameter (spec §20.4).
+                guard let s = shape(inst) else { continue }
+                let outputs = declareOutputs(id, s.outputs, r)
+                for decl in s.outputs {
+                    out.bodyLines.append("\(outputs[decl.name]!) = in_\(decl.name);")
+                    out.lineOwners.append(id)
+                }
+
+            case .groupOutput:
+                // No statements: the enclosing function turns these expressions into struct fields.
+                guard let s = shape(inst) else { continue }
+                let inputs = inputExpressions(id, s.inputs, r)
+                out.inputExpressions[id] = inputs
+
+            case .group(let gid):
+                guard let s = shape(inst), let fn = functions[gid] else { continue }
+                let inputs = inputExpressions(id, s.inputs, r)
+                out.inputExpressions[id] = inputs
+                let result = "r\(varCounter)"; varCounter += 1
+                var args = [env.sys["uv"] ?? "in.uv", env.sys["time"] ?? "u.time",
+                            env.sys["resolution"] ?? "u.resolution", env.sys["mouse"] ?? "u.mouse"]
+                args += fn.inputs.map { inputs[$0.name] ?? GroupCodegen.zeroLiteral(r.inputTypes[$0.name] ?? .float) }
+                args += fn.uniformParams.map { uniformExpr($0.path) }
+                out.bodyLines.append("\(fn.structName) \(result) = \(fn.name)(\(args.joined(separator: ", ")));")
+                out.lineOwners.append(id)
+                let outputs = declareOutputs(id, s.outputs, r)
+                for decl in s.outputs {
+                    out.bodyLines.append("\(outputs[decl.name]!) = \(result).\(decl.name);")
+                    out.lineOwners.append(id)
                 }
             }
-            let ctx = EmitContext(inputs: inputs, outputs: outputs, params: params, enums: enums, types: r.generics, sys: env.sys)
-
-            let lines: [String]
-            switch def.body {
-            case .template(let t): lines = substitute(t, ctx)
-            case .variants(let param, let table):
-                // The instance-provided case may be stale/invalid (hand-edited or renamed
-                // since save); never force-unwrap it. Fall back to the def's default case.
-                let defaultCase: String? = { if case .enumCase(let c) = def.param(named: param)!.defaultValue { return c } else { return nil } }()
-                let chosen = enums[param].flatMap { table[$0] != nil ? $0 : nil } ?? defaultCase
-                lines = substitute(chosen.flatMap { table[$0] } ?? "", ctx)
-            case .custom(let f): lines = f(ctx)
-            }
-            for l in lines { out.bodyLines.append(l); out.lineOwners.append(id) }
         }
         return out
     }
