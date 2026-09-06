@@ -150,8 +150,20 @@ public struct GraphCanvasView: View {
             // wire drop's still-open transaction.
             .popover(item: Binding(get: { chooser }, set: { if $0 == nil { dismissChooser() } else { chooser = $0 } }),
                      attachmentAnchor: .rect(.rect(CGRect(origin: chooser?.screenPoint ?? .zero, size: CGSize(width: 1, height: 1)))), arrowEdge: .top) { c in
-                let defs = c.wire.map { w in model.registry.all.filter { PaletteSearch.acceptsInput(of: w.type, $0) } } ?? model.registry.all
-                NodeSearchPopover(defs: defs, onPick: { def in place(def, for: c) }, onCancel: { dismissChooser() })
+                NodeSearchPopover(rows: { query in
+                    var rows = PaletteSearch.rows(query: query, registry: model.registry, document: model.document)
+                    // A wire-drop chooser only lists builtins the wire could connect to; "My
+                    // Functions" definitions are wired when compatible (spec §21.7) but not filtered.
+                    if let w = c.wire {
+                        rows = rows.filter { if case .builtin(let d) = $0 { PaletteSearch.acceptsInput(of: w.type, d) } else { true } }
+                    }
+                    return rows
+                }, onPick: { row in
+                    switch row {
+                    case .builtin(let def): place(def, for: c)
+                    case .definition(let def): placeDefinition(def, for: c)
+                    }
+                }, onCancel: { dismissChooser() })
             }
             #if os(macOS)
             // Responder-chain commands (rather than menu key equivalents) so a focused node
@@ -439,6 +451,22 @@ public struct GraphCanvasView: View {
         }
         model.endTransaction()
         if c.wire != nil { model.endTransaction() }      // and closes it, as one undo step
+    }
+
+    /// A "My Functions" pick (spec §21.7): mirrors `place`, but `addInstance` can refuse (a
+    /// definition cannot contain itself) — it shows the notice and returns `nil` itself, so there
+    /// is simply nothing to wire; the open transaction still closes cleanly with no document change.
+    private func placeDefinition(_ def: GroupDefinition, for c: Chooser) {
+        chooser = nil
+        model.beginTransaction("Add Node")
+        let origin = CGPoint(x: c.canvasPoint.x - NodeGeometry.width / 2, y: c.canvasPoint.y - NodeGeometry.headerHeight / 2)
+        if let id = model.addInstance(of: def.id, at: origin), let w = c.wire,
+           let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.graph,
+                                                         shapes: shapes, resolved: model.resolvedTypes) {
+            model.connectIfCompatible(w.source, to: input)
+        }
+        model.endTransaction()
+        if c.wire != nil { model.endTransaction() }
     }
 
     /// Closes the chooser without placing anything. A chooser opened by a wire drop still owns

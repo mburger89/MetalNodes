@@ -1,17 +1,19 @@
 import SwiftUI
 import MetalNodesCore
 
-/// The ⇧A / double-click / wire-drop node chooser (spec §18.7).
+/// The ⇧A / double-click / wire-drop node chooser (spec §18.7, §21.7). `rows` recomputes the
+/// candidate list for the current query — the caller decides how builtins and "My Functions"
+/// definitions are filtered (e.g. by wire compatibility) and calls `PaletteSearch.rows`.
 struct NodeSearchPopover: View {
-    let defs: [NodeDef]
-    let onPick: (NodeDef) -> Void
+    let rows: (String) -> [SearchRow]
+    let onPick: (SearchRow) -> Void
     let onCancel: () -> Void
 
     @State private var query = ""
     @State private var highlighted = 0
     @FocusState private var fieldFocused: Bool
 
-    private var results: [NodeDef] { PaletteSearch.filter(query, in: defs) }
+    private var results: [SearchRow] { rows(query) }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -22,18 +24,13 @@ struct NodeSearchPopover: View {
                 .onChange(of: query) { _, _ in highlighted = 0 }
             ScrollViewReader { proxy in
                 List {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { i, def in
-                        HStack(spacing: 8) {
-                            Circle().fill(DraculaTheme.token(for: def.category).color).frame(width: 8, height: 8)
-                            Text(def.title)
-                            Spacer()
-                            Text(def.category.displayName).font(.caption2).foregroundStyle(DraculaToken.muted.color)
-                        }
-                        .padding(.vertical, 2)
-                        .contentShape(Rectangle())
-                        .listRowBackground(i == highlighted ? DraculaToken.surface.color : Color.clear)
-                        .onTapGesture { highlighted = i; pick() }
-                        .id(i)
+                    ForEach(Array(results.enumerated()), id: \.element.id) { i, row in
+                        rowLabel(row)
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                            .listRowBackground(i == highlighted ? DraculaToken.surface.color : Color.clear)
+                            .onTapGesture { highlighted = i; pick() }
+                            .id(i)
                     }
                 }
                 .listStyle(.plain)
@@ -54,9 +51,28 @@ struct NodeSearchPopover: View {
         #endif
     }
 
+    @ViewBuilder
+    private func rowLabel(_ row: SearchRow) -> some View {
+        switch row {
+        case .builtin(let def):
+            HStack(spacing: 8) {
+                Circle().fill(DraculaTheme.token(for: def.category).color).frame(width: 8, height: 8)
+                Text(def.title)
+                Spacer()
+                Text(def.category.displayName).font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            }
+        case .definition(let def):
+            HStack(spacing: 8) {
+                Circle().fill(DraculaTheme.token(for: def.accent).color).frame(width: 8, height: 8)
+                Text(def.name)
+                Spacer()
+                Text(NodeCategory.group.displayName).font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            }
+        }
+    }
+
     private func pick() {
         guard results.indices.contains(highlighted) else { return }
         onPick(results[highlighted])
     }
 }
-
