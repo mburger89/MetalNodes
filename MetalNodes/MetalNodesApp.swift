@@ -24,6 +24,5 @@ struct MetalNodesApp: App {
                 .frame(minWidth: 960, minHeight: 620)
                 .onAppear { model.start() }
         }
-        .commands { EditorCommands() }
     }
 }

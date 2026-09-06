@@ -40,13 +40,4 @@ import MetalNodesCore
         let cam = Camera(pan: CGSize(width: 3, height: 4), zoom: 0.5)
         #expect(CanvasTransform(camera: cam).camera == cam)
     }
-
-    @Test func fittingCentresTheRectAndClampsZoom() {
-        let t = CanvasTransform.fitting(CGRect(x: 100, y: 100, width: 400, height: 200), in: CGSize(width: 1000, height: 600), padding: 40)
-        #expect(abs(t.zoom - 2.3) < 1e-9)                       // width-limited: (1000-80)/400 = 2.3; height would allow 2.6
-        let centre = t.toScreen(CGPoint(x: 300, y: 200))          // rect centre
-        #expect(abs(centre.x - 500) < 1e-6 && abs(centre.y - 300) < 1e-6)
-        let tiny = CanvasTransform.fitting(CGRect(x: 0, y: 0, width: 10, height: 10), in: CGSize(width: 1000, height: 1000))
-        #expect(tiny.zoom == CanvasTransform.maxZoom)
-    }
 }

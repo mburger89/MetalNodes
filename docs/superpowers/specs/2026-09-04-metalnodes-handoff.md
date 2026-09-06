@@ -32,14 +32,12 @@ The checklist stands at:
 9. Invoke writing-plans skill .................. DONE — M0+M1 plan (18 tasks) at
    docs/superpowers/plans/2026-09-04-metalnodes-m0-m1-foundation.md
 10. Execute plan ................................ DONE — 18 tasks via subagent-driven
-    development on branch m0-m1-foundation; merged to main as PR #1 (1085254).
-11. M2 plan ..................................... DONE — docs/superpowers/plans/
-    2026-09-04-metalnodes-m2-canvas-interaction.md (16 tasks), approved by the user.
-12. Execute M2 .................................. DONE — 34 commits on branch m2-canvas
-    (in place); 178 tests green, warning-free; final whole-branch review + one fix
-    wave + scoped re-review clean. See §9 for rulings and what M3 starts from.
-13. Next ........................................ finish the branch (user previously chose
-    push + PR), then plan M3 (SwiftUI [[stitchable]] target + the §9 carry-overs).
+    development on branch m0-m1-foundation; 112 tests green; app renders.
+    PR #1: https://github.com/mburger89/MetalNodes/pull/1 (awaiting merge).
+11. Next ........................................ M2 plan (palette, wiring UX, selection,
+    copy/paste, undo, inspector). First M2 tasks per final review: cap ShaderCompiler
+    pipeline cache; make .failure supersession-symmetric; carry severity in CompileLine;
+    document/expose mathMode .fast; verify pinch-zoom by hand.
 ```
 
 **Terminal state is path-bound.** After the user approves, the *only* skill to
@@ -211,29 +209,3 @@ doc §16 — narrowing `SUPPORTED_PLATFORMS` (it currently includes `xros`), Swi
 
 Do not restate the design back to the user as if it were new. They have read
 section 1 in chat and have the full file in their editor.
-
----
-
-## 9. M2 record (canvas interaction, branch `m2-canvas`)
-
-**Rulings made during execution** (the ledger lines, verbatim intent; the spec was the binding authority, the plan its argument):
-
-- T1↔T2 pre-flight: accepted — T1's gate is `--filter ShaderCompilerTests` + Render build; T2 is the very next task.
-- Task 1: UI source target (EditorModel.compile call) also breaks between T1 and T2, not only the test fake — accepted for the same reason (T2 is next and fixes both). Cost if wrong: none.
-- Task 4: plan defect in commitUndo's handler (redo registered before restore → guard dropped it). Implementer's swap (restore, then register redo with the pre-restore snapshot) accepted. Cost if wrong: redo breaks — covered by singleApplyIsOneUndoStep.
-- Task 5: plan defect — #expect(CGFloat == 26 + 16 + 4 * 22) evaluates false under the Swift Testing macro (literal arithmetic typed separately). Fix: single CGFloat-typed literals (130, 1290). Cost if wrong: none. Fix round 1.
-- Task 6: fix — capture drag before applying a toggle. Also fixing in this round (cheap, same file): endNodeDrag gated on dragging; stale-transaction reset when a drag starts; canvas focus claimed on appear; spaceHeld reset on focus loss; dangling "M1 note" comm
-- Task 8: fix with nested frames (hit 20, layout 10) + revert offsets; also (cheap): node background via RoundedRectangle fill instead of clipShape so the outboard half of the hit area isn't clipped; beginWire resolves type before disconnect and reads a fresh gr
-- Task 9: fold Task 4 carry-overs into T9 — (a) `undoStackVersion` observable bumped in commitUndo/undo/redo and read by canUndo/canRedo so menu items refresh; (b) undo()/redo() no-op while isInTransaction. Cost if wrong: menu enable-state only.
-- Task 11: synthesise double-click in backgroundDrag.onEnded (≤400 ms, ≤4 pt from last click). Also fixing: chooser placement header-centred like other paths; hoverLocation reset when pointer leaves; ⇧A requires modifiers == .shift. Deferred: double-click on a w
-- Task 13: defer duplicateSelection to the first non-zero drag translation. Also fixing: onPasteCommand uses UTType(exportedAs:) so Paste enablement matches canPaste; vacuous edge-rewire assertion; stale comment. Deferred: paste(at:) has no cursor-position calle
-- Task 14: fix all three (sync draft on customTitle change; text-bound drafts committed on submit; finite+clamped conversion). Deferred: concreteOrFloat duplicates NodeView.concrete; sourceLabel fallback for non-builtin sources; .required/.uv inputs show nothing
-- Task 15: fix — scaleEffect(0.6) before socketAnchor for compact sockets; test asserts a node only visible with the margin (sine at x=440) and excluded at margin 0; also guard viewport == .zero → render all (first frame). Deferred: O(n log n) per render; no soc
-- Task 16: `.restore` recompiling on undo/redo is spec §18.3 (table row "restore → topology") — kept; M3 candidate: skip recompile when generated source is unchanged. Cost if wrong: one extra (cached) compile per undo.
-- Task 16: onExitCommand kept although unverifiable — Escape never reaches the app as keyDown from the automation tool; the modifier is semantically correct and idempotent with onKeyPress(.escape). Cost if wrong: none observable.
-- Final review: four Important findings (transaction leak when a dragged node is culled; background-drag mode re-decided per tick; Escape/chooser-cancel committing a re-drag's disconnect; wires vanishing when an endpoint is culled) fixed in one wave with `EditorModel.cancelTransaction()`, a latched `BackgroundDragMode`, in-flight nodes kept rendered, and `NodeGeometry.socketAnchor` as the wire fallback. `.setSettings` reclassified per spec §18.2 (plan line 614 had pinned the unconditional form).
-- Kept as-is: defensive `endTransaction()` resets stay commit-style (a leaked Move is a real user action).
-
-**Manual checks a human still needs to do once** (the automation tool cannot deliver these events): palette drag-in, ⌥-drag duplicate, ⌘-scroll zoom direction, Escape in the chooser / to cancel a wire, pinch zoom.
-
-**What M3 starts from** (in addition to the plan's own tail note): paste at the cursor (⌘V at hover point); skip the recompile on undo when generated source is unchanged (`.restore` is topology per spec table); new nodes render behind neighbours (z-order by UUID — sort selected/newest last); Undo menu title without the action name; ⌘Z inside a text field never reaches the field editor (menu item disabled while the canvas is unfocused); `UTExportedTypeDeclarations` missing for `com.maxburger.metalnodes.nodedef` / `.graph`; `GraphClipboard` decoding not tolerant of missing keys; inspector/canvas `onEditing` asymmetry; `socketUnderPress` classifies input vs output by name; `Graph.remove(node:)` / `GraphClipboard.size` unused in product code.
