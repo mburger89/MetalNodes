@@ -60,7 +60,7 @@ extension ShaderGenerator {
 
         let all = groupFunctions + variants
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + all.flatMap(\.requiredStdlib),
-                                functions: all.map(\.source), body: body, textures: emitted.textureRequests)
+                                functions: all, body: body, textures: emitted.textureRequests)
         return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map,
                                resolved: merged(resolved, groupFunctions + variants),
                                fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: v, viewerPath: path,
@@ -90,7 +90,7 @@ extension ShaderGenerator {
         ]
         let all = groupFunctions + variants
         let b = fragmentProgram(layout: layout, stdlib: all.flatMap(\.requiredStdlib),
-                                functions: all.map(\.source), body: body, textures: textures)
+                                functions: all, body: body, textures: textures)
         return GeneratedShader(source: b.text, layout: layout, lineMap: b.map,
                                resolved: merged([:], groupFunctions + variants),
                                fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: v, viewerPath: path,

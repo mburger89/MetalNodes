@@ -17,9 +17,11 @@ public struct GroupFunction: Sendable {
     public let textureParams: [TextureSlot]
     public let requiredStdlib: [String]
     public let source: String
-    /// Line owners for the function's body statements, parallel to the body lines in `source`
-    /// (the signature and the struct lines have no owner).
-    public let lineOwners: [NodeID?]
+    /// Which node of the definition's graph owns each line of `source`, numbered from 1 within
+    /// `source` itself. Whoever splices the function into a program shifts these into its own
+    /// numbering, so an error inside the body outlines the node that produced it (spec §9.4).
+    /// The result struct, the signature and the epilogue have no owner.
+    public let lineMap: LineMap
     /// The viewed value's type when this is a view variant (spec §20.5); `nil` for a normal function.
     /// A variant's only output is `value` of this type.
     public let viewedType: SocketType?
@@ -30,12 +32,12 @@ public struct GroupFunction: Sendable {
     init(id: GroupID, name: String, structName: String, inputs: [SocketDecl], outputs: [SocketDecl],
          uniformParams: [(path: ParamPath, type: SocketType)], textureParams: [TextureSlot] = [],
          requiredStdlib: [String], source: String,
-         lineOwners: [NodeID?], viewedType: SocketType? = nil, resolved: [NodeID: ResolvedNode] = [:]) {
+         lineMap: LineMap, viewedType: SocketType? = nil, resolved: [NodeID: ResolvedNode] = [:]) {
         self.id = id; self.name = name; self.structName = structName
         self.inputs = inputs; self.outputs = outputs; self.uniformParams = uniformParams
         self.textureParams = textureParams
         self.requiredStdlib = requiredStdlib; self.source = source
-        self.lineOwners = lineOwners; self.viewedType = viewedType; self.resolved = resolved
+        self.lineMap = lineMap; self.viewedType = viewedType; self.resolved = resolved
     }
 }
 
@@ -120,7 +122,7 @@ public enum GroupCodegen {
         return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
                              uniformParams: emitted.uniformRequests, textureParams: emitted.textureRequests,
                              requiredStdlib: emitted.requiredStdlib,
-                             source: b.text, lineOwners: emitted.lineOwners, viewedType: viewed?.type, resolved: resolved)
+                             source: b.text, lineMap: b.map, viewedType: viewed?.type, resolved: resolved)
     }
 
     /// Definitions carry no generics (spec §20.2), so an unresolved socket type is a `float`.

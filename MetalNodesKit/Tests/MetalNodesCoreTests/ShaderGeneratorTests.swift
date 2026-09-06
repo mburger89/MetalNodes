@@ -121,8 +121,9 @@ import Foundation
 
     @Test func invalidGraphThrowsDiagnostics() {
         let doc = ShaderDocument()   // no output node
-        #expect(throws: GenerationError.self) { try ShaderGenerator.generate(doc) }
-        #expect(!ShaderGenerator.diagnostics(doc, target: .fragment, registry: .builtin).isEmpty)
+        let error = #expect(throws: GenerationError.self) { try ShaderGenerator.generate(doc) }
+        guard let error, case .invalid(let diagnostics) = error else { Issue.record("no diagnostics"); return }
+        #expect(diagnostics.contains { $0.severity == .error })
     }
 
     @Test func unknownEnumCaseThrowsRatherThanCrashing() {

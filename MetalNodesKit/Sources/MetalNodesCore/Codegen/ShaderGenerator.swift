@@ -51,15 +51,6 @@ public enum ShaderGenerator {
         return out
     }
 
-    /// Validation and type diagnostics without generating. Never throws.
-    public static func diagnostics(_ doc: ShaderDocument, target: OutputTarget, registry: NodeRegistry) -> [Diagnostic] {
-        let structural = GraphValidator.validate(document: doc, registry: registry, target: target)
-        if structural.contains(where: { $0.severity == .error }) { return structural }
-        guard let terminal = GraphValidator.terminal(in: doc.root) else { return structural }
-        let order = TopoSort.order(doc.root, from: terminal)
-        return structural + TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order).diagnostics
-    }
-
     /// `viewerPath` is the editing stack: the instances dived through to reach `viewer`, outermost
     /// first. `viewerDefinition` names the definition when it was opened from the palette with no
     /// instance — its declared defaults stand in for one (spec §20.5).
@@ -130,7 +121,7 @@ public enum ShaderGenerator {
             body.append((wrap, v.node))
         }
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib),
-                                functions: groupFunctions.map(\.source), body: body, textures: emitted.textureRequests)
+                                functions: groupFunctions, body: body, textures: emitted.textureRequests)
         return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map,
                                resolved: merged(resolved, groupFunctions),
                                fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: viewer,
@@ -148,7 +139,7 @@ public enum ShaderGenerator {
 
     /// The shape of every fragment program: includes, the uniform struct, `VertexOut`, the stdlib
     /// closure, the group functions, then `shaderMain`'s body.
-    static func fragmentProgram(layout: UniformLayout, stdlib: [String], functions: [String],
+    static func fragmentProgram(layout: UniformLayout, stdlib: [String], functions: [GroupFunction],
                                 body: [(line: String, owner: NodeID?)],
                                 textures: [TextureSlot] = []) -> SourceBuilder {
         var b = SourceBuilder()
@@ -156,9 +147,9 @@ public enum ShaderGenerator {
         b.add(layout.mslStruct + "\n")
         b.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
         for f in MSLStdlib.resolve(stdlib) { b.add(f.source + "\n") }
-        // Group function bodies are one chunk: their statements' owners are nodes in another
-        // graph, which the root line map cannot address (M4 limitation, spec §9.4).
-        for source in functions { b.add(source) }
+        // Each function carries its own line map; folding it in at the function's offset makes the
+        // statements inside a definition addressable from the program's lines (spec §21.8).
+        for f in functions { b.add(f.source, map: f.lineMap) }
         b.add(fragmentSignature(textures: textures))
         for statement in body { b.add("    " + statement.line, owner: statement.owner) }
         b.add("}")
@@ -197,7 +188,7 @@ public enum ShaderGenerator {
         var export = SourceBuilder()
         export.add("#include <metal_stdlib>" + (kind == .layerEffect ? "\n#include <SwiftUI/SwiftUI_Metal.h>" : "") + "\nusing namespace metal;\n")
         for f in stdlib { export.add(f.source + "\n") }
-        for fn in groupFunctions { export.add(fn.source) }
+        for fn in groupFunctions { export.add(fn.source, map: fn.lineMap) }
         function(into: &export, forExport: true)
 
         var preview = SourceBuilder()
@@ -205,7 +196,7 @@ public enum ShaderGenerator {
         preview.add(emitted.layout.mslStruct + "\n")
         preview.add("struct VertexOut {\n    float4 position [[position]];\n    float2 uv;\n};\n")
         for f in stdlib { preview.add(f.source + "\n") }
-        for fn in groupFunctions { preview.add(fn.source) }
+        for fn in groupFunctions { preview.add(fn.source, map: fn.lineMap) }
         function(into: &preview, forExport: false)
         preview.add("")
         preview.add(fragmentSignature(textures: textures))
