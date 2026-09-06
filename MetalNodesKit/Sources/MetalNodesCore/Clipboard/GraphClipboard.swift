@@ -90,8 +90,7 @@ public enum ClipboardMerge {
         for d in definitions {
             if let existing = doc.definitions[d.id] {
                 if existing.contentHash == d.contentHash { continue }
-                let copy = GroupDefinition(id: GroupID(), name: d.name + " (imported)",
-                                            inputs: d.inputs, outputs: d.outputs, graph: d.graph, accent: d.accent)
+                let copy = d.duplicate(name: d.name + " (imported)")
                 plan.remap[d.id] = copy.id
                 plan.insert.append(copy)
             } else {

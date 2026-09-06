@@ -154,13 +154,7 @@ public enum GroupOperations {
 
     public static func makeUnique(_ instance: NodeID, in path: GraphPath, of doc: ShaderDocument) -> (document: ShaderDocument, definition: GroupID)? {
         guard let inst = doc[path].nodes[instance], case .group(let gid) = inst.kind, let def = doc.definitions[gid] else { return nil }
-        var copy = GroupDefinition(name: uniqueDefinitionName(def.name + " 2", in: doc), inputs: def.inputs, outputs: def.outputs, accent: def.accent)
-        var map: [NodeID: NodeID] = [:]
-        for n in def.graph.nodes.values {
-            let id = NodeID(); map[n.id] = id
-            copy.graph.nodes[id] = NodeInstance(id: id, kind: n.kind, position: n.position, params: n.params, customTitle: n.customTitle, collapsed: n.collapsed)
-        }
-        for (to, from) in def.graph.inputs { copy.graph.connect(SocketRef(map[from.node]!, from.socket), to: SocketRef(map[to.node]!, to.socket)) }
+        let copy = def.duplicate(name: uniqueDefinitionName(def.name + " 2", in: doc))
         var out = doc
         out.definitions[copy.id] = copy
         out[path].nodes[instance]!.kind = .group(copy.id)

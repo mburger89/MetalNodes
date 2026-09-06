@@ -45,5 +45,20 @@ import CoreGraphics
         #expect(plan.insert.count == 2)
         let wrap = plan.insert.first { $0.name == "Wrap" }!
         #expect(wrap.graph.nodes[nested.id]?.kind == .group(plan.remap[def.id]!))   // the import's id, not the original
+        #expect(plan.insert.contains { $0.id == other.id })                        // absent def keeps its own id
+        #expect(plan.remap[other.id] == nil)                                        // and is never remapped
+    }
+
+    @Test func importedCopyReminsInnerNodeIds() {
+        let (doc, def, _) = docWithDef()
+        var changed = def
+        changed.name = "Fbm tweaked"
+        let gin = changed.inputNode!, gout = changed.outputNode!
+        changed.graph.connect(SocketRef(gin, "in"), to: SocketRef(gout, "out"))
+        let plan = ClipboardMerge.plan(definitions: [changed], into: doc)
+        let copy = plan.insert[0]
+        #expect(Set(copy.graph.nodes.keys).isDisjoint(with: Set(def.graph.nodes.keys)))
+        #expect(copy.graph.nodes.count == changed.graph.nodes.count)
+        #expect(copy.graph.inputs.count == changed.graph.inputs.count)
     }
 }

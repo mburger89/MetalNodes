@@ -78,6 +78,27 @@ public extension GroupDefinition {
     var inputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupInput }?.id }
     var outputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupOutput }?.id }
 
+    /// A deep copy under a fresh `GroupID` and the given name: same inputs/outputs/accent, but
+    /// every inner `NodeID` reminted (both ends of every wire rewritten to match) so the copy's
+    /// nodes never collide with the original's document-wide (controller ruling R12). Shared by
+    /// Make Unique (spec §20.6) and clipboard import (spec §20.7) — nested `.group` references
+    /// inside the copied graph are left pointing at whatever they pointed at; a caller that also
+    /// needs to retarget those (e.g. because the referenced definition is itself being imported
+    /// under a new id) does so as a separate pass.
+    func duplicate(name: String) -> GroupDefinition {
+        var copy = GroupDefinition(name: name, inputs: inputs, outputs: outputs, accent: accent)
+        var map: [NodeID: NodeID] = [:]
+        for n in graph.nodes.values {
+            let id = NodeID(); map[n.id] = id
+            copy.graph.nodes[id] = NodeInstance(id: id, kind: n.kind, position: n.position,
+                                                 params: n.params, customTitle: n.customTitle, collapsed: n.collapsed)
+        }
+        for (to, from) in graph.inputs {
+            copy.graph.connect(SocketRef(map[from.node]!, from.socket), to: SocketRef(map[to.node]!, to.socket))
+        }
+        return copy
+    }
+
     /// Identity of the definition's content (spec §20.7): name, sockets, accent and graph, ids included.
     var contentHash: String {
         let enc = JSONEncoder()
