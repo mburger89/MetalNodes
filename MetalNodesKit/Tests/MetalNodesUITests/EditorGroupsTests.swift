@@ -122,6 +122,40 @@ import MetalNodesRender
         #expect(m.viewer == nil)
     }
 
+    /// Ruling R13: the viewer remembers the route it was set through, so popping out keeps it —
+    /// only losing an instance on that route clears it (spec §20.5).
+    @Test func poppingOutKeepsTheViewerUntilTheInstanceIsDeleted() async {
+        let m = model()
+        m.start(); await m.awaitIdle()
+        let uv = node(m, "input.uv"), tint = node(m, "input.color")
+        m.select(nodes: [node(m, "math.math", op: "multiply"), node(m, "math.math", op: "sine")], mode: .replace)
+        let gid = m.groupSelection()!
+        let inst = m.selection.first!
+        m.diveIn(inst)
+        let sine = m.document.definitions[gid]!.graph.nodes.values.first { $0.params["op"] == .enumCase("sine") }!.id
+        m.setViewer(SocketRef(sine, "out")); await m.awaitIdle()
+        m.exitGroup()
+        m.apply(.moveNodes([uv: CGPoint(x: 40, y: 40)]))
+        m.apply(.removeNodes([tint])); await m.awaitIdle()          // an unrelated root edit that prunes
+        #expect(m.viewer == SocketRef(sine, "out"))
+        #expect(m.generatedSource.contains("_view("))
+        m.apply(.removeNodes([inst])); await m.awaitIdle()
+        #expect(m.viewer == nil)
+        #expect(m.viewState.viewerPath.isEmpty)
+    }
+
+    @Test func pastingAnInstanceIntoItsOwnDefinitionIsRefused() {
+        let m = model()
+        m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
+        let gid = m.groupSelection()!
+        m.copySelection()
+        m.diveIn(m.selection.first!)
+        let before = m.document.definitions[gid]!.graph
+        #expect(m.paste(at: .zero).isEmpty)
+        #expect(m.notice == "Group cannot contain itself")
+        #expect(m.document.definitions[gid]!.graph == before)
+    }
+
     @Test func pasteBringsDefinitionsAlong() {
         let m = model()
         m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)

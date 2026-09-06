@@ -40,12 +40,12 @@ public enum DocumentChange: Sendable {
     /// document and schedules the recompile itself.
     public var changeClass: ChangeClass {
         switch self {
-        // A definition's name and accent are labels: the name reaches codegen only as part of the
-        // emitted function's identifier, which is not worth a rebuild of an unchanged program.
-        case .moveNodes, .setTitle, .setSettings, .renameDefinition, .setDefinitionAccent: .cosmetic
+        // A definition's accent is a label; its *name* is part of the emitted function's
+        // identifier (spec §20.4), so a rename changes the source and must rebuild (ruling R14).
+        case .moveNodes, .setTitle, .setSettings, .setDefinitionAccent: .cosmetic
         case .setParam(_, _, let v): v.isUniformable ? .parameter : .topology
-        case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore,
-             .groupSelection, .ungroup, .makeUnique, .addSocket, .renameSocket, .removeSocket, .deleteDefinition: .topology
+        case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore, .groupSelection, .ungroup,
+             .makeUnique, .renameDefinition, .addSocket, .renameSocket, .removeSocket, .deleteDefinition: .topology
         }
     }
 

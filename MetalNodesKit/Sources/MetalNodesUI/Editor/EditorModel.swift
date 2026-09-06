@@ -226,12 +226,11 @@ public final class EditorModel {
         let doc = document
         let registry = registry
 
-        // A viewer inside a definition is reached through the instances dived through and/or the
-        // definition opened from the palette; one in the root is the ordinary program (spec §20.5).
+        // The route recorded when the viewer was set, not wherever the editor has navigated since
+        // (spec §20.5, ruling R13). Empty and nil for a viewer in the root.
         let viewer = viewState.viewer
-        let inDefinition = viewer.flatMap { document.node($0.node)?.path != .root } ?? false
-        let viewerPath = inDefinition ? viewState.editingStack : []
-        let viewerDefinition = inDefinition ? viewState.editingDefinition : nil
+        let viewerPath = viewState.viewerPath
+        let viewerDefinition = viewState.viewerDefinition
         let result: Result<GeneratedShader, GenerationError> = await Task.detached(priority: .userInitiated) {
             generateResult(doc, target: doc.settings.target, viewer: viewer, viewerPath: viewerPath,
                            viewerDefinition: viewerDefinition, registry: registry)
