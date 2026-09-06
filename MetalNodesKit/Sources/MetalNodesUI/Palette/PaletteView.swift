@@ -48,8 +48,15 @@ public struct PaletteView: View {
             Spacer()
         }
         .contentShape(Rectangle())
+        .accessibilityIdentifier("palette.\(def.id)")
         .draggable(NodeDefTransfer(defID: def.id))
+        // One tap places on iPad (spec §22.3); a double-click still places on macOS, where a
+        // single click is what selects a row.
+        #if os(macOS)
         .onTapGesture(count: 2) { model.requestCanvas(.place(defID: def.id)) }
+        #else
+        .onTapGesture { model.requestCanvas(.place(defID: def.id)) }
+        #endif
     }
 
     /// "Edit" opens the definition with no instance to dive through (spec §20.6); a drag or a
@@ -67,6 +74,10 @@ public struct PaletteView: View {
         }
         .contentShape(Rectangle())
         .draggable(NodeDefTransfer(groupID: def.id))
+        #if os(macOS)
         .onTapGesture(count: 2) { model.requestCanvas(.placeGroup(def.id)) }
+        #else
+        .onTapGesture { model.requestCanvas(.placeGroup(def.id)) }
+        #endif
     }
 }

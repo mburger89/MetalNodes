@@ -62,10 +62,15 @@ public struct GraphCanvasView: View {
     /// What a touch move is dragging, so `move` and `endMove` route to the comment functions or
     /// the node functions the way the two mouse gestures do.
     @State private var activeMove: CanvasHit?
-    /// Where a long-press asked for the context menu, and what it hit. Stored here and presented
-    /// by Task 8.
-    @State private var contextMenuAnchor: CGPoint?
-    @State private var contextMenuHit: CanvasHit?
+    /// The long-press menu's anchor (spec §22.3): where the popover points, where Paste lands, and
+    /// what the press hit. A fresh `id` per press is what re-presents the popover at a new point.
+    struct ContextMenuAnchor: Identifiable {
+        let id = UUID()
+        var screenPoint: CGPoint      // viewport coords
+        var canvasPoint: CGPoint
+        var hit: CanvasHit
+    }
+    @State private var contextMenuAnchor: ContextMenuAnchor?
 
     static let contentSize: CGFloat = 4000
     static let wireHitDistance: CGFloat = 6
@@ -118,6 +123,31 @@ public struct GraphCanvasView: View {
                 }
             }
             .contentShape(Rectangle())
+            #if os(macOS)
+            // Parity with the iPad long-press (spec §22.3). `hoverLocation` is where the pointer
+            // was when the menu opened, so Paste lands under the cursor like ⌘V does.
+            .contextMenu {
+                CanvasContextMenu(model: model, canvasPoint: transform.toCanvas(hoverLocation), hit: nil)
+            }
+            #else
+            // The long-press menu. A popover rather than SwiftUI's `.contextMenu`, because the
+            // touch overlay owns the long-press and never lets SwiftUI's recognizer see it. It and
+            // the node chooser are mutually exclusive: both are opened by `handleTouch`, which
+            // emits `contextMenu` or `openChooser` for one gesture, never both.
+            .popover(item: $contextMenuAnchor,
+                     attachmentAnchor: .rect(.rect(CGRect(origin: contextMenuAnchor?.screenPoint ?? .zero,
+                                                          size: CGSize(width: 1, height: 1)))),
+                     arrowEdge: .top) { anchor in
+                VStack(alignment: .leading, spacing: 6) {
+                    CanvasContextMenu(model: model, canvasPoint: anchor.canvasPoint, hit: anchor.hit)
+                        .buttonStyle(.borderless)
+                }
+                .padding(12)
+                .frame(width: 220)
+                .background(DraculaToken.background.color)
+                .presentationCompactAdaptation(.popover)
+            }
+            #endif
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("canvas")
             #if os(macOS)
@@ -257,6 +287,17 @@ public struct GraphCanvasView: View {
             case .addSticky:
                 // ⌘⇧N centres the note on the viewport, not its top-left corner (spec §21.4).
                 model.addSticky(centredAt: transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2)))
+                return
+            case .paste:
+                // Edit ▸ Paste on iPad (spec §22.5): the viewport's centre, in canvas coordinates.
+                guard viewport != .zero else { return }
+                model.paste(at: transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2)))
+                return
+            case .openChooser:
+                // The toolbar's ✛ (spec §22.3) — the same chooser ⇧A opens, at the centre instead
+                // of at the pointer.
+                guard viewport != .zero else { return }
+                openChooser(atScreen: CGPoint(x: viewport.width / 2, y: viewport.height / 2), wire: nil)
                 return
             case .fitAll: rect = model.contentBounds
             case .fitSelection: rect = model.selectionBounds ?? model.contentBounds
@@ -833,9 +874,8 @@ public struct GraphCanvasView: View {
             transform.zoom(by: factor, around: point)
         case .endZoom:
             model.viewState.cameras[model.activePath] = transform.camera
-        case .contextMenu(let p, let hit):
-            contextMenuHit = hit
-            contextMenuAnchor = p
+        case .contextMenu(let p, let h):
+            contextMenuAnchor = ContextMenuAnchor(screenPoint: p, canvasPoint: transform.toCanvas(p), hit: h)
         case .openChooser(let p):
             openChooser(atScreen: p, wire: nil)
         }

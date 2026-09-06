@@ -42,6 +42,8 @@ public struct EditorView: View {
             .padHosts(services)
     }
 
+    /// macOS: three columns in an `HSplitView`. iPad: `EditorViewPad` (spec §22.3), which takes
+    /// this same `previewColumn` as its trailing inspector.
     @ViewBuilder
     private var split: some View {
         #if os(macOS)
@@ -51,11 +53,7 @@ public struct EditorView: View {
             previewColumn.frame(minWidth: 320, idealWidth: 420)
         }
         #else
-        HStack(spacing: 0) {
-            PaletteView(model: model).frame(width: 220)
-            canvasColumn
-            previewColumn.frame(width: 420)
-        }
+        EditorViewPad(model: model, device: device, services: services) { previewColumn }
         #endif
     }
 
@@ -87,7 +85,7 @@ public struct EditorView: View {
         VStack(spacing: 0) {
             previewPane
             if model.viewState.showsCode {
-                CodePanel(model: model).frame(minHeight: CodePanel.minimumHeight, idealHeight: 260)
+                CodePanel(model: model).frame(height: 260)
             }
         }
         #endif

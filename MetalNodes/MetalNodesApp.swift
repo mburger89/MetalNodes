@@ -34,16 +34,11 @@ struct MetalNodesApp: App {
     }
 
     #if os(macOS)
-    /// Writes `sample()` to a fresh temp package and opens it as a document, so Help ▸ Open Sample
-    /// Shader lands in the same editor as any other file — and editing it never touches the original.
+    /// Opens the sample as a document, so Help ▸ Open Sample Shader lands in the same editor as
+    /// any other file — and editing it never touches the original.
     private func openSample() {
         do {
-            let directory = URL.temporaryDirectory
-                .appending(path: "Samples/\(UUID().uuidString)", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appending(path: "Sample.mnshader")
-            try ShaderPackage(document: .sample()).fileWrapper()
-                .write(to: url, options: .atomic, originalContentsURL: nil)
+            let url = try SamplePackage.writeTemporary()
             NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
                 if let error { NSAlert(error: error).runModal() }
             }

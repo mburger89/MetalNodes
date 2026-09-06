@@ -15,6 +15,12 @@ public enum CanvasRequest: Equatable, Sendable {
     case centerOn(CGPoint)
     /// Add a sticky note centred on the viewport (Edit ▸ Add Sticky Note, spec §21.4).
     case addSticky
+    /// Paste at the viewport's centre (spec §22.5). iPad's Edit ▸ Paste has no pointer location to
+    /// land at, and only the canvas knows where its centre is; macOS keeps pasting at the pointer
+    /// through `onPasteCommand`.
+    case paste
+    /// Open the node chooser at the viewport's centre — the toolbar's ✛ (spec §22.3).
+    case openChooser
 }
 
 @MainActor
