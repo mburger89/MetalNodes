@@ -44,10 +44,15 @@ public enum ShaderExport {
         var used = Set<String>(), out: [String] = []
         for a in args {
             var base = "mouse"
+            // Look the node up document-wide — not just `document.root.nodes` — so a group
+            // instance's per-instance exposed input, or a shared slot on a node inside a
+            // definition's graph, is described by its own shape rather than falling back to
+            // the raw uniform name.
             if let f = a.field, let path = f.path, let nodeID = path.instancePath.first,
-               let node = document.root.nodes[nodeID], case .builtin(let defID) = node.kind, let def = registry[defID] {
-                let title = node.customTitle ?? def.title
-                let label = def.input(named: path.param)?.label ?? def.param(named: path.param)?.label ?? path.param
+               let (node, nodePath) = document.node(nodeID),
+               let shape = document.shape(of: node, in: nodePath, registry: registry) {
+                let title = node.customTitle ?? shape.title
+                let label = shape.input(named: path.param)?.label ?? shape.param(named: path.param)?.label ?? path.param
                 base = camelCase(title + " " + label)
             } else if a.field != nil {
                 base = a.name
@@ -111,9 +116,10 @@ public enum ShaderExport {
     }
 
     private static func commentLabel(for f: UniformField, document: ShaderDocument, registry: NodeRegistry) -> String {
-        guard let path = f.path, let nodeID = path.instancePath.first, let node = document.root.nodes[nodeID],
-              case .builtin(let defID) = node.kind, let def = registry[defID] else { return f.name }
-        let label = def.input(named: path.param)?.label ?? def.param(named: path.param)?.label ?? path.param
-        return "\(node.customTitle ?? def.title) · \(label)"
+        guard let path = f.path, let nodeID = path.instancePath.first,
+              let (node, nodePath) = document.node(nodeID),
+              let shape = document.shape(of: node, in: nodePath, registry: registry) else { return f.name }
+        let label = shape.input(named: path.param)?.label ?? shape.param(named: path.param)?.label ?? path.param
+        return "\(node.customTitle ?? shape.title) · \(label)"
     }
 }

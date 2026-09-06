@@ -188,6 +188,10 @@ public enum GroupOperations {
         // Inputs and outputs are separate namespaces (spec §20.6, ruling R11) — codegen keeps them apart.
         let existing = (kind == .input ? def.inputs : def.outputs).map(\.name)
         d.name = uniqueSocketName(decl.name, among: existing)
+        // Group socket labels are always derived from the (uniqued) name — users cannot edit
+        // them independently in M4 — so a clash-avoiding rename ("out" -> "out2") also updates
+        // what draws on the pseudo-nodes, instance nodes and inspector.
+        d.label = d.name.capitalized
         if kind == .input { def.inputs.append(d) } else { def.outputs.append(d) }
         var out = doc; out.definitions[id] = def; return out
     }
@@ -205,12 +209,14 @@ public enum GroupOperations {
         case .input:
             guard let i = def.inputs.firstIndex(where: { $0.name == old }) else { return nil }
             def.inputs[i].name = new
+            def.inputs[i].label = new.capitalized
             def.graph.inputs = Dictionary(uniqueKeysWithValues: def.graph.inputs.map { to, from in
                 (to, from == SocketRef(gin, old) ? SocketRef(gin, new) : from)
             })
         case .output:
             guard let i = def.outputs.firstIndex(where: { $0.name == old }) else { return nil }
             def.outputs[i].name = new
+            def.outputs[i].label = new.capitalized
             if let f = def.graph.inputs[SocketRef(gout, old)] { def.graph.inputs[SocketRef(gout, old)] = nil; def.graph.inputs[SocketRef(gout, new)] = f }
         }
         var out = doc

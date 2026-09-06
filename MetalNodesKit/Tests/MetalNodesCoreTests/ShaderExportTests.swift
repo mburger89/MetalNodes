@@ -40,6 +40,37 @@ import Foundation
         #expect(names == ["mouse", "speedValue", "mathB"])
     }
 
+    /// A group instance's unwired per-instance input and a definition's own unwired shared slot
+    /// must both be named from the node they actually belong to, not fall back to the raw
+    /// uniform name (`p1`) the old builtin-only lookup produced.
+    @Test func parameterNamesNameGroupInstanceAndSharedDefinitionSlots() throws {
+        var def = GroupDefinition.make(name: "Group")
+        def.inputs = [SocketDecl(name: "out", type: .concrete(.float), default: .value(.float(0)))]
+        def.outputs = [SocketDecl(name: "result", type: .concrete(.float))]
+        let math = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("add")])
+        def.graph.nodes[math.id] = math
+        def.graph.connect(SocketRef(def.inputNode!, "out"), to: SocketRef(math.id, "a"))
+        def.graph.connect(SocketRef(math.id, "out"), to: SocketRef(def.outputNode!, "result"))
+
+        var d = ShaderDocument()
+        d.definitions[def.id] = def
+        let inst = NodeInstance(kind: .group(def.id))
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        d.root.nodes[inst.id] = inst; d.root.nodes[out.id] = out
+        d.root.connect(SocketRef(inst.id, "result"), to: SocketRef(out.id, "color"))
+        d.settings.target = .stitchable(.colorEffect); d.settings.exportName = "grp"
+
+        let s = try ShaderGenerator.generate(d, target: d.settings.target, registry: .builtin)
+        let args = StitchableCodegen.arguments(layout: s.layout)
+        let names = ShaderExport.parameterNames(for: args, document: d, registry: .builtin)
+        #expect(names.contains("groupOut"))
+        #expect(names.contains("mathB"))
+
+        let snippet = ShaderExport.swiftSnippet(for: s, kind: .colorEffect, document: d, registry: .builtin)
+        #expect(snippet.contains("// Group \u{00B7} Out"))
+        #expect(snippet.contains("// Math \u{00B7} B"))
+    }
+
     @Test func swiftSnippetGoldenForColorEffect() throws {
         var d = ShaderDocument()
         let i = NodeInstance(kind: .builtin("input.int"), params: ["value": .int(3)])
