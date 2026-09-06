@@ -91,6 +91,12 @@ public struct GraphCanvasView: View {
             .onChange(of: geo.size) { _, s in viewport = s }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
+            .overlay(alignment: .bottomTrailing) {
+                if model.viewState.showsMinimap, viewport != .zero {
+                    MinimapView(model: model, viewportRect: transform.visibleRect(viewport: viewport))
+                        .padding(12)
+                }
+            }
             .contentShape(Rectangle())
             .gesture(backgroundDrag)
             .simultaneousGesture(magnifyGesture)
@@ -204,6 +210,12 @@ public struct GraphCanvasView: View {
                 return
             case .placeGroup(let id):
                 model.addInstance(of: id, at: placementPoint)
+                return
+            case .centerOn(let point):
+                guard viewport != .zero else { return }
+                transform.pan = CGSize(width: viewport.width / 2 - point.x * transform.zoom,
+                                       height: viewport.height / 2 - point.y * transform.zoom)
+                model.viewState.cameras[model.activePath] = transform.camera
                 return
             case .fitAll: rect = model.contentBounds
             case .fitSelection: rect = model.selectionBounds ?? model.contentBounds

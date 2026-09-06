@@ -9,6 +9,8 @@ public enum CanvasRequest: Equatable, Sendable {
     case place(defID: String)
     /// Add a group instance at the viewport centre ("My Functions" double-click, spec §20.8).
     case placeGroup(GroupID)
+    /// Pan so this canvas point sits at the viewport centre (minimap click/drag, spec §21.6).
+    case centerOn(CGPoint)
 }
 
 @MainActor

@@ -79,6 +79,10 @@ public struct EditorCommands: Commands {
             Button("Toggle Viewer") { model?.toggleViewerOnSelection() }
                 .keyboardShortcut("v", modifiers: [.command, .shift])
                 .disabled(!canvasFocused || (model?.selection.count ?? 0) != 1)
+            Divider()
+            Toggle("Minimap", isOn: Binding(get: { model?.viewState.showsMinimap ?? true },
+                                            set: { model?.viewState.showsMinimap = $0 }))
+                .keyboardShortcut("m", modifiers: [.command, .option])
         }
     }
 }
