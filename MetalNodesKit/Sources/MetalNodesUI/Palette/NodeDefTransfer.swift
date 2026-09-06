@@ -1,5 +1,6 @@
 import CoreTransferable
 import UniformTypeIdentifiers
+import MetalNodesCore
 
 extension UTType {
     /// Drag payload from the palette to the canvas. Dynamic type; never leaves the app.
@@ -12,9 +13,15 @@ extension UTType {
     nonisolated static let metalNodesGraph = UTType(exportedAs: EditorModel.pasteboardType)
 }
 
-/// What a palette row drags: just the definition id.
+/// What a palette row drags: a builtin's id, or — from "My Functions" — a definition's
+/// `GroupID` (spec §20.8). Exactly one is set; both are optional so an older payload that
+/// carries only `defID` still decodes.
 struct NodeDefTransfer: Codable, Transferable, Sendable {
-    let defID: String
+    let defID: String?
+    let groupID: GroupID?
+
+    init(defID: String) { self.defID = defID; self.groupID = nil }
+    init(groupID: GroupID) { self.defID = nil; self.groupID = groupID }
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .metalNodesNodeDef)

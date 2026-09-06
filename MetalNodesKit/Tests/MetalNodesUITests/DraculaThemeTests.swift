@@ -44,6 +44,7 @@ import MetalNodesCore
         #expect(DraculaTheme.token(for: NodeCategory.noise) == .pink)
         #expect(DraculaTheme.token(for: NodeCategory.color) == .yellow)
         #expect(DraculaTheme.token(for: NodeCategory.utility) == .muted)
+        #expect(DraculaTheme.token(for: NodeCategory.group) == .purple)
         #expect(DraculaTheme.token(for: NodeCategory.output) == .foreground)
     }
 }

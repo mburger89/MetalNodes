@@ -7,6 +7,8 @@ public enum CanvasRequest: Equatable, Sendable {
     case fitAll, fitSelection
     /// Add a builtin at the viewport centre (palette double-click).
     case place(defID: String)
+    /// Add a group instance at the viewport centre ("My Functions" double-click, spec §20.8).
+    case placeGroup(GroupID)
 }
 
 @MainActor
@@ -33,6 +35,9 @@ public final class EditorModel {
     public private(set) var generatedSource = ""
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]
     public var debounceInterval: Duration = .milliseconds(150)
+    /// A transient message for the preview pane's diagnostics strip (a refused recursive
+    /// placement, spec §20.8). Cleared after 3 s.
+    public var notice: String?
     /// Bumped by File ▸ Export Shader…; the macOS view presents the save panel on change.
     public private(set) var exportRequest = 0
     public func requestExport() { exportRequest += 1 }
@@ -64,6 +69,15 @@ public final class EditorModel {
         self.pasteboard = pasteboard
         undoManager.groupsByEvent = false
     }
+
+    // MARK: The active graph (spec §20.3)
+
+    /// The graph every change and every canvas gesture is bound to: the last dived instance's
+    /// definition, else the definition opened from the palette, else the root.
+    public var activePath: GraphPath { viewState.activePath(in: document) }
+    public var graph: Graph { document[activePath] }
+    public func shape(of node: NodeInstance) -> NodeShape? { document.shape(of: node, in: activePath, registry: registry) }
+    public func shape(of id: NodeID) -> NodeShape? { document.shape(of: id, registry: registry) }
 
     /// First compile, undebounced.
     public func start() {
@@ -101,26 +115,72 @@ public final class EditorModel {
     private func perform(_ change: DocumentChange) {
         // Set by a case that is topology for a reason `changeClass` cannot see on its own.
         var recompile = false
+        let path = activePath
         switch change {
         case .moveNodes(let positions):
-            for (id, p) in positions { document.root.nodes[id]?.position = p }
+            // One graph write for the whole drag frame, not one per node.
+            var g = document[path]
+            for (id, p) in positions { g.nodes[id]?.position = p }
+            document[path] = g
         case .setParam(let id, let key, let value):
-            document.root.nodes[id]?.params[key] = value
+            document[path].nodes[id]?.params[key] = value
         case .setTitle(let id, let title):
-            document.root.nodes[id]?.customTitle = title.flatMap { $0.isEmpty ? nil : $0 }
+            document[path].nodes[id]?.customTitle = title.flatMap { $0.isEmpty ? nil : $0 }
         case .connect(let from, let to):
-            document.root.connect(from, to: to)
+            document[path].connect(from, to: to)
         case .disconnect(let input):
-            document.root.disconnect(input)
+            document[path].disconnect(input)
         case .addNode(let n):
-            document.root.nodes[n.id] = n
+            document[path].nodes[n.id] = n
         case .removeNodes(let ids):
-            document.root.remove(nodes: ids)
-            pruneSelection()
-            _ = pruneViewer()
-        case .insert(let nodes, let edges):
-            for n in nodes { document.root.nodes[n.id] = n }
-            for e in edges { document.root.connect(e.from, to: e.to) }
+            // Pseudo-nodes are part of their definition's shape and cannot be deleted (spec §20.8).
+            document[path].remove(nodes: ids.filter { shape(of: $0)?.isPseudo != true })
+            pruneAfterRemoval()
+        case .insert(let nodes, let edges, let definitions):
+            // Reuse, import or insert what the payload brought, then retarget the instances (spec §20.7).
+            let plan = ClipboardMerge.plan(definitions: definitions, into: document)
+            for d in plan.insert { document.definitions[d.id] = d }
+            // One graph write for the whole paste, not one per node and one per wire.
+            var g = document[path]
+            for n in ClipboardMerge.apply(plan, to: nodes) { g.nodes[n.id] = n }
+            for e in edges { g.connect(e.from, to: e.to) }
+            document[path] = g
+        case .groupSelection(let ids, let name):
+            if let r = GroupOperations.group(ids, in: path, of: document, registry: registry, name: name) {
+                document = r.document
+                // The grouped nodes left the active graph: prune *after* selecting the new
+                // instance, so it survives and only a viewer on what moved is dropped.
+                viewState.selection = [r.instance]
+                pruneAfterRemoval()
+            }
+        case .ungroup(let id):
+            if let r = GroupOperations.ungroup(id, in: path, of: document) {
+                document = r.document
+                viewState.selection = r.nodes
+                pruneAfterRemoval()
+            }
+        case .makeUnique(let id):
+            // The instance now points at a copy with fresh inner ids, so a viewer routed through
+            // it no longer resolves.
+            if let r = GroupOperations.makeUnique(id, in: path, of: document) {
+                document = r.document
+                pruneAfterRemoval()
+            }
+        case .renameDefinition(let id, let name):
+            document = GroupOperations.rename(id, to: name, in: document) ?? document
+        case .setDefinitionAccent(let id, let accent):
+            document = GroupOperations.setAccent(id, accent, in: document) ?? document
+        case .addSocket(let id, let kind, let decl):
+            document = GroupOperations.addSocket(id, kind: kind, decl: decl, in: document) ?? document
+        case .renameSocket(let id, let kind, let old, let new):
+            document = GroupOperations.renameSocket(id, kind: kind, from: old, to: new, in: document) ?? document
+            pruneAfterRemoval()                      // the viewed socket may have been the renamed one
+        case .removeSocket(let id, let kind, let name):
+            document = GroupOperations.removeSocket(id, kind: kind, name: name, in: document) ?? document
+            pruneAfterRemoval()
+        case .deleteDefinition(let id):
+            document = GroupOperations.deleteDefinition(id, in: document) ?? document
+            pruneAfterRemoval()
         case .setSettings(let s):
             // Spec §18.2: settings are cosmetic unless `fastMath` or `target` flips — both are
             // part of what gets compiled, so they need a rebuild; preview size and time mode do not.
@@ -132,8 +192,7 @@ public final class EditorModel {
             document.settings = s
         case .restore(let doc):
             document = doc
-            pruneSelection()
-            _ = pruneViewer()
+            pruneAfterRemoval()
         }
 
         switch change.changeClass {
@@ -152,9 +211,18 @@ public final class EditorModel {
         if recompile { scheduleCompile() }
     }
 
-    /// Selection may only reference nodes that exist (spec §18.3).
+    /// Anything gone from the document drops out of view state, innermost reference first: the
+    /// editing stack decides the active path, which decides what a selection may name (spec §20.3).
+    private func pruneAfterRemoval() {
+        pruneEditingStack()
+        pruneSelection()
+        _ = pruneViewer()
+    }
+
+    /// Selection may only reference nodes of the active graph (spec §18.3, §20.3).
     func pruneSelection() {
-        viewState.selection = viewState.selection.filter { document.root.nodes[$0] != nil }
+        let g = graph
+        viewState.selection = viewState.selection.filter { g.nodes[$0] != nil }
     }
 
     func scheduleCompile() {
@@ -174,9 +242,14 @@ public final class EditorModel {
         let doc = document
         let registry = registry
 
+        // The route recorded when the viewer was set, not wherever the editor has navigated since
+        // (spec §20.5, ruling R13). Empty and nil for a viewer in the root.
         let viewer = viewState.viewer
+        let viewerPath = viewState.viewerPath
+        let viewerDefinition = viewState.viewerDefinition
         let result: Result<GeneratedShader, GenerationError> = await Task.detached(priority: .userInitiated) {
-            generateResult(doc, target: doc.settings.target, viewer: viewer, registry: registry)
+            generateResult(doc, target: doc.settings.target, viewer: viewer, viewerPath: viewerPath,
+                           viewerDefinition: viewerDefinition, registry: registry)
         }.value
 
         let shader: GeneratedShader
@@ -244,10 +317,11 @@ public final class EditorModel {
     }
 
     /// "Title.socket" for a source ref, used by the inspector's "← source" labels and the
-    /// viewer picker. Falls back to the node's custom title, then its definition's title.
+    /// viewer picker. Falls back to the node's custom title, then its shape's title. Resolves
+    /// document-wide, so it also labels a socket inside a definition (spec §20.3).
     public func socketLabel(_ ref: SocketRef) -> String {
-        guard let n = document.root.nodes[ref.node], case .builtin(let d) = n.kind else { return ref.socket }
-        return "\(n.customTitle ?? registry[d]?.title ?? d).\(ref.socket)"
+        guard let n = document.node(ref.node)?.node, let s = shape(of: ref.node) else { return ref.socket }
+        return "\(n.customTitle ?? s.title).\(ref.socket)"
     }
 }
 
@@ -256,9 +330,11 @@ public final class EditorModel {
 /// `nonisolated` so it actually runs on the `Task.detached` background thread instead of
 /// hopping back to the main actor (this module defaults new declarations to `@MainActor`).
 nonisolated private func generateResult(_ doc: ShaderDocument, target: OutputTarget, viewer: SocketRef?,
+                                        viewerPath: [NodeID], viewerDefinition: GroupID?,
                                         registry: NodeRegistry) -> Result<GeneratedShader, GenerationError> {
     do {
-        return .success(try ShaderGenerator.generate(doc, target: target, viewer: viewer, registry: registry))
+        return .success(try ShaderGenerator.generate(doc, target: target, viewer: viewer, viewerPath: viewerPath,
+                                                     viewerDefinition: viewerDefinition, registry: registry))
     } catch {
         return .failure(error)
     }

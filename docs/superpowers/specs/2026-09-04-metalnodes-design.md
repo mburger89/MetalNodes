@@ -589,7 +589,8 @@ wells, pickers) inside node bodies, and hit-testing and accessibility come free.
 
 Left sidebar: categorized list plus fuzzy search, drag-out onto the canvas.
 Custom group definitions appear under **My Functions**. The same list backs the
-⇧A search popover at the cursor.
+⇧A search popover at the cursor. (M4: the popover lists builtins only;
+definitions are placed from the palette — carried over to M5.)
 
 ### 11.5 Comments — two kinds, as requested
 
@@ -1232,8 +1233,11 @@ as arguments. Deleting any instance on the path clears the viewer.
   preserved (offset so the bounding box starts at (220, 0)), a `GroupInput`
   at x = 0 and a `GroupOutput` right of the bounding box. The instance is
   placed at the bounding box's origin, external wires rewired to it. Name
-  `Group`, `Group 2`, … Refused when the selection includes a pseudo-node or
-  would create recursion.
+  `Group`, `Group 2`, … Pseudo-nodes are dropped from the selection, as they
+  are for copy, cut and delete; the group is refused only when nothing real
+  remains, when a boundary source's type cannot be resolved, or when it would
+  create recursion. `GroupOperations.group` itself still refuses a selection
+  containing a pseudo-node.
 - **Dive in** (double-click an instance, or the inspector button) pushes the
   instance; breadcrumb click / ⌘↑ pops to that level. "Edit" from the
   palette sets `editingDefinition` with an empty stack.

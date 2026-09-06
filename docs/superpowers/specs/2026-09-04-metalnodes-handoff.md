@@ -257,3 +257,40 @@ section 1 in chat and have the full file in their editor.
 **Not verifiable on this Mac** (needs a human): the exported `.metal` has never been compiled by the real Metal compiler — the Metal toolchain is not installed (`xcodebuild -downloadComponent MetalToolchain`); the `ShaderExportTests` toolchain-gated test then runs automatically. Also: dragging a Reroute dot (fixed by geometry, not observed), and dropping an export into a real SwiftUI view with a colour + vector uniform.
 
 **What M4 (groups) starts from** — deferred from the M3 review: the compile-skip path keeps generation diagnostics after a failed compile until the source changes; Export is a silent no-op on iPad; nodes not upstream of the terminal have no resolved types (a dangling Reroute shows the `float` colour); the layer-effect help text should say the layer is not sampled yet; the Swift snippet should mention adding the `.metal` to the app target; `drawOrder` allocates `uuidString`s per comparison; pbxproj key order; unwired generic inputs resolved to `color` through a sibling default to `(0,0,0,0)`; `ExportPanelMac` untested (AppKit); ⌘Z inside a text field, `UTExportedTypeDeclarations`, `layer.sample`/Texture Sample (M5) carry over from M2.
+
+## 11. M4 record (node groups; branch `m4-groups`, stacked on PR #3)
+
+**Rulings made during execution** (R1–R24, exhaustive; each with what it costs if wrong):
+
+- R1 T10 owns the `+` socket (as a trailing `SocketDecl` in pseudo-node shapes; `NodeShape.isPlus`) — one field move.
+- R2 T7 kept registry-based geometry signatures; T8 switched to `shapes:` closures — one extra refactor.
+- R3 Duplicate GroupInput/GroupOutput diagnostics flag every duplicate (the brief's "all-but-first by UUID order" was nondeterministic) — an extra diagnostic row.
+- R4 GroupInput emits one SSA variable per exposed input (the pinned golden required it; the brief's prose said "no lines") — two redundant MSL lines per input.
+- R5 8-hex node-id prefixes in `u_<8hex>_<param>` / `G_<8hex>_Out` may collide (1/2^32 per pair) — accepted; spec follow-up — a duplicate parameter name in a pathological document.
+- R6 Palette-opened viewer keeps the definition's shared slots as uniforms; the brief's `layout.fields…isEmpty` assertion contradicted its prose and §20.4 — one extra uniform in palette previews.
+- R7 View variants are selected per dived-through instance, not per definition id (sibling instances must call the normal function) — none; the alternative was a bug.
+- R8 Palette-opened definition + dive stack is a valid viewer state; generator anchors at `viewerDefinition`; `diveIn` keeps `editingDefinition` — a spurious "instance no longer exists" for one path.
+- R9 `GroupOperations.group` resolves boundary types itself over the whole graph at `path` (`TopoSort.orderAll`), refusing when a type is unknown; no `resolved:` parameter — one resolve per ⌘G.
+- R10 The group→ungroup identity test compares structure, not MSL text (TopoSort ties break on random UUIDs) — weaker test.
+- R11 Socket names are uniqued/clash-checked per kind (inputs vs outputs separate namespaces) — none.
+- R12 An imported definition copy (same id, different hash) is reminted with fresh inner node ids via `GroupDefinition.duplicate(name:)`, shared with Make Unique — none.
+- R13 The viewer stores its own route (`EditorViewState.viewerPath`/`viewerDefinition`); `compileNow` uses it; `pruneViewer` walks it. ⌘↑ keeps the viewer; deleting a route instance clears it — two view-state fields.
+- R14 `.renameDefinition` is `.topology` (the name is in the MSL function identifier) — a recompile per rename.
+- R15 Paste/duplicate into a definition refuse recursion with the notice — none.
+- R16 Breadcrumb levels: root 0; a palette-opened definition is level 1; stack entries follow; `exitGroup` pops exactly one level — navigation only.
+- R17 Doubled border = node outline (accent, or selection/error colour) + inner 1 pt accent ring clipped below the header — cosmetic.
+- R18 In-app hand checks are run by the controller (subagents cannot obtain screen-control grants).
+- R19 T9's hand check is subsumed by T11's checklist.
+- R20 `GeneratedShader.resolved` is document-wide (every emitted function's map merged) so expose helpers and DropResolver type nodes inside definitions — a larger map per compile.
+- R21 `+` accepts any non-texture type (textures cannot be group sockets in M4) — none until M5 textures.
+- R22 Re-dragging an existing wire onto `+` yields two undo steps ("Rewire" + "Expose Output") — one extra ⌘Z in a rare path.
+- R23 ⇧A popover without definitions is an M5 carry-over (§11.4 annotated) — one placement path missing for a milestone.
+- R24 ⌘G drops pseudo-nodes from the selection (like copy/cut/delete); §20.6 amended; Core `group` still refuses them literally — none.
+
+**Fix rounds:** T4 (1), T5 (1), T6 (1), T7 (1 + pre-review fixes), T8 (1), T10 (1); final review → one fix wave (aa22a75, 5fa21fb), re-review clean. 19 commits, 335 tests (Core 188 / Render 24 / UI 123), warning-free, app builds.
+
+**Owed to a human — the T11 in-app checklist was NOT run**: screenshot capture returned nil for the whole session (the separate screen-capture consent card was never approved; the Xcode agent approval was also pending), so the 18 manual checks in the M4 plan (§Task 11 Step 3) are unverified: ⌘G/⌘⇧G/Make Unique/Edit/Exit Group, breadcrumb, double-click dive, doubled border, `+` exposure by drag, wildcard drags, socket rename/remove from the inspector, viewer inside a definition, palette drag-in/Edit/double-click, recursion notice, paste into a definition, stitchable export of a grouped graph. Everything above has unit/GPU coverage except the drawn result and the drag gestures. Run the checklist before merging or log it as accepted risk.
+
+**Deferred minors (triaged by the final review, all "defer to M5"):** `ShaderDocument.node(_:)` sorts definitions per lookup and `model.shape(of:)` re-derives `activePath` per node per frame while dived → plan a `[NodeID: NodeShape]` cache; `GroupFunction.lineOwners` unused; `ShaderGenerator.diagnostics(_:)` is root-only and uncalled (fix or delete); GPU tests never compile `exportSource`; test-only `registry:` geometry overloads (delete); `renameDefinition` has no uniqueness check; PaletteView observes the whole document; `ClipboardMerge.plan` computed twice per paste; repeated identical notices clear early; `setViewer` early-return doesn't re-record the route; compact-mode `+` dot styling; `renameSocket("")` yields the default name; unreferenced definitions still gate the preview through validation (by design, §20.4). Spec follow-up: 8-hex prefix collisions (R5).
+
+**What M5 starts from:** see the plan's closing paragraph (persistence, textures, comments, code panel with group-function line owners, minimap, cross-document paste, ⇧A definitions, shape cache).

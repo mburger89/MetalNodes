@@ -3,13 +3,15 @@ import CoreGraphics
 import MetalNodesCore
 
 extension EditorModel {
-    public var canCopy: Bool { !selection.isEmpty }
+    public var canCopy: Bool { !editableSelection.isEmpty }
     public var canPaste: Bool { pasteboard.read(type: Self.pasteboardType) != nil }
 
-    /// The selection encoded as the `pasteboardType` payload, or nil when nothing is selected.
+    /// The selection encoded as the `pasteboardType` payload — with the definitions it references
+    /// (spec §20.7) — or nil when nothing copyable is selected.
     public func clipboardData() -> Data? {
-        guard canCopy else { return nil }
-        return try? JSONEncoder().encode(GraphClipboard.extract(selection, from: document.root))
+        let clip = GraphClipboard.extract(selection, from: graph, document: document)
+        guard !clip.nodes.isEmpty else { return nil }
+        return try? JSONEncoder().encode(clip)
     }
 
     public func copySelection() {
@@ -36,18 +38,36 @@ extension EditorModel {
     @discardableResult
     public func duplicateSelection(offset: CGSize = CGSize(width: 24, height: 24)) -> Set<NodeID> {
         guard canCopy else { return [] }
-        let clip = GraphClipboard.extract(selection, from: document.root)
+        let clip = GraphClipboard.extract(selection, from: graph, document: document)
         let origin = CGPoint(x: clip.sourceOrigin.x + offset.width, y: clip.sourceOrigin.y + offset.height)
         return insert(clip, at: origin, undoName: "Duplicate")
     }
 
     private func insert(_ clip: GraphClipboard, at origin: CGPoint, undoName: String) -> Set<NodeID> {
         let (nodes, edges) = clip.materialize(at: origin)
+        guard !refusesRecursion(nodes, definitions: clip.definitions) else { return [] }
         let ids = Set(nodes.map(\.id))
         beginTransaction(undoName)
-        apply(.insert(nodes: nodes, edges: edges))
+        apply(.insert(nodes: nodes, edges: edges, definitions: clip.definitions))
         endTransaction()
         select(nodes: ids, mode: .replace)
         return ids
+    }
+
+    /// Spec §20.8, ruling R15: a payload that would make the definition being edited contain itself
+    /// is refused whole, with a notice. Judged after the merge plan and on a document that already
+    /// holds what the plan would insert — a *diverged* definition arrives as a fresh copy, which is
+    /// not the host and does not recurse.
+    private func refusesRecursion(_ nodes: [NodeInstance], definitions: [GroupDefinition]) -> Bool {
+        var merged = document
+        let plan = ClipboardMerge.plan(definitions: definitions, into: merged)
+        for d in plan.insert { merged.definitions[d.id] = d }
+        for n in ClipboardMerge.apply(plan, to: nodes) {
+            guard case .group(let g) = n.kind,
+                  GroupDependencies.wouldRecurse(placing: g, in: activePath, document: merged) else { continue }
+            showNotice("\(merged.definitions[g]?.name ?? "Group") cannot contain itself")
+            return true
+        }
+        return false
     }
 }

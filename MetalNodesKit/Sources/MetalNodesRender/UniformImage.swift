@@ -37,14 +37,15 @@ public struct UniformImage: Sendable, Equatable {
     public static func rebuild(layout: UniformLayout, document: ShaderDocument, registry: NodeRegistry) -> UniformImage {
         var img = UniformImage(layout: layout)
         for f in layout.fields {
+            // A slot's node lives in the root or inside any definition (spec §20.4).
             guard let path = f.path, let nodeID = path.instancePath.first,
-                  let inst = document.root.nodes[nodeID], case .builtin(let defID) = inst.kind,
-                  let def = registry[defID] else { continue }
+                  let (inst, gpath) = document.node(nodeID),
+                  let shape = document.shape(of: inst, in: gpath, registry: registry) else { continue }
             if let v = inst.params[path.param] {
                 img.write(v, into: f)
-            } else if let decl = def.input(named: path.param), case .value(let v) = decl.default {
+            } else if let decl = shape.input(named: path.param), case .value(let v) = decl.default {
                 img.write(v, into: f)
-            } else if let p = def.param(named: path.param) {
+            } else if let p = shape.param(named: path.param) {
                 img.write(p.defaultValue, into: f)
             }
         }

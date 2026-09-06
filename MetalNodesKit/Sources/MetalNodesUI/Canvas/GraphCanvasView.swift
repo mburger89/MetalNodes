@@ -10,6 +10,9 @@ struct PendingWire: Equatable {
     var source: SocketRef
     var type: SocketType
     var point: CGPoint
+    /// A drag from a `GroupInput`'s `+`: the socket it will create has no type yet, so nothing
+    /// dims and any non-texture input takes it (spec §20.6).
+    var isWildcard = false
 }
 
 /// What a drag that started on the background is doing. Decided on the first change and then
@@ -79,7 +82,7 @@ public struct GraphCanvasView: View {
                     } else {
                         transform.pan(by: delta)
                     }
-                    model.viewState.cameras[.root] = transform.camera
+                    model.viewState.cameras[model.activePath] = transform.camera
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 #endif
@@ -135,8 +138,12 @@ public struct GraphCanvasView: View {
             .dropDestination(for: NodeDefTransfer.self) { items, location in
                 guard let t = items.first else { return false }
                 let c = transform.toCanvas(location)
-                model.addNode(defID: t.defID, at: CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2))
-                return true
+                let origin = CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2)
+                // A "My Functions" row: `addInstance` refuses (with a notice) a drop that would
+                // make a definition contain itself, spec §20.8.
+                if let g = t.groupID { return model.addInstance(of: g, at: origin) != nil }
+                guard let defID = t.defID else { return false }
+                return model.addNode(defID: defID, at: origin) != nil
             }
             // The binding's setter is also how the popover reports a dismissal we did not ask for
             // (a click outside), so `dismissChooser` — not just `onCancel` — is what abandons a
@@ -162,31 +169,50 @@ public struct GraphCanvasView: View {
             #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
-        .onAppear { if let cam = model.viewState.cameras[.root] { transform = CanvasTransform(camera: cam) } }
+        .onAppear { if let cam = model.viewState.cameras[model.activePath] { transform = CanvasTransform(camera: cam) } }
         .onAppear { canvasFocused = true; model.canvasHasFocus = true }
+        // One camera per graph (spec §20.3): diving in or out parks the camera on the graph being
+        // left and restores the one the graph being entered was last seen at, unpanned if it is new.
+        .onChange(of: model.activePath) { old, new in
+            model.viewState.cameras[old] = transform.camera
+            transform = model.viewState.cameras[new].map { CanvasTransform(camera: $0) } ?? CanvasTransform()
+        }
         .onChange(of: model.canvasRequest) { _, req in
             guard let req else { return }
             defer { model.canvasRequest = nil }
             let rect: CGRect?
             switch req {
             case .place(let defID):
-                let centre = transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2))
-                model.addNode(defID: defID, at: CGPoint(x: centre.x - NodeGeometry.width / 2, y: centre.y - NodeGeometry.headerHeight / 2))
+                model.addNode(defID: defID, at: placementPoint)
+                return
+            case .placeGroup(let id):
+                model.addInstance(of: id, at: placementPoint)
                 return
             case .fitAll: rect = model.contentBounds
             case .fitSelection: rect = model.selectionBounds ?? model.contentBounds
             }
             guard let r = rect, viewport != .zero else { return }
             transform = CanvasTransform.fitting(r, in: viewport, padding: 40)
-            model.viewState.cameras[.root] = transform.camera
+            model.viewState.cameras[model.activePath] = transform.camera
         }
+    }
+
+    /// Where a palette double-click drops a node: the viewport's centre, offset so the node's
+    /// header — not its top-left corner — lands there.
+    private var placementPoint: CGPoint {
+        let centre = transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2))
+        return CGPoint(x: centre.x - NodeGeometry.width / 2, y: centre.y - NodeGeometry.headerHeight / 2)
     }
 
     // MARK: Content
 
+    /// Every node's `NodeShape` in the active graph — builtin, group instance or pseudo-node —
+    /// which is what geometry, wiring and `NodeView` all lay out from (spec §20.2).
+    private var shapes: (NodeInstance) -> NodeShape? { { model.shape(of: $0) } }
+
     private var content: some View {
         ZStack(alignment: .topLeading) {
-            WireLayer(graph: model.document.root, anchors: anchors, registry: model.registry,
+            WireLayer(graph: model.graph, anchors: anchors, shapes: shapes,
                       selected: model.selectedWire, pending: pendingWire) { from in
                 if let t = model.resolvedTypes[from.node]?.outputTypes[from.socket] {
                     return DraculaTheme.token(for: t).color
@@ -199,20 +225,21 @@ public struct GraphCanvasView: View {
             // `EditorModel.node(at:)` orders hit-testing to match (spec §19.6).
             let onTop = model.selection
             let visible = viewport == .zero
-                ? model.document.root.nodes.values
+                ? model.graph.nodes.values
                     .sorted { NodeGeometry.drawOrder($0, onTop: onTop) < NodeGeometry.drawOrder($1, onTop: onTop) }
-                : NodeGeometry.visibleNodes(in: model.document.root, transform: transform, viewport: viewport,
-                                            registry: model.registry, margin: Self.cullMargin,
+                : NodeGeometry.visibleNodes(in: model.graph, transform: transform, viewport: viewport,
+                                            shapes: shapes, margin: Self.cullMargin,
                                             keeping: nodesInFlight, onTop: onTop)
             ForEach(visible, id: \.id) { node in
-                if case .builtin(let defID) = node.kind, let def = model.registry[defID] {
-                    NodeView(node: node, def: def, resolved: model.resolvedTypes[node.id],
-                             graph: model.document.root,
+                if let shape = model.shape(of: node) {
+                    NodeView(node: node, shape: shape, resolved: model.resolvedTypes[node.id],
+                             graph: model.graph,
                              isSelected: model.selection.contains(node.id),
                              compact: compact,
                              isViewed: model.viewer?.node == node.id,
                              hasError: errors.contains(node.id),
                              onViewerToggle: { if let ref = model.firstOutput(of: node.id) { model.toggleViewer(ref) } },
+                             onOpen: { model.diveIn(node.id) },
                              onChange: { model.apply($0) },
                              onSelect: { mode in canvasFocused = true; model.select(node.id, mode: mode) },
                              onDragBegan: { beginNodeDrag() },
@@ -226,7 +253,9 @@ public struct GraphCanvasView: View {
                                      model.endTransaction()
                                  }
                              },
-                             dragType: pendingWire?.type,
+                             // A wildcard drag has no type to judge sockets against, so it dims
+                             // nothing (spec §20.6).
+                             dragType: pendingWire.flatMap { $0.isWildcard ? nil : $0.type },
                              onSocketDragBegan: { ref, isInput in beginWire(from: ref, isInput: isInput) },
                              onSocketDrag: { p in pendingWire?.point = p },
                              onSocketDragEnded: { p in endWire(at: p) })
@@ -287,7 +316,7 @@ public struct GraphCanvasView: View {
         model.beginTransaction(pendingDuplicate ? "Duplicate" : "Move")
         dragOrigins = [:]
         for id in model.selection {
-            if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
+            if let p = model.graph.nodes[id]?.position { dragOrigins[id] = p }
         }
     }
 
@@ -297,7 +326,7 @@ public struct GraphCanvasView: View {
             model.duplicateSelection(offset: .zero)   // selection is now the copies, in place
             dragOrigins = [:]
             for id in model.selection {
-                if let p = model.document.root.nodes[id]?.position { dragOrigins[id] = p }
+                if let p = model.graph.nodes[id]?.position { dragOrigins[id] = p }
             }
         }
         guard !dragOrigins.isEmpty else { return }
@@ -316,34 +345,43 @@ public struct GraphCanvasView: View {
 
     private func beginWire(from ref: SocketRef, isInput: Bool) {
         canvasFocused = true
-        let g = model.document.root
+        let g = model.graph
         if isInput {
             // Re-drag: detach the existing wire and continue from its source, as one undo step.
             guard let source = g.source(feeding: ref) else { return }
-            guard let t = DropResolver.outputType(of: source, graph: model.document.root, registry: model.registry, resolved: model.resolvedTypes) else { return }
+            guard let t = DropResolver.outputType(of: source, graph: model.graph, shapes: shapes, resolved: model.resolvedTypes) else { return }
             if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Rewire")
             model.apply(.disconnect(ref))
             pendingWire = PendingWire(source: source, type: t, point: anchors[ref] ?? .zero)
         } else {
-            guard let t = DropResolver.outputType(of: ref, graph: g, registry: model.registry, resolved: model.resolvedTypes) else { return }
+            guard let t = DropResolver.outputType(of: ref, graph: g, shapes: shapes, resolved: model.resolvedTypes) else { return }
             if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Connect")
-            pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero)
+            pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero,
+                                      isWildcard: DropResolver.isPlusOutput(ref, in: g))
         }
+    }
+
+    /// The definition the active graph belongs to — what exposing a socket adds to (spec §20.3).
+    private var activeDefinition: GroupID? {
+        if case .definition(let g) = model.activePath { return g }
+        return nil
     }
 
     private func endWire(at p: CGPoint) {
         guard let w = pendingWire else { return }
         pendingWire = nil
-        switch DropResolver.resolve(point: p, source: w.source, dragType: w.type, anchors: anchors,
-                                    graph: model.document.root, registry: model.registry, resolved: model.resolvedTypes) {
+        let target = DropResolver.resolve(point: p, source: w.source, dragType: w.type, wildcard: w.isWildcard,
+                                          anchors: anchors, graph: model.graph, shapes: shapes, resolved: model.resolvedTypes)
+        if let gid = activeDefinition, exposeSocket(for: w, at: target, in: gid) { return }
+        switch target {
         case .socket(let input):
             model.connectIfCompatible(w.source, to: input)
             model.endTransaction()
         case .node(let id):
-            if let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
-                                                             registry: model.registry, resolved: model.resolvedTypes) {
+            if let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.graph,
+                                                             shapes: shapes, resolved: model.resolvedTypes) {
                 model.connectIfCompatible(w.source, to: input)
             }
             model.endTransaction()
@@ -353,6 +391,35 @@ public struct GraphCanvasView: View {
             // re-drag's `.disconnect` back (see `place` and `dismissChooser`).
             openChooser(atScreen: transform.toScreen(p), wire: (w.source, w.type))
         }
+    }
+
+    /// The `+` drops (spec §20.6): onto a `GroupOutput`'s `+` exposes an output, and a wildcard
+    /// drag from a `GroupInput`'s `+` exposes an input wherever it lands — with no chooser on empty
+    /// canvas, since there is nothing to name a socket after. True when this handled the drop.
+    ///
+    /// The drag's own transaction closes first, so the expose is a single undo step of its own,
+    /// named for what it did. A plain drag has changed nothing by then and registers nothing; only
+    /// a re-drag — whose `.disconnect` is already applied — leaves that detachment as a step before it.
+    private func exposeSocket(for w: PendingWire, at target: DropTarget, in gid: GroupID) -> Bool {
+        switch target {
+        case .socket(let input) where DropResolver.isPlusInput(input, in: model.graph):
+            model.endTransaction()
+            model.exposeOutput(from: w.source, in: gid)
+        case .socket(let input) where w.isWildcard:
+            model.endTransaction()
+            model.exposeInput(to: input, in: gid)
+        case .node(let id) where w.isWildcard:
+            model.endTransaction()
+            if let input = DropResolver.firstCompatibleInput(on: id, for: w.type, wildcard: true, graph: model.graph,
+                                                             shapes: shapes, resolved: model.resolvedTypes) {
+                model.exposeInput(to: input, in: gid)
+            }
+        case .empty where w.isWildcard:
+            model.cancelTransaction()               // a wildcard dropped on nothing is abandoned, not committed
+        default:
+            return false
+        }
+        return true
     }
 
     // MARK: Chooser popover (⇧A / double-click / wire-drop-on-empty)
@@ -366,8 +433,8 @@ public struct GraphCanvasView: View {
         model.beginTransaction("Add Node")              // joins a wire drop's open transaction
         let origin = CGPoint(x: c.canvasPoint.x - NodeGeometry.width / 2, y: c.canvasPoint.y - NodeGeometry.headerHeight / 2)
         if let id = model.addNode(defID: def.id, at: origin), let w = c.wire,
-           let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.document.root,
-                                                         registry: model.registry, resolved: model.resolvedTypes) {
+           let input = DropResolver.firstCompatibleInput(on: id, for: w.type, graph: model.graph,
+                                                         shapes: shapes, resolved: model.resolvedTypes) {
             model.connectIfCompatible(w.source, to: input)
         }
         model.endTransaction()
@@ -405,7 +472,7 @@ public struct GraphCanvasView: View {
                 defer { dragMode = nil; panOrigin = nil; marqueeStart = nil; marquee = nil }
                 switch dragMode {
                 case .pan:
-                    model.viewState.cameras[.root] = transform.camera
+                    model.viewState.cameras[model.activePath] = transform.camera
                 case .wire:
                     // Ends the wire whatever the space key is doing now — a latched wire drag
                     // must always reach `endWire`, which closes its transaction.
@@ -413,7 +480,7 @@ public struct GraphCanvasView: View {
                 case .marquee, nil:                       // nil: pressed and released without a change
                     let moved = abs(g.translation.width) >= 4 || abs(g.translation.height) >= 4
                     if moved, let m = marquee {
-                        let hit = NodeGeometry.nodes(in: model.document.root, intersecting: m, registry: model.registry)
+                        let hit = NodeGeometry.nodes(in: model.graph, intersecting: m, shapes: shapes)
                         model.select(nodes: hit, mode: InputModifiers.shiftHeld ? .add : .replace)
                     } else if let last = lastClick, Date.now.timeIntervalSince(last.time) < 0.4,
                               hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
@@ -449,20 +516,19 @@ public struct GraphCanvasView: View {
     private func socketUnderPress(atScreen p: CGPoint) -> (ref: SocketRef, isInput: Bool)? {
         guard transform.zoom >= Self.lodZoom,
               let ref = DropResolver.socket(near: transform.toCanvas(p), within: SocketView.hitSize / 2 / transform.zoom, anchors: anchors),
-              let node = model.document.root.nodes[ref.node],
-              case .builtin(let defID) = node.kind, let def = model.registry[defID] else { return nil }
-        return (ref, def.input(named: ref.socket) != nil)
+              let node = model.graph.nodes[ref.node], let shape = model.shape(of: node) else { return nil }
+        return (ref, shape.input(named: ref.socket) != nil)
     }
 
     /// The socket's measured anchor, or the computed one when it was not rendered (culled node) —
     /// the same fallback `WireLayer` draws with, so every drawn wire is also clickable.
     private func anchor(_ ref: SocketRef) -> CGPoint? {
-        anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: model.document.root, registry: model.registry)
+        anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: model.graph, shapes: shapes)
     }
 
     private func click(at p: CGPoint) {
         var best: (SocketRef, CGFloat)?
-        for (to, from) in model.document.root.inputs {
+        for (to, from) in model.graph.inputs {
             guard let a = anchor(from), let b = anchor(to) else { continue }
             let d = WireGeometry.distance(from: p, wireFrom: a, to: b)
             if d <= Self.wireHitDistance / transform.zoom && (best == nil || d < best!.1) { best = (to, d) }
@@ -486,6 +552,6 @@ public struct GraphCanvasView: View {
                 let target = zoomOrigin! * g.magnification
                 transform.zoom(by: target / transform.zoom, around: g.startLocation)
             }
-            .onEnded { _ in zoomOrigin = nil; model.viewState.cameras[.root] = transform.camera }
+            .onEnded { _ in zoomOrigin = nil; model.viewState.cameras[model.activePath] = transform.camera }
     }
 }

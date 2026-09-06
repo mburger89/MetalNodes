@@ -83,6 +83,15 @@ import MetalNodesCore
         #expect(readFloat(img, shader.layout.field(for: ParamPath(node: tint.id, param: "value"))!.offset + 12) == 1)
     }
 
+    @Test func rebuildFillsSlotsInsideDefinitionsAndPerInstanceInputs() throws {
+        let doc = ShaderDocument.sampleWithGroup()
+        let s = try ShaderGenerator.generate(doc)
+        let img = UniformImage.rebuild(layout: s.layout, document: doc, registry: .builtin)
+        // Every user slot has a node somewhere in the document.
+        for f in s.layout.fields { if let p = f.path { #expect(doc.node(p.instancePath[0]) != nil) } }
+        #expect(img.bytes.count == s.layout.totalSize)
+    }
+
     @Test func viewerRangeWritesOnlyWhenTheLayoutHasIt() {
         var plain = UniformImage(layout: UniformLayoutBuilder.build([]))
         plain.setViewerRange(0.2...0.8)                       // must not trap

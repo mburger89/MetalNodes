@@ -13,9 +13,24 @@ public enum DocumentChange: Sendable {
     case disconnect(SocketRef)
     case addNode(NodeInstance)
     case removeNodes(Set<NodeID>)
-    /// Paste / duplicate: nodes first, then wires among them, as one change.
-    case insert(nodes: [NodeInstance], edges: [Edge])
+    /// Paste / duplicate: the definitions the payload carries, then the nodes, then the wires
+    /// among them, as one change (spec §20.7).
+    case insert(nodes: [NodeInstance], edges: [Edge], definitions: [GroupDefinition] = [])
     case setSettings(DocumentSettings)
+
+    // MARK: Groups (spec §20.6)
+
+    /// Folds the given nodes of the active graph into a fresh definition and its one instance.
+    case groupSelection(Set<NodeID>, name: String?)
+    case ungroup(NodeID)
+    case makeUnique(NodeID)
+    case renameDefinition(GroupID, String)
+    case setDefinitionAccent(GroupID, DraculaAccent)
+    case addSocket(GroupID, SocketKind, SocketDecl)
+    case renameSocket(GroupID, SocketKind, from: String, to: String)
+    case removeSocket(GroupID, SocketKind, String)
+    case deleteDefinition(GroupID)
+
     /// Undo/redo only. Bypasses transactions; never registers an undo of its own.
     case restore(ShaderDocument)
 
@@ -25,9 +40,12 @@ public enum DocumentChange: Sendable {
     /// document and schedules the recompile itself.
     public var changeClass: ChangeClass {
         switch self {
-        case .moveNodes, .setTitle, .setSettings: .cosmetic
+        // A definition's accent is a label; its *name* is part of the emitted function's
+        // identifier (spec §20.4), so a rename changes the source and must rebuild (ruling R14).
+        case .moveNodes, .setTitle, .setSettings, .setDefinitionAccent: .cosmetic
         case .setParam(_, _, let v): v.isUniformable ? .parameter : .topology
-        case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore: .topology
+        case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore, .groupSelection, .ungroup,
+             .makeUnique, .renameDefinition, .addSocket, .renameSocket, .removeSocket, .deleteDefinition: .topology
         }
     }
 
@@ -44,6 +62,15 @@ public enum DocumentChange: Sendable {
         case .insert: "Paste"
         case .setSettings: "Change Settings"
         case .restore: "Restore"
+        case .groupSelection: "Group"
+        case .ungroup: "Ungroup"
+        case .makeUnique: "Make Unique"
+        case .renameDefinition: "Rename Group"
+        case .setDefinitionAccent: "Change Group Color"
+        case .addSocket: "Add Socket"
+        case .renameSocket: "Rename Socket"
+        case .removeSocket: "Remove Socket"
+        case .deleteDefinition: "Delete Group"
         }
     }
 }

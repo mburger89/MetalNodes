@@ -40,7 +40,7 @@ enum WireGeometry {
 struct WireLayer: View {
     let graph: Graph
     let anchors: [SocketRef: CGPoint]
-    let registry: NodeRegistry
+    let shapes: (NodeInstance) -> NodeShape?
     var selected: SocketRef? = nil
     var pending: PendingWire? = nil
     let color: (SocketRef) -> Color
@@ -48,7 +48,7 @@ struct WireLayer: View {
     /// Measured where the socket is on screen, computed where it is not: a culled node reports no
     /// anchor, and a wire with one endpoint off screen must still be drawn (spec §18.9).
     private func anchor(_ ref: SocketRef) -> CGPoint? {
-        anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: graph, registry: registry)
+        anchors[ref] ?? NodeGeometry.socketAnchor(for: ref, in: graph, shapes: shapes)
     }
 
     var body: some View {

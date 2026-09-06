@@ -64,6 +64,95 @@ public struct ShaderDocument: Sendable, Hashable {
     public init() {}
 }
 
+public extension GroupDefinition {
+    /// A fresh definition with its two pseudo-nodes (spec §20.2): input at (0, 0), output at (600, 0).
+    static func make(name: String, accent: DraculaAccent = .purple) -> GroupDefinition {
+        var d = GroupDefinition(name: name, accent: accent)
+        let i = NodeInstance(kind: .groupInput, position: CGPoint(x: 0, y: 0))
+        let o = NodeInstance(kind: .groupOutput, position: CGPoint(x: 600, y: 0))
+        d.graph.nodes[i.id] = i
+        d.graph.nodes[o.id] = o
+        return d
+    }
+
+    var inputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupInput }?.id }
+    var outputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupOutput }?.id }
+
+    /// A deep copy under a fresh `GroupID` and the given name: same inputs/outputs/accent, but
+    /// every inner `NodeID` reminted (both ends of every wire rewritten to match) so the copy's
+    /// nodes never collide with the original's document-wide (controller ruling R12). Shared by
+    /// Make Unique (spec §20.6) and clipboard import (spec §20.7) — nested `.group` references
+    /// inside the copied graph are left pointing at whatever they pointed at; a caller that also
+    /// needs to retarget those (e.g. because the referenced definition is itself being imported
+    /// under a new id) does so as a separate pass.
+    func duplicate(name: String) -> GroupDefinition {
+        var copy = GroupDefinition(name: name, inputs: inputs, outputs: outputs, accent: accent)
+        var map: [NodeID: NodeID] = [:]
+        for n in graph.nodes.values {
+            let id = NodeID(); map[n.id] = id
+            copy.graph.nodes[id] = NodeInstance(id: id, kind: n.kind, position: n.position,
+                                                 params: n.params, customTitle: n.customTitle, collapsed: n.collapsed)
+        }
+        // A wire whose either end names a node the graph does not hold is dangling: drop it rather
+        // than trap — a decoded or hand-built definition can carry one.
+        for (to, from) in graph.inputs {
+            guard let f = map[from.node], let t = map[to.node] else { continue }
+            copy.graph.connect(SocketRef(f, from.socket), to: SocketRef(t, to.socket))
+        }
+        return copy
+    }
+
+    /// Identity of the definition's content (spec §20.7): name, sockets, accent and graph, ids included.
+    var contentHash: String {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys]
+        let data = (try? enc.encode(self)) ?? Data()
+        return ContentHash.fnv1a(data)
+    }
+}
+
+public extension ShaderDocument {
+    func graph(at path: GraphPath) -> Graph? {
+        switch path {
+        case .root: root
+        case .definition(let id): definitions[id]?.graph
+        }
+    }
+
+    /// Reads/mutates the graph at `path`. Writing to a missing definition is a programmer error.
+    /// `_modify` yields the storage in place, so `doc[path].nodes[id]?.position = p` mutates the
+    /// graph without the get→copy→set round trip a get/set-only subscript would force.
+    subscript(path: GraphPath) -> Graph {
+        get { graph(at: path) ?? Graph() }
+        _modify {
+            switch path {
+            case .root:
+                yield &root
+            case .definition(let id):
+                precondition(definitions[id] != nil, "no definition \(id)")
+                yield &definitions[id]!.graph
+            }
+        }
+        set {
+            switch path {
+            case .root: root = newValue
+            case .definition(let id):
+                precondition(definitions[id] != nil, "no definition \(id)")
+                definitions[id]!.graph = newValue
+            }
+        }
+    }
+
+    /// Ids are unique document-wide: find an instance in any graph.
+    func node(_ id: NodeID) -> (node: NodeInstance, path: GraphPath)? {
+        if let n = root.nodes[id] { return (n, .root) }
+        for d in definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
+            if let n = d.graph.nodes[id] { return (n, .definition(d.id)) }
+        }
+        return nil
+    }
+}
+
 extension ShaderDocument: Codable {
     private enum Keys: String, CodingKey { case formatVersion, root, definitions, settings }
 

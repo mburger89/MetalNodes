@@ -49,7 +49,7 @@ public enum NodeStyle: Sendable, Hashable {
 }
 
 public enum NodeCategory: String, Codable, Sendable, CaseIterable {
-    case input, math, vector, sdf, noise, color, utility, output
+    case input, math, vector, sdf, noise, color, utility, group, output
 }
 
 /// Everything a custom emitter needs: resolved MSL expressions for each

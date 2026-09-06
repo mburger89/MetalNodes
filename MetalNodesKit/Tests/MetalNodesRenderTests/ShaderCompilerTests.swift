@@ -79,6 +79,53 @@ import MetalNodesCore
         }
     }
 
+    @Test func groupProgramsCompile() async throws {
+        let c = try compiler()
+        var doc = ShaderDocument.sampleWithGroup()
+        for target in OutputTarget.all {
+            doc.settings.target = target
+            let shader = try ShaderGenerator.generate(doc, target: target)
+            if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) { Issue.record("\(target.title): \(msg)\n\(shader.source)") }
+        }
+    }
+
+    /// Root: Float → Outer → Output; Outer: GroupInput.x → Inner → GroupOutput; Inner: GroupInput.x → Math(add) → GroupOutput.
+    private func nestedGroups() -> (doc: ShaderDocument, outerInst: NodeID, innerInst: NodeID, math: NodeID, inner: GroupID) {
+        var inner = GroupDefinition.make(name: "Inner")
+        inner.inputs = [SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(1)))]
+        inner.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        let math = NodeInstance(kind: .builtin("math.math"), params: ["op": .enumCase("add")])
+        inner.graph.nodes[math.id] = math
+        inner.graph.connect(SocketRef(inner.inputNode!, "x"), to: SocketRef(math.id, "a"))
+        inner.graph.connect(SocketRef(math.id, "out"), to: SocketRef(inner.outputNode!, "out"))
+        var outer = GroupDefinition.make(name: "Outer")
+        outer.inputs = inner.inputs; outer.outputs = inner.outputs
+        let ii = NodeInstance(kind: .group(inner.id))
+        outer.graph.nodes[ii.id] = ii
+        outer.graph.connect(SocketRef(outer.inputNode!, "x"), to: SocketRef(ii.id, "x"))
+        outer.graph.connect(SocketRef(ii.id, "out"), to: SocketRef(outer.outputNode!, "out"))
+        var doc = ShaderDocument(); doc.definitions[inner.id] = inner; doc.definitions[outer.id] = outer
+        let f = NodeInstance(kind: .builtin("input.float")), io = NodeInstance(kind: .group(outer.id))
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        for n in [f, io, out] { doc.root.nodes[n.id] = n }
+        doc.root.connect(SocketRef(f.id, "out"), to: SocketRef(io.id, "x"))
+        doc.root.connect(SocketRef(io.id, "out"), to: SocketRef(out.id, "color"))
+        return (doc, io.id, ii.id, math.id, inner.id)
+    }
+
+    @Test func groupViewerProgramsCompile() async throws {
+        let c = try compiler()
+        let (doc, io, ii, math, inner) = nestedGroups()
+        let dived = try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerPath: [io, ii])
+        if case .failure(let msg, _, _) = await c.compile(dived, generation: 1) { Issue.record("dived viewer: \(msg)\n\(dived.source)") }
+        let palette = try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerDefinition: inner)
+        if case .failure(let msg, _, _) = await c.compile(palette, generation: 1) { Issue.record("palette viewer: \(msg)\n\(palette.source)") }
+        // Edit from the palette, then dive: anchored inside the opened definition.
+        let outer = doc.definitions.values.first { $0.name == "Outer" }!.id
+        let anchored = try ShaderGenerator.generate(doc, viewer: SocketRef(math, "out"), viewerPath: [ii], viewerDefinition: outer)
+        if case .failure(let msg, _, _) = await c.compile(anchored, generation: 1) { Issue.record("anchored viewer: \(msg)\n\(anchored.source)") }
+    }
+
     @Test func olderGenerationIsSuperseded() async throws {
         let c = try compiler()
         let shader = try ShaderGenerator.generate(ShaderDocument.sample())

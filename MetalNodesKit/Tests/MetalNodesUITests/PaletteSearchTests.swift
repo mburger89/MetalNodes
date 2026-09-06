@@ -43,11 +43,35 @@ import MetalNodesCore
     @Test func transferRoundTripsAsJSON() throws {
         let t = NodeDefTransfer(defID: "noise.value")
         let data = try JSONEncoder().encode(t)
-        #expect(try JSONDecoder().decode(NodeDefTransfer.self, from: data).defID == "noise.value")
+        let back = try JSONDecoder().decode(NodeDefTransfer.self, from: data)
+        #expect(back.defID == "noise.value")
+        #expect(back.groupID == nil)
+    }
+
+    /// A "My Functions" row drags a `GroupID` instead of a builtin id (spec §20.8).
+    @Test func transferCarriesAGroupIDInstead() throws {
+        let g = GroupID()
+        let data = try JSONEncoder().encode(NodeDefTransfer(groupID: g))
+        let back = try JSONDecoder().decode(NodeDefTransfer.self, from: data)
+        #expect(back.groupID == g)
+        #expect(back.defID == nil)
     }
 
     @Test func categoryDisplayNamesUppercaseTheAcronym() {
         #expect(NodeCategory.sdf.displayName == "SDF")
         #expect(NodeCategory.noise.displayName == "Noise")
+        #expect(NodeCategory.group.displayName == "My Functions")
+    }
+
+    @Test func filterDefinitionsIsCaseInsensitiveSubstringSortedByName() {
+        var doc = ShaderDocument()
+        for n in ["Turbulence", "Fbm", "fbm helper"] {
+            let d = GroupDefinition.make(name: n)
+            doc.definitions[d.id] = d
+        }
+        #expect(PaletteSearch.filterDefinitions("  ", in: doc).map(\.name) == ["Fbm", "fbm helper", "Turbulence"])
+        #expect(PaletteSearch.filterDefinitions("FBM", in: doc).map(\.name) == ["Fbm", "fbm helper"])
+        #expect(PaletteSearch.filterDefinitions("bul", in: doc).map(\.name) == ["Turbulence"])
+        #expect(PaletteSearch.filterDefinitions("zzz", in: doc).isEmpty)
     }
 }
