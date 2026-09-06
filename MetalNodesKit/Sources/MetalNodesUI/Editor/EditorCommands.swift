@@ -44,6 +44,34 @@ public struct EditorCommands: Commands {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!((model?.canRedo ?? false) && canvasFocused))
         }
+        // iPad's Edit ▸ Cut / Copy / Paste / Delete / Select All (spec §22.5, and the ruling in the
+        // M6 plan's Task 9: SwiftUI Commands, not a UIKit responder). macOS keeps the responder
+        // selectors on the canvas — `onCommand(#selector(NSText.cut(_:)))` and friends — so its
+        // pasteboard group stays the system's.
+        //
+        // Gated on `canvasFocused` for the same reason every other item is: while a node parameter
+        // `TextField` has the focus these key equivalents go disabled, and the field's own editing
+        // commands see the keystroke instead.
+        #if os(iOS)
+        CommandGroup(replacing: .pasteboard) {
+            Button("Cut") { model?.cutSelection() }
+                .keyboardShortcut("x", modifiers: .command)
+                .disabled(!canvasFocused || !(model?.canCopy ?? false))
+            Button("Copy") { model?.copySelection() }
+                .keyboardShortcut("c", modifiers: .command)
+                .disabled(!canvasFocused || !(model?.canCopy ?? false))
+            // At the viewport's centre, which only the canvas knows (spec §22.5).
+            Button("Paste") { model?.requestCanvas(.paste) }
+                .keyboardShortcut("v", modifiers: .command)
+                .disabled(!canvasFocused || !(model?.canPaste ?? false))
+            Button("Delete") { model?.deleteSelection() }
+                .keyboardShortcut(.delete, modifiers: [])
+                .disabled(!canvasFocused)
+            Button("Select All") { model?.selectAll() }
+                .keyboardShortcut("a", modifiers: .command)
+                .disabled(!canvasFocused)
+        }
+        #endif
         CommandGroup(after: .pasteboard) {
             Divider()
             Button("Duplicate") { model?.duplicateSelection() }

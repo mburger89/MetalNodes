@@ -374,4 +374,19 @@ actor SwitchableCompiler: ShaderCompiling {
         #expect(m.preview.program?.pipeline.generation == landed.pipeline.generation)
         #expect(m.preview.program?.textures.count == landed.textures.count)
     }
+
+    /// The two iPad requests (spec §22.3, §22.5) ride the same one-shot channel as ⌘⇧N, because
+    /// the viewport's centre is a thing only the canvas view knows. Equatable and clearable, so a
+    /// second ⌘V after the canvas consumed the first is a fresh request and not a no-op.
+    @Test func pasteAndChooserRequestsRoundTripThroughCanvasRequest() {
+        let m = model(RecordingCompiler())
+        #expect(m.canvasRequest == nil)
+        m.requestCanvas(.paste)
+        #expect(m.canvasRequest == .paste)
+        m.canvasRequest = nil
+        m.requestCanvas(.openChooser)
+        #expect(m.canvasRequest == .openChooser)
+        m.canvasRequest = nil
+        #expect(m.canvasRequest == nil)
+    }
 }
