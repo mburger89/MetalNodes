@@ -64,6 +64,21 @@ import MetalNodesRender
         #expect(window.canUndo)
     }
 
+    /// `DocumentGroup` registers an undo for every `FileDocument` binding write — including the
+    /// mirror of the camera the window makes before its manager reaches the host. Adopting drops it.
+    @Test func adoptDropsWhatTheWindowManagerAlreadyHolds() {
+        let m = model()
+        let window = UndoManager()
+        window.registerUndo(withTarget: window) { _ in }
+        #expect(window.canUndo)
+
+        m.adoptUndoManager(window)
+
+        #expect(m.undoManager === window)
+        #expect(!m.canUndo)
+        #expect(!m.canRedo)
+    }
+
     @Test func adoptRefusesOnceSomethingIsOnTheStack() {
         let m = model()
         let node = uv(m)

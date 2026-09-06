@@ -164,8 +164,14 @@ public final class EditorModel {
     /// Takes the document window's manager once SwiftUI publishes it (the environment value is
     /// nil on the first pass). Refused once anything is on the current stack, so a step already
     /// registered can never be stranded on a manager nobody drives.
+    ///
+    /// Whatever the window's manager already holds is dropped: the model's history is empty at this
+    /// point, and the only thing that can be there is `DocumentGroup`'s own registration for a
+    /// `FileDocument` write that landed before the host could switch registration off — a view-state
+    /// mirror, which is never an undo step (spec §18.3).
     public func adoptUndoManager(_ manager: UndoManager) {
         guard manager !== undoManager, !undoManager.canUndo, !undoManager.canRedo else { return }
+        manager.removeAllActions()
         undoManager = manager
         undoStackVersion += 1
     }
