@@ -358,6 +358,37 @@ actor SwitchableCompiler: ShaderCompiling {
         #expect(m.preview.program?.textures.isEmpty == true)
     }
 
+    /// Giving an unassigned Texture Sample an image changes no source text — only which asset the
+    /// `tex0` slot names — so the "same program" shortcut must look at the slots too, or the
+    /// pipeline that keeps drawing is the one whose slot is still empty (manual check M5-4, M6).
+    @Test func choosingAnImageForAnEmptySampleRebindsItsSlot() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice(), "No Metal device — this test needs a GPU")
+        let c = try SwitchableCompiler(device: device)
+        var d = ShaderDocument()
+        let sample = NodeInstance(kind: .builtin("texture.sample"))
+        let out = NodeInstance(kind: .builtin("output.fragment"))
+        d.root.nodes[sample.id] = sample; d.root.nodes[out.id] = out
+        d.root.connect(SocketRef(sample.id, "color"), to: SocketRef(out.id, "color"))
+        let store = TextureStore(device: device)
+        let m = EditorModel(document: d, compiler: c, textureStore: store)
+        m.debounceInterval = .milliseconds(5)
+        m.start(); await m.awaitIdle()
+        #expect(m.textureSlots == [TextureSlot(index: 0, asset: nil)])
+        let sourceBefore = m.generatedSource
+
+        // What `chooseImage(for:param:from:using:)` does once the chooser returns.
+        m.beginTransaction("Choose Image")
+        let id = try #require(m.importImage(data: EditorAssetsTests.png2x2, name: "a.png"))
+        m.apply(.setParam(sample.id, "asset", .asset(id)))
+        m.endTransaction()
+        await m.awaitIdle()
+
+        #expect(m.generatedSource == sourceBefore)
+        #expect(m.textureSlots == [TextureSlot(index: 0, asset: id)])
+        let bound = try #require(m.preview.program?.textures[0])
+        #expect(bound !== store.placeholder)
+    }
+
     /// A failed compile must not touch the program at all: the generation and the bindings the
     /// renderer reads are the ones from the last landed compile, together.
     @Test func aFailedCompileLeavesThePublishedProgramIntact() async throws {

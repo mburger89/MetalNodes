@@ -62,7 +62,11 @@ public final class EditorModel {
     private var compileTask: Task<Void, Never>?
     /// The last **non-superseded** compile's outcome, keyed on the program it settled: reused to
     /// skip the compiler when the generated source and fast-math flag come back unchanged (spec §19.1).
-    private var lastCompiled: (source: String, fastMath: Bool, succeeded: Bool)?
+    /// The last settled compile, with the slot list its pipeline was built from: two documents can
+    /// generate the same source and differ only in which asset a `tex<i>` slot names (a Texture
+    /// Sample that has just been given an image), and that difference lives in the pipeline, not
+    /// the text.
+    private var lastCompiled: (source: String, textures: [TextureSlot], fastMath: Bool, succeeded: Bool)?
     /// Bumped by every `start()`/`scheduleCompile()` so `awaitIdle` can tell whether a
     /// new edit landed while it was suspended (`Task` is a struct — no identity to compare).
     private var scheduleCount = 0
@@ -463,7 +467,8 @@ public final class EditorModel {
         // Carried onto every outcome below, since each of them replaces `diagnostics` wholesale.
         let missing = missingTextureDiagnostics(for: shader.textures)
 
-        if let last = lastCompiled, last.source == shader.source, last.fastMath == doc.settings.fastMath {
+        if let last = lastCompiled, last.source == shader.source, last.textures == shader.textures,
+           last.fastMath == doc.settings.fastMath {
             // Same program as the last settled compile (typically an undo of a cosmetic edit): its
             // outcome still stands. Refresh what depends on the document and skip the compiler (§19.1).
             generatedSource = shader.source
@@ -487,7 +492,7 @@ public final class EditorModel {
             publish(pipeline)
             preview.uniforms = UniformImage.rebuild(layout: pipeline.shader.layout, document: document, registry: registry)
             preview.lastError = nil
-            lastCompiled = (shader.source, doc.settings.fastMath, true)
+            lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, true)
         case .failure(let message, let lines, let g):
             guard g == generation else { return }
             preview.lastError = message
@@ -497,7 +502,7 @@ public final class EditorModel {
                 mapped.append(Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line)))
             }
             diagnostics = (mapped.isEmpty ? [Diagnostic(.error, message)] : mapped) + missing
-            lastCompiled = (shader.source, doc.settings.fastMath, false)
+            lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, false)
         case .superseded:
             break
         }
