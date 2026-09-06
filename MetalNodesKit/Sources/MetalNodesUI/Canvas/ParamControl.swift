@@ -1,5 +1,8 @@
 import SwiftUI
 import MetalNodesCore
+#if os(macOS)
+import AppKit
+#endif
 
 /// The inline editor for one parameter or unwired input.
 struct ParamControl: View {
@@ -8,6 +11,10 @@ struct ParamControl: View {
     let value: ParamValue
     let onChange: (ParamValue) -> Void
     var onEditing: ((Bool) -> Void)? = nil
+    /// The bytes behind a `.asset` value, for the image well's thumbnail.
+    var imageData: Data? = nil
+    /// What "Choose…" runs — the open panel, on the platforms that have one.
+    var onChooseImage: (() -> Void)? = nil
 
     var body: some View {
         switch kind {
@@ -22,8 +29,53 @@ struct ParamControl: View {
             .pickerStyle(.menu)
             .font(.caption)
         case .asset:
-            Text(label).font(.caption).foregroundStyle(DraculaToken.muted.color)
+            imageWell
         }
+    }
+
+    /// The image well (spec §21.2): the imported image's thumbnail, "Choose…" to import another,
+    /// "Clear" to unassign — an unassigned Texture Sample still renders, on the placeholder.
+    private var imageWell: some View {
+        let assigned: Bool = { if case .asset(let a) = value { return a != nil } else { return false } }()
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption)
+            HStack(spacing: 8) {
+                thumbnail
+                VStack(alignment: .leading, spacing: 2) {
+                    if onChooseImage != nil {
+                        Button("Choose…") { onChooseImage?() }
+                    }
+                    Button("Clear") { onChange(.asset(nil)) }.disabled(!assigned)
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private var thumbnail: some View {
+        let shape = RoundedRectangle(cornerRadius: 4)
+        return shape
+            .fill(DraculaToken.surface.color)
+            .frame(width: 48, height: 48)
+            .overlay { thumbnailContent.clipShape(shape) }
+            .overlay { shape.stroke(DraculaToken.muted.color, lineWidth: 1) }
+    }
+
+    @ViewBuilder
+    private var thumbnailContent: some View {
+        #if os(macOS)
+        if let imageData, let image = NSImage(data: imageData) {
+            Image(nsImage: image).resizable().scaledToFill()
+        } else {
+            emptyThumbnail
+        }
+        #else
+        emptyThumbnail
+        #endif
+    }
+
+    private var emptyThumbnail: some View {
+        Image(systemName: "photo").foregroundStyle(DraculaToken.muted.color)
     }
 
     @ViewBuilder

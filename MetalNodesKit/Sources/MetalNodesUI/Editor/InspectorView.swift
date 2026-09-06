@@ -97,9 +97,12 @@ public struct InspectorView: View {
             }
         }
         ForEach(shape.params, id: \.name) { p in
-            ParamControl(label: p.label, kind: p.kind, value: node.params[p.name] ?? p.defaultValue,
+            let value = node.params[p.name] ?? p.defaultValue
+            ParamControl(label: p.label, kind: p.kind, value: value,
                          onChange: { model.apply(.setParam(id, p.name, $0)) },
-                         onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
+                         onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
+                         imageData: model.assetData(for: value),
+                         onChooseImage: chooseImageAction(for: id, param: p.name))
         }
 
         // A pseudo-node's "outputs" are the definition's inputs and carry no ◉ (spec §20.8).
@@ -131,6 +134,23 @@ public struct InspectorView: View {
                     .foregroundStyle(d.severity == .error ? DraculaTheme.error.color : DraculaToken.orange.color)
             }
         }
+    }
+
+    /// The image well's "Choose…": one undo step ("Choose Image") for the import and the assignment
+    /// together (spec §21.2). Nil where there is no open panel, which hides the button.
+    private func chooseImageAction(for node: NodeID, param: ParamID) -> (() -> Void)? {
+        #if os(macOS)
+        return {
+            guard let picked = ImagePanelMac.chooseImage() else { return }
+            model.beginTransaction("Choose Image")
+            if let asset = model.importImage(data: picked.data, name: picked.name) {
+                model.apply(.setParam(node, param, .asset(asset)))
+            }
+            model.endTransaction()
+        }
+        #else
+        return nil
+        #endif
     }
 
     // MARK: Document
@@ -193,8 +213,55 @@ public struct InspectorView: View {
                 Text("Export writes the .metal file with a header documenting the uniform layout and texture slots.")
                     .font(.caption2).foregroundStyle(DraculaToken.muted.color)
             }
+            Divider()
+            assetsList
         }
         .textFieldStyle(.roundedBorder)
+    }
+
+    /// Every imported image the package carries (spec §21.1): removable only while nothing points
+    /// at it, relinkable while its bytes are the ones the package did not have.
+    @ViewBuilder
+    private var assetsList: some View {
+        Text("Assets").font(.headline)
+        if model.assetList.isEmpty {
+            Text("Drop an image on the canvas, or choose one from a Texture Sample.")
+                .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+        } else {
+            ForEach(model.assetList) { entry in
+                let missing = model.missingTextures.contains(entry.id)
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(entry.info.name).font(.caption)
+                        Text(missing ? "missing" : "\(Int(entry.info.pixelSize.width)) × \(Int(entry.info.pixelSize.height))")
+                            .font(.caption2)
+                            // Orange, not red: a missing texture is a warning — the preview still
+                            // renders, on the placeholder (spec §21.2).
+                            .foregroundStyle(missing ? DraculaToken.orange.color : DraculaToken.muted.color)
+                    }
+                    Spacer()
+                    if missing, let relink = relinkAction(for: entry.id) {
+                        Button("Relink…", action: relink)
+                    }
+                    Button("Remove") { model.removeAsset(entry.id) }
+                        .disabled(model.isAssetReferenced(entry.id))
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    /// Re-imports a missing texture's bytes under its own id, so the warning clears and every node
+    /// pointing at it keeps pointing at it.
+    private func relinkAction(for asset: AssetID) -> (() -> Void)? {
+        #if os(macOS)
+        return {
+            guard let picked = ImagePanelMac.chooseImage() else { return }
+            model.replaceAssetBytes(asset, data: picked.data)
+        }
+        #else
+        return nil
+        #endif
     }
 
     private func clampedDimension(_ v: CGFloat) -> Int {

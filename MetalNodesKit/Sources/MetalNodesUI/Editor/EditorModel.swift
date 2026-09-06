@@ -68,7 +68,12 @@ public final class EditorModel {
 
     /// The imported image bytes, keyed as in `document.settings.assets`. Written by image import
     /// and by the package that opened the document; never re-encoded.
-    public var textures: [AssetID: Data] = [:] { didSet { refreshTextureBindings() } }
+    public var textures: [AssetID: Data] = [:] {
+        didSet { texturesVersion += 1; refreshTextureBindings() }
+    }
+    /// Bumped on every write to `textures`. A host mirroring the bytes into its file document can
+    /// observe this instead of `textures` itself, which would deep-compare every image on each change.
+    public private(set) var texturesVersion = 0
     /// Assets whose bytes were absent from the package on open: each referenced one becomes a
     /// warning diagnostic after generation, and its slot binds the placeholder.
     public var missingTextures: Set<AssetID> = []
@@ -76,7 +81,7 @@ public final class EditorModel {
     public var package: ShaderPackage {
         ShaderPackage(document: document, viewState: viewState, textures: textures)
     }
-    private let textureStore: TextureStore?
+    let textureStore: TextureStore?
     /// The slots of the last generated program, kept so `textures` changes can rebind without
     /// waiting for a recompile.
     private var textureSlots: [TextureSlot] = []
@@ -190,6 +195,9 @@ public final class EditorModel {
         // Set by a case that is topology for a reason `changeClass` cannot see on its own.
         var recompile = false
         let path = activePath
+        // A manifest edit (import, removal, re-import) rebinds the preview's slots even though the
+        // bytes did not move — `.setSettings` and `.restore` both carry one (spec §21.2).
+        let assetsBefore = document.settings.assets
         switch change {
         case .moveNodes(let positions):
             // One graph write for the whole drag frame, not one per node.
@@ -296,6 +304,8 @@ public final class EditorModel {
             document = doc
             pruneAfterRemoval()
         }
+
+        if document.settings.assets != assetsBefore { refreshTextureBindings() }
 
         switch change.changeClass {
         case .cosmetic:

@@ -151,6 +151,14 @@ public struct GraphCanvasView: View {
                 guard let defID = t.defID else { return false }
                 return model.addNode(defID: defID, at: origin) != nil
             }
+            // An image file from the Finder becomes a Texture Sample already pointing at it
+            // (spec §21.2). Anything that is not an image is refused with a notice by the import.
+            .dropDestination(for: URL.self) { urls, location in
+                guard let url = urls.first else { return false }
+                let c = transform.toCanvas(location)
+                let origin = CGPoint(x: c.x - NodeGeometry.width / 2, y: c.y - NodeGeometry.headerHeight / 2)
+                return model.addTextureNode(contentsOf: url, at: origin) != nil
+            }
             // The binding's setter is also how the popover reports a dismissal we did not ask for
             // (a click outside), so `dismissChooser` — not just `onCancel` — is what abandons a
             // wire drop's still-open transaction.
