@@ -82,6 +82,50 @@ import MetalNodesCore
         #expect(DropResolver.inputType(of: SocketRef(go, "out"), graph: wobble.graph, shapes: inner, resolved: [:]) == .float)
     }
 
+    /// Spec §20.6: a pseudo-node's `+` takes any non-texture type, and a drag *from* `GroupInput.+`
+    /// is a wildcard — it has no type yet, so any non-texture input takes it.
+    @Test func plusSocketsTakeAnyNonTextureTypeAndWildcardDragsTakeAnyInput() throws {
+        let doc = ShaderDocument.sampleWithGroup()
+        let wobble = try #require(doc.definitions.values.first)
+        let inner: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .definition(wobble.id), registry: reg) }
+        let go = try #require(wobble.outputNode)
+        let mul = try #require(wobble.graph.nodes.values.first { $0.params["op"] == .enumCase("multiply") }).id
+        let plus = SocketRef(go, NodeShape.plusSocketName)
+
+        #expect(DropResolver.accepts(.float3, at: plus, graph: wobble.graph, shapes: inner, resolved: [:]))
+        #expect(DropResolver.accepts(.texture, at: plus, graph: wobble.graph, shapes: inner, resolved: [:]) == false)
+        #expect(DropResolver.accepts(.texture, at: SocketRef(go, "out"), graph: wobble.graph, shapes: inner, resolved: [:]) == false)
+        // A body drop never picks the `+`: exposing is a deliberate drop on it. With the one
+        // declared output gone, a Group Output has nothing left for a wire to land on.
+        var bare = doc
+        bare.definitions[wobble.id]!.outputs = []
+        let bareShapes: (NodeInstance) -> NodeShape? = { bare.shape(of: $0, in: .definition(wobble.id), registry: reg) }
+        #expect(bare.shape(of: go, registry: reg)?.inputs.map(\.name) == ["+"])
+        #expect(DropResolver.firstCompatibleInput(on: go, for: .float, graph: wobble.graph, shapes: bareShapes, resolved: [:]) == nil)
+
+        // A wildcard: every non-texture input, never the `+` itself.
+        #expect(DropResolver.accepts(.float, at: SocketRef(mul, "b"), wildcard: true, graph: wobble.graph, shapes: inner, resolved: [:]))
+        #expect(DropResolver.accepts(.float, at: plus, wildcard: true, graph: wobble.graph, shapes: inner, resolved: [:]) == false)
+        #expect(DropResolver.firstCompatibleInput(on: mul, for: .float, wildcard: true, graph: wobble.graph,
+                                                  shapes: inner, resolved: [:]) == SocketRef(mul, "a"))
+    }
+
+    /// The drop itself: a float3 dragged onto `Group Output.+` resolves to that socket, which is
+    /// what `GraphCanvasView.endWire` turns into an exposed output.
+    @Test func aDropOnThePlusSocketResolvesToIt() throws {
+        let doc = ShaderDocument.sampleWithGroup()
+        let wobble = try #require(doc.definitions.values.first)
+        let inner: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .definition(wobble.id), registry: reg) }
+        let go = try #require(wobble.outputNode)
+        let mul = try #require(wobble.graph.nodes.values.first { $0.params["op"] == .enumCase("multiply") }).id
+        let plus = SocketRef(go, NodeShape.plusSocketName)
+        // Group Output sits at (600, 0) and is 190 × 86, so a point well below it can only snap.
+        let anchors = [plus: CGPoint(x: 600, y: 200)]
+        let r = DropResolver.resolve(point: CGPoint(x: 600, y: 200), source: SocketRef(mul, "out"), dragType: .float3,
+                                     anchors: anchors, graph: wobble.graph, shapes: inner, resolved: [:])
+        #expect(r == .socket(plus))
+    }
+
     @Test func socketNearPointPicksTheClosestAnchorWithinRadiusOnly() {
         let sep = node("vector.separate")
         let x = SocketRef(sep.id, "x"), y = SocketRef(sep.id, "y")

@@ -86,6 +86,58 @@ extension EditorModel {
         return out
     }
 
+    // MARK: Exposing sockets by wiring into `+` (spec §20.6)
+
+    /// Adds an output to `definition` named after `source`'s socket and wires `source` into it —
+    /// what dropping a wire on the `GroupOutput`'s `+` does. One undo step; nil when the socket
+    /// cannot be typed, or when the definition is not the graph being edited (a `.connect` always
+    /// lands in the active graph).
+    @discardableResult
+    public func exposeOutput(from source: SocketRef, in definition: GroupID) -> String? {
+        guard activePath == .definition(definition), let gout = document.definitions[definition]?.outputNode,
+              let type = DropResolver.outputType(of: source, graph: graph, shapes: activeShapes, resolved: resolvedTypes),
+              type != .texture else { return nil }
+        return expose(.output, in: definition, decl: SocketDecl(name: source.socket, type: .concrete(type)),
+                      name: "Expose Output") { Edge(to: SocketRef(gout, $0), from: source) }
+    }
+
+    /// Adds an input to `definition` named after `target`'s socket, defaulted to that type's zero,
+    /// and wires the `GroupInput` into `target` — what a wildcard drag from the `+` does.
+    @discardableResult
+    public func exposeInput(to target: SocketRef, in definition: GroupID) -> String? {
+        guard activePath == .definition(definition), let gin = document.definitions[definition]?.inputNode,
+              let type = DropResolver.inputType(of: target, graph: graph, shapes: activeShapes, resolved: resolvedTypes),
+              type != .texture else { return nil }
+        let decl = SocketDecl(name: target.socket, type: .concrete(type), default: .value(GroupOperations.zero(type)))
+        return expose(.input, in: definition, decl: decl, name: "Expose Input") { Edge(to: target, from: SocketRef(gin, $0)) }
+    }
+
+    /// The shared half: add the socket, then wire the edge the caller builds from the name the
+    /// document actually gave it (`addSocket` uniques against the definition's other sockets).
+    private func expose(_ kind: SocketKind, in definition: GroupID, decl: SocketDecl, name: String,
+                        edge: (String) -> Edge) -> String? {
+        func sockets() -> [SocketDecl] {
+            let def = document.definitions[definition]
+            return (kind == .input ? def?.inputs : def?.outputs) ?? []
+        }
+        let before = sockets().count
+        beginTransaction(name)
+        apply(.addSocket(definition, kind, decl))
+        // Only the socket this call appended may be wired: a refused `addSocket` would otherwise
+        // leave the last existing one to be wired by mistake.
+        guard sockets().count == before + 1, let created = sockets().last?.name else {
+            cancelTransaction()
+            return nil
+        }
+        let e = edge(created)
+        apply(.connect(from: e.from, to: e.to))
+        endTransaction()
+        return created
+    }
+
+    /// The active graph's shapes, as `NodeGeometry` and `DropResolver` take them.
+    private var activeShapes: (NodeInstance) -> NodeShape? { { self.shape(of: $0) } }
+
     // MARK: Placement
 
     /// Places an instance of `id` in the active graph; refused with a notice when it would make a

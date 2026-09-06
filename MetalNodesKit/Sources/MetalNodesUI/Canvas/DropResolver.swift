@@ -35,13 +35,26 @@ enum DropResolver {
         return .float
     }
 
-    static func firstCompatibleInput(on node: NodeID, for type: SocketType, graph: Graph,
+    /// Whether a wire may end at `ref`. A pseudo-node's `+` takes anything a group socket can be —
+    /// any non-texture type; `wildcard` is a drag from `GroupInput.+`, which has no type yet and so
+    /// any non-texture input takes, the `+` sockets themselves excepted (spec §20.6).
+    static func accepts(_ type: SocketType, at ref: SocketRef, wildcard: Bool = false, graph: Graph,
+                        shapes: (NodeInstance) -> NodeShape?, resolved: [NodeID: ResolvedNode]) -> Bool {
+        guard let s = shape(of: ref.node, graph: graph, shapes: shapes), let decl = s.input(named: ref.socket) else { return false }
+        if NodeShape.isPlus(decl) { return !wildcard && type != .texture }
+        guard let t = inputType(of: ref, graph: graph, shapes: shapes, resolved: resolved) else { return false }
+        return wildcard ? t != .texture : compatible(type, t)
+    }
+
+    /// The input a drop on the node's body lands on. Never the `+` socket: exposing is a deliberate
+    /// drop on it, not a fallback (spec §20.6).
+    static func firstCompatibleInput(on node: NodeID, for type: SocketType, wildcard: Bool = false, graph: Graph,
                                      shapes: (NodeInstance) -> NodeShape?,
                                      resolved: [NodeID: ResolvedNode]) -> SocketRef? {
         guard let s = shape(of: node, graph: graph, shapes: shapes) else { return nil }
-        for decl in s.inputs {
+        for decl in s.inputs where !NodeShape.isPlus(decl) {
             let ref = SocketRef(node, decl.name)
-            if let t = inputType(of: ref, graph: graph, shapes: shapes, resolved: resolved), compatible(type, t) { return ref }
+            if accepts(type, at: ref, wildcard: wildcard, graph: graph, shapes: shapes, resolved: resolved) { return ref }
         }
         return nil
     }
@@ -56,14 +69,14 @@ enum DropResolver {
         return best?.0
     }
 
-    static func resolve(point: CGPoint, source: SocketRef, dragType: SocketType, anchors: [SocketRef: CGPoint],
-                        graph: Graph, shapes: (NodeInstance) -> NodeShape?,
+    static func resolve(point: CGPoint, source: SocketRef, dragType: SocketType, wildcard: Bool = false,
+                        anchors: [SocketRef: CGPoint], graph: Graph, shapes: (NodeInstance) -> NodeShape?,
                         resolved: [NodeID: ResolvedNode]) -> DropTarget {
         var best: (SocketRef, CGFloat)?
         for (ref, a) in anchors where ref.node != source.node {
             let d = hypot(a.x - point.x, a.y - point.y)
             guard d <= snapRadius, d < (best?.1 ?? .infinity) else { continue }
-            guard let t = inputType(of: ref, graph: graph, shapes: shapes, resolved: resolved), compatible(dragType, t) else { continue }
+            guard accepts(dragType, at: ref, wildcard: wildcard, graph: graph, shapes: shapes, resolved: resolved) else { continue }
             best = (ref, d)
         }
         if let (ref, _) = best { return .socket(ref) }
@@ -100,5 +113,15 @@ extension DropResolver {
                         graph: Graph, registry: NodeRegistry, resolved: [NodeID: ResolvedNode]) -> DropTarget {
         resolve(point: point, source: source, dragType: dragType, anchors: anchors, graph: graph,
                 shapes: NodeGeometry.rootShapes(in: graph, registry: registry), resolved: resolved)
+    }
+
+    /// The `+` socket a drop exposes an output at: `GroupOutput`'s trailing input (spec §20.6).
+    static func isPlusInput(_ ref: SocketRef, in graph: Graph) -> Bool {
+        ref.socket == NodeShape.plusSocketName && graph.nodes[ref.node]?.kind == .groupOutput
+    }
+
+    /// The `+` socket a drag starts a wildcard from: `GroupInput`'s trailing output (spec §20.6).
+    static func isPlusOutput(_ ref: SocketRef, in graph: Graph) -> Bool {
+        ref.socket == NodeShape.plusSocketName && graph.nodes[ref.node]?.kind == .groupInput
     }
 }

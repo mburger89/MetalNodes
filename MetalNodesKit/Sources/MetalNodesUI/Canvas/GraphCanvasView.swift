@@ -10,6 +10,9 @@ struct PendingWire: Equatable {
     var source: SocketRef
     var type: SocketType
     var point: CGPoint
+    /// A drag from a `GroupInput`'s `+`: the socket it will create has no type yet, so nothing
+    /// dims and any non-texture input takes it (spec §20.6).
+    var isWildcard = false
 }
 
 /// What a drag that started on the background is doing. Decided on the first change and then
@@ -250,7 +253,9 @@ public struct GraphCanvasView: View {
                                      model.endTransaction()
                                  }
                              },
-                             dragType: pendingWire?.type,
+                             // A wildcard drag has no type to judge sockets against, so it dims
+                             // nothing (spec §20.6).
+                             dragType: pendingWire.flatMap { $0.isWildcard ? nil : $0.type },
                              onSocketDragBegan: { ref, isInput in beginWire(from: ref, isInput: isInput) },
                              onSocketDrag: { p in pendingWire?.point = p },
                              onSocketDragEnded: { p in endWire(at: p) })
@@ -353,15 +358,24 @@ public struct GraphCanvasView: View {
             guard let t = DropResolver.outputType(of: ref, graph: g, shapes: shapes, resolved: model.resolvedTypes) else { return }
             if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Connect")
-            pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero)
+            pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero,
+                                      isWildcard: DropResolver.isPlusOutput(ref, in: g))
         }
+    }
+
+    /// The definition the active graph belongs to — what exposing a socket adds to (spec §20.3).
+    private var activeDefinition: GroupID? {
+        if case .definition(let g) = model.activePath { return g }
+        return nil
     }
 
     private func endWire(at p: CGPoint) {
         guard let w = pendingWire else { return }
         pendingWire = nil
-        switch DropResolver.resolve(point: p, source: w.source, dragType: w.type, anchors: anchors,
-                                    graph: model.graph, shapes: shapes, resolved: model.resolvedTypes) {
+        let target = DropResolver.resolve(point: p, source: w.source, dragType: w.type, wildcard: w.isWildcard,
+                                          anchors: anchors, graph: model.graph, shapes: shapes, resolved: model.resolvedTypes)
+        if let gid = activeDefinition, exposeSocket(for: w, at: target, in: gid) { return }
+        switch target {
         case .socket(let input):
             model.connectIfCompatible(w.source, to: input)
             model.endTransaction()
@@ -377,6 +391,35 @@ public struct GraphCanvasView: View {
             // re-drag's `.disconnect` back (see `place` and `dismissChooser`).
             openChooser(atScreen: transform.toScreen(p), wire: (w.source, w.type))
         }
+    }
+
+    /// The `+` drops (spec §20.6): onto a `GroupOutput`'s `+` exposes an output, and a wildcard
+    /// drag from a `GroupInput`'s `+` exposes an input wherever it lands — with no chooser on empty
+    /// canvas, since there is nothing to name a socket after. True when this handled the drop.
+    ///
+    /// The drag's own transaction closes first, so the expose is a single undo step of its own,
+    /// named for what it did. A plain drag has changed nothing by then and registers nothing; only
+    /// a re-drag — whose `.disconnect` is already applied — leaves that detachment as a step before it.
+    private func exposeSocket(for w: PendingWire, at target: DropTarget, in gid: GroupID) -> Bool {
+        switch target {
+        case .socket(let input) where DropResolver.isPlusInput(input, in: model.graph):
+            model.endTransaction()
+            model.exposeOutput(from: w.source, in: gid)
+        case .socket(let input) where w.isWildcard:
+            model.endTransaction()
+            model.exposeInput(to: input, in: gid)
+        case .node(let id) where w.isWildcard:
+            model.endTransaction()
+            if let input = DropResolver.firstCompatibleInput(on: id, for: w.type, wildcard: true, graph: model.graph,
+                                                             shapes: shapes, resolved: model.resolvedTypes) {
+                model.exposeInput(to: input, in: gid)
+            }
+        case .empty where w.isWildcard:
+            model.endTransaction()
+        default:
+            return false
+        }
+        return true
     }
 
     // MARK: Chooser popover (⇧A / double-click / wire-drop-on-empty)

@@ -199,6 +199,79 @@ import MetalNodesRender
         #expect(m.document.root.inputs[SocketRef(inst, "t")] != nil)
     }
 
+    // MARK: Exposing sockets by wiring into `+` (spec §20.6)
+
+    /// Groups the sample's Multiply → Sine chain and dives into it. The definition comes out with
+    /// two inputs (Time and the Float's value) and one output, `out`, fed by Sine.
+    private func divedGroup(_ m: EditorModel) -> (definition: GroupID, instance: NodeID) {
+        m.select(nodes: [node(m, "math.math", op: "multiply"), node(m, "math.math", op: "sine")], mode: .replace)
+        let gid = m.groupSelection()!
+        let inst = m.selection.first!
+        m.diveIn(inst)
+        return (gid, inst)
+    }
+    private func inner(_ m: EditorModel, op: String) -> NodeID {
+        m.graph.nodes.values.first { $0.params["op"] == .enumCase(op) }!.id
+    }
+
+    @Test func exposeOutputAddsAWiredOutputInOneUndoStep() {
+        let m = model()
+        let g = divedGroup(m)
+        let mul = inner(m, op: "multiply")
+        let name = m.exposeOutput(from: SocketRef(mul, "out"), in: g.definition)
+        #expect(name == "out2")                                   // "out" is taken by the grouped edge
+        let def = m.document.definitions[g.definition]!
+        #expect(def.outputs.map(\.name) == ["out", "out2"])
+        #expect(def.outputs.last?.type == TypeRef.concrete(.float))
+        #expect(def.graph.inputs[SocketRef(def.outputNode!, "out2")] == SocketRef(mul, "out"))
+        #expect(m.shape(of: g.instance)?.outputs.map(\.name) == ["out", "out2"])   // the instance outside
+        #expect(m.undoManager.undoActionName == "Expose Output")
+        m.undo()
+        #expect(m.document.definitions[g.definition]?.outputs.map(\.name) == ["out"])
+        #expect(m.document.definitions[g.definition]?.graph.inputs[SocketRef(def.outputNode!, "out2")] == nil)
+    }
+
+    @Test func exposeInputAddsAValuedInputWiredFromGroupInput() {
+        let m = model()
+        let g = divedGroup(m)
+        let sine = inner(m, op: "sine")
+        let before = m.document.definitions[g.definition]!.inputs.count
+        let name = m.exposeInput(to: SocketRef(sine, "b"), in: g.definition)
+        #expect(name == "b")
+        let def = m.document.definitions[g.definition]!
+        #expect(def.inputs.count == before + 1)
+        #expect(def.inputs.last?.name == "b")
+        #expect(def.inputs.last?.default == SocketDefault.value(.float(0)))
+        #expect(def.graph.inputs[SocketRef(sine, "b")] == SocketRef(def.inputNode!, "b"))
+        #expect(m.shape(of: g.instance)?.inputs.last?.name == "b")                 // the instance's new slot
+        #expect(m.undoManager.undoActionName == "Expose Input")
+        m.undo()
+        #expect(m.document.definitions[g.definition]?.inputs.count == before)
+        #expect(m.document.definitions[g.definition]?.graph.inputs[SocketRef(sine, "b")] == nil)
+    }
+
+    /// Both helpers name the socket after the wire's end and refuse what they cannot type.
+    @Test func exposingRefusesOutsideItsDefinition() {
+        let m = model()
+        let g = divedGroup(m)
+        let mul = inner(m, op: "multiply")
+        m.exitGroup()                                             // back in the root
+        #expect(m.exposeOutput(from: SocketRef(mul, "out"), in: g.definition) == nil)
+        #expect(m.exposeInput(to: SocketRef(mul, "a"), in: g.definition) == nil)
+        #expect(m.document.definitions[g.definition]?.outputs.count == 1)
+    }
+
+    /// The `+` socket is never itself exposable, and a viewer badge skips it (spec §20.6, §20.8).
+    @Test func theViewerBadgeSkipsThePlusSocket() {
+        let m = model()
+        let g = divedGroup(m)
+        let gin = m.document.definitions[g.definition]!.inputNode!
+        #expect(m.shape(of: gin)?.outputs.last?.name == "+")
+        #expect(m.firstOutput(of: gin)?.socket != "+")
+        let gout = m.document.definitions[g.definition]!.outputNode!
+        #expect(m.firstOutput(of: gout) == nil)                   // Group Output has no outputs at all
+    }
+
     @Test func viewerInsideADefinitionCompilesThroughTheStack() async {
         let m = model()
         m.start(); await m.awaitIdle()

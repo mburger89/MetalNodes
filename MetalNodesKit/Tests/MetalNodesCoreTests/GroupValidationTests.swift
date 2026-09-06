@@ -31,6 +31,16 @@ import CoreGraphics
         #expect(GraphValidator.validate(document: doc, registry: reg, target: .fragment).isEmpty)
     }
 
+    /// The `+` socket is `.required` so it never carries a value, but it is not a wire the author
+    /// owes anyone: validation must not demand it be connected (spec §20.6).
+    @Test func thePlusSocketIsNeverAMissingConnection() {
+        let (doc, gid, _) = Self.fixture()
+        let def = doc.definitions[gid]!
+        #expect(doc.shape(of: def.outputNode!, registry: reg)?.inputs.map(\.name) == ["out", "+"])
+        #expect(GraphValidator.validate(document: doc, registry: reg, target: .fragment).isEmpty)
+        #expect(GraphValidator.isValidViewer(SocketRef(def.inputNode!, "+"), in: doc, registry: reg) == false)
+    }
+
     @Test func definitionsNeedExactlyOnePseudoNodeOfEachKind() {
         var (doc, gid, _) = Self.fixture()
         let extra = NodeInstance(kind: .groupOutput)

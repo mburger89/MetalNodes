@@ -23,9 +23,10 @@ extension EditorModel {
     public func toggleViewer(_ ref: SocketRef) { setViewer(viewState.viewer == ref ? nil : ref) }
 
     /// The node's first declared output, the socket the header badge and ⌘⇧V act on. Resolves
-    /// document-wide, so it also works on a node inside a definition (spec §20.3).
+    /// document-wide, so it also works on a node inside a definition (spec §20.3). A `GroupInput`'s
+    /// trailing `+` is an output in shape only and carries no value (spec §20.6).
     public func firstOutput(of id: NodeID) -> SocketRef? {
-        guard let first = shape(of: id)?.outputs.first else { return nil }
+        guard let first = shape(of: id)?.outputs.first(where: { !NodeShape.isPlus($0) }) else { return nil }
         return SocketRef(id, first.name)
     }
 

@@ -128,11 +128,14 @@ import MetalNodesCore
         let inner: (NodeInstance) -> NodeShape? = { doc.shape(of: $0, in: .definition(wobble.id), registry: reg) }
         let inputID = try #require(wobble.inputNode)
         let gi = try #require(wobble.graph.nodes[inputID])
-        // Group Input exposes the definition's one input as its own output: header 26 + 16 + 1 × 22
-        #expect(NodeGeometry.frame(for: gi, shapes: inner) == CGRect(x: 0, y: 0, width: 190, height: 64))
+        // Group Input exposes the definition's one input as its own output, plus the trailing `+`
+        // row sockets are added by wiring into (spec §20.6): header 26 + 16 + 2 × 22
+        #expect(NodeGeometry.frame(for: gi, shapes: inner) == CGRect(x: 0, y: 0, width: 190, height: 86))
         let outputID = try #require(wobble.outputNode)
         let go = try #require(wobble.graph.nodes[outputID])
-        #expect(NodeGeometry.frame(for: go, shapes: inner) == CGRect(x: 600, y: 0, width: 190, height: 64))
+        #expect(NodeGeometry.frame(for: go, shapes: inner) == CGRect(x: 600, y: 0, width: 190, height: 86))
+        // The `+` is last, so the declared sockets keep their rows.
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(outputID, "+"), in: wobble.graph, shapes: inner) == CGPoint(x: 600, y: 64))
     }
 
     @Test func socketAnchorsFollowExposedSockets() throws {

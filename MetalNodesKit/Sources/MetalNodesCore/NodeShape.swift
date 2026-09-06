@@ -30,6 +30,20 @@ public struct NodeShape: Sendable, Hashable {
     public func input(named n: String) -> SocketDecl? { inputs.first { $0.name == n } }
     public func output(named n: String) -> SocketDecl? { outputs.first { $0.name == n } }
     public func param(named n: String) -> ParamDecl? { params.first { $0.name == n } }
+
+    // MARK: The `+` socket (spec §20.6)
+
+    /// The name of the trailing socket a pseudo-node grows so sockets can be added by wiring into
+    /// it. `+` cannot collide with a real socket name: `GroupOperations.uniqueSocketName` sanitises
+    /// every exposed name to an identifier.
+    public static let plusSocketName = "+"
+
+    /// A pseudo-node's trailing `+`. Typed `float` and `.required` so it never claims a uniform
+    /// slot or a `ParamControl`; everything that would treat it as a real socket — validation,
+    /// typing, emission, the viewer badge — asks `isPlus` first.
+    static let plusSocket = SocketDecl(name: plusSocketName, label: plusSocketName, type: .concrete(.float), default: .required)
+
+    public static func isPlus(_ decl: SocketDecl) -> Bool { decl.name == plusSocketName }
 }
 
 public extension ShaderDocument {
@@ -42,12 +56,15 @@ public extension ShaderDocument {
         case .group(let gid):
             guard let d = definitions[gid] else { return nil }
             return NodeShape(title: d.name, category: .group, accent: d.accent, inputs: d.inputs, outputs: d.outputs)
+        // Both pseudo-nodes end in the `+` socket new sockets are added by wiring into (spec §20.6).
         case .groupInput:
             guard case .definition(let gid) = path, let d = definitions[gid] else { return nil }
-            return NodeShape(title: "Group Input", category: .group, accent: d.accent, outputs: d.inputs, isPseudo: true)
+            return NodeShape(title: "Group Input", category: .group, accent: d.accent,
+                             outputs: d.inputs + [NodeShape.plusSocket], isPseudo: true)
         case .groupOutput:
             guard case .definition(let gid) = path, let d = definitions[gid] else { return nil }
-            return NodeShape(title: "Group Output", category: .group, accent: d.accent, inputs: d.outputs, isPseudo: true)
+            return NodeShape(title: "Group Output", category: .group, accent: d.accent,
+                             inputs: d.outputs + [NodeShape.plusSocket], isPseudo: true)
         }
     }
 

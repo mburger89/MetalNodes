@@ -47,8 +47,10 @@ public enum TypeResolver {
                 outputTypes: Dictionary(uniqueKeysWithValues: def.outputs.map { ($0.name, concrete($0.type)) }))
             resolved[id] = node
 
-            // 2. Every wire into this node must be convertible.
-            for decl in def.inputs {
+            // 2. Every wire into this node must be convertible. The canvas turns a drop on a
+            // pseudo-node's `+` into an exposed socket, so no wire should ever end there — and if
+            // one does, it is not a conversion to complain about (spec §20.6).
+            for decl in def.inputs where !NodeShape.isPlus(decl) {
                 guard let src = graph.inputs[SocketRef(id, decl.name)],
                       let srcType = resolved[src.node]?.outputTypes[src.socket] else { continue }
                 let dst = node.inputTypes[decl.name]!

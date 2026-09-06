@@ -250,15 +250,18 @@ struct NodeView: View {
         let ref = SocketRef(node.id, decl.name)
         let type = resolved?.inputTypes[decl.name] ?? concrete(decl.type)
         let wired = graph.inputs[ref] != nil
-        let dim = dragType.map { !DropResolver.compatible($0, type) } ?? false
+        // The `+` takes any non-texture type (spec §20.6), so a drag only dims it for a texture.
+        let dim = dragType.map { NodeShape.isPlus(decl) ? $0 == .texture : !DropResolver.compatible($0, type) } ?? false
         return HStack(spacing: 6) {
             SocketView(type: type, dimmed: dim)
                 .socketAnchor(ref)
                 .offset(x: -8 - SocketView.size / 2)
                 .gesture(socketDrag(ref, isInput: true))
             // A pseudo-node carries no params of its own: its rows mirror the definition's
-            // sockets, so an unwired one stays a plain label (spec §20.8).
-            if !wired, !shape.isPseudo, case .value(let dflt) = decl.default {
+            // sockets, so an unwired one stays a plain label, and the trailing `+` a glyph (spec §20.8).
+            if NodeShape.isPlus(decl) {
+                plusGlyph
+            } else if !wired, !shape.isPseudo, case .value(let dflt) = decl.default {
                 ParamControl(label: decl.label, kind: .value(type, range: decl.range),
                              value: coerced(node.params[decl.name] ?? dflt, to: type),
                              onChange: { onChange(.setParam(node.id, decl.name, $0)) },
@@ -274,12 +277,21 @@ struct NodeView: View {
         let type = resolved?.outputTypes[decl.name] ?? concrete(decl.type)
         return HStack(spacing: 6) {
             Spacer()
-            Text(decl.label).font(.caption)
+            if NodeShape.isPlus(decl) { plusGlyph } else { Text(decl.label).font(.caption) }
             SocketView(type: type, dimmed: dragType != nil)
                 .socketAnchor(ref)
                 .offset(x: 8 + SocketView.size / 2)
                 .gesture(socketDrag(ref, isInput: false))
         }
+    }
+
+    /// A pseudo-node's trailing `+` row: the glyph stands in for a label, and wiring into it (or
+    /// out of it) is what adds a socket to the definition (spec §20.6, §20.8).
+    private var plusGlyph: some View {
+        Image(systemName: "plus")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(DraculaToken.muted.color)
+            .accessibilityLabel("Add socket")
     }
 
     private func socketDrag(_ ref: SocketRef, isInput: Bool) -> some Gesture {

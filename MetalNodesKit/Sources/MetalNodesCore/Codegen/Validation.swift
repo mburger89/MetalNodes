@@ -110,8 +110,9 @@ public enum GraphValidator {
         }
 
         // Required inputs — a `.required` input on a pseudo-node or instance must be wired too.
+        // A pseudo-node's `+` is a gesture target, not a socket anyone owes a wire (spec §20.6).
         for (id, s) in shapes.sorted(by: { $0.key.raw.uuidString < $1.key.raw.uuidString }) {
-            for decl in s.inputs where decl.default == .required && graph.inputs[SocketRef(id, decl.name)] == nil {
+            for decl in s.inputs where !NodeShape.isPlus(decl) && decl.default == .required && graph.inputs[SocketRef(id, decl.name)] == nil {
                 out.append(Diagnostic(.error, "“\(decl.label)” must be connected", node: id, socket: decl.name))
             }
         }
@@ -130,8 +131,10 @@ public enum GraphValidator {
     }
 
     /// A viewer must name an existing node's output of a viewable (non-texture) type — in any graph.
+    /// A `GroupInput`'s `+` is an output in shape only and carries no value (spec §20.6).
     public static func isValidViewer(_ ref: SocketRef, in doc: ShaderDocument, registry: NodeRegistry) -> Bool {
-        guard let s = doc.shape(of: ref.node, registry: registry), let decl = s.output(named: ref.socket) else { return false }
+        guard let s = doc.shape(of: ref.node, registry: registry), let decl = s.output(named: ref.socket),
+              !NodeShape.isPlus(decl) else { return false }
         if case .concrete(.texture) = decl.type { return false }
         return true
     }

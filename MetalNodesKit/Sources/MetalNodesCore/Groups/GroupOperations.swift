@@ -254,7 +254,9 @@ public enum GroupOperations {
         var out = doc; out.definitions[id] = nil; return out
     }
 
-    static func zero(_ t: SocketType) -> ParamValue {
+    /// The default an exposed input starts at (spec §20.6) — public so the editor's
+    /// "Expose Input" can build the same declaration `group` does.
+    public static func zero(_ t: SocketType) -> ParamValue {
         switch t {
         case .float: .float(0)
         case .float2: .float2(.zero)

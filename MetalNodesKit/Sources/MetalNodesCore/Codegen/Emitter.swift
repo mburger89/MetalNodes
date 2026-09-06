@@ -45,6 +45,9 @@ enum Emitter {
                      viewInstance: (id: NodeID, function: GroupFunction)? = nil) -> Output {
         let doc = doc ?? { var d = ShaderDocument(); d.root = graph; return d }()
         func shape(_ inst: NodeInstance) -> NodeShape? { doc.shape(of: inst, in: path, registry: registry) }
+        /// A pseudo-node's shape ends in the `+` socket, which is a gesture target rather than
+        /// anything to emit — the definition's signature comes from its declared sockets (spec §20.6).
+        func declared(_ decls: [SocketDecl]) -> [SocketDecl] { decls.filter { !NodeShape.isPlus($0) } }
         /// The dived-through instance calls its definition's view variant; every other instance of
         /// the same definition keeps the normal function (spec §20.5).
         func function(for gid: GroupID, at id: NodeID) -> GroupFunction? {
@@ -80,7 +83,7 @@ enum Emitter {
                 if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
                 for p in function(for: gid, at: id)?.uniformParams ?? [] { request(p.path, p.type) }
             case .groupOutput:
-                if let s = shape(inst) { requestUnwiredInputs(id, s.inputs, r) }
+                if let s = shape(inst) { requestUnwiredInputs(id, declared(s.inputs), r) }
             case .groupInput:
                 break
             }
@@ -164,8 +167,8 @@ enum Emitter {
             case .groupInput:
                 // Each exposed input arrives as a function parameter (spec §20.4).
                 guard let s = shape(inst) else { continue }
-                let outputs = declareOutputs(id, s.outputs, r)
-                for decl in s.outputs {
+                let outputs = declareOutputs(id, declared(s.outputs), r)
+                for decl in declared(s.outputs) {
                     out.bodyLines.append("\(outputs[decl.name]!) = in_\(decl.name);")
                     out.lineOwners.append(id)
                 }
@@ -173,7 +176,7 @@ enum Emitter {
             case .groupOutput:
                 // No statements: the enclosing function turns these expressions into struct fields.
                 guard let s = shape(inst) else { continue }
-                let inputs = inputExpressions(id, s.inputs, r)
+                let inputs = inputExpressions(id, declared(s.inputs), r)
                 out.inputExpressions[id] = inputs
 
             case .group(let gid):

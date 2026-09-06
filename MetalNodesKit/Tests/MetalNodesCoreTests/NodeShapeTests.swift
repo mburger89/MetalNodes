@@ -36,14 +36,29 @@ import CoreGraphics
         #expect(doc.definitions[gid]?.name == "Fbm")
     }
 
-    @Test func pseudoNodeShapesMirrorTheEnclosingDefinition() {
+    /// Each pseudo-node also carries the trailing `+` socket sockets are added by wiring into
+    /// (spec §20.6): an output on `GroupInput`, an input on `GroupOutput`.
+    @Test func pseudoNodeShapesMirrorTheEnclosingDefinitionAndEndInAPlusSocket() {
         let (doc, gid, _) = docWithGroup()
         let def = doc.definitions[gid]!
         let inShape = doc.shape(of: def.inputNode!, registry: reg)!
         let outShape = doc.shape(of: def.outputNode!, registry: reg)!
-        #expect(inShape.title == "Group Input" && inShape.inputs.isEmpty && inShape.outputs.map(\.name) == ["uv", "scale"] && inShape.isPseudo)
-        #expect(outShape.title == "Group Output" && outShape.outputs.isEmpty && outShape.inputs.map(\.name) == ["value"] && outShape.isPseudo)
+        #expect(inShape.title == "Group Input" && inShape.inputs.isEmpty && inShape.outputs.map(\.name) == ["uv", "scale", "+"] && inShape.isPseudo)
+        #expect(outShape.title == "Group Output" && outShape.outputs.isEmpty && outShape.inputs.map(\.name) == ["value", "+"] && outShape.isPseudo)
         #expect(doc.node(def.inputNode!)?.path == .definition(gid))
+        let plus = outShape.inputs.last!
+        #expect(NodeShape.isPlus(plus) && plus.type == TypeRef.concrete(.float) && plus.default == SocketDefault.required)
+        #expect(NodeShape.isPlus(inShape.outputs.first!) == false)
+    }
+
+    /// Only a pseudo-node grows one: a group instance's sockets are exactly its definition's.
+    @Test func instancesAndBuiltinsHaveNoPlusSocket() throws {
+        let (doc, _, iid) = docWithGroup()
+        let s = doc.shape(of: iid, registry: reg)!
+        #expect(s.inputs.contains { NodeShape.isPlus($0) } == false)
+        #expect(s.outputs.contains { NodeShape.isPlus($0) } == false)
+        let math = try #require(reg["math.math"])
+        #expect(NodeShape(def: math).inputs.contains { NodeShape.isPlus($0) } == false)
     }
 
     @Test func makeCreatesBothPseudoNodesAndSubscriptMutatesTheRightGraph() {
