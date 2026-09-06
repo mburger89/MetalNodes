@@ -2,7 +2,10 @@ import CoreGraphics
 import MetalNodesCore
 
 /// Pan/zoom math for the node canvas. Screen = canvas × zoom + pan.
-public struct CanvasTransform: Equatable, Sendable {
+///
+/// `nonisolated` because `TouchIntentMapper` is: the module's default isolation would otherwise
+/// make `toCanvas` a main-actor method the pure mapper cannot call (spec §22.2).
+nonisolated public struct CanvasTransform: Equatable, Sendable {
     public static let minZoom: CGFloat = 0.15
     public static let maxZoom: CGFloat = 4
 

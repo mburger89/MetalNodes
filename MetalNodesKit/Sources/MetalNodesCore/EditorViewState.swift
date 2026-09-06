@@ -13,6 +13,12 @@ public struct Camera: Codable, Sendable, Hashable {
     public init(pan: CGSize = .zero, zoom: CGFloat = 1) { self.pan = pan; self.zoom = zoom }
 }
 
+/// What a one-finger drag on the canvas does (spec §22.2). Persisted view state, never
+/// snapshotted or undone; on macOS it exists but nothing reads it.
+public enum CanvasMode: String, Codable, Sendable, CaseIterable {
+    case pointer, select, lasso
+}
+
 /// Persisted next to the document, never part of an undo snapshot (spec §3, §5).
 public struct EditorViewState: Sendable, Hashable {
     public var cameras: [GraphPath: Camera] = [:]
@@ -33,6 +39,11 @@ public struct EditorViewState: Sendable, Hashable {
     public var showsCode = false
     /// View ▸ Minimap, on by default (spec §21.6).
     public var showsMinimap = true
+    /// The iPad canvas's drag mode (spec §22.2). `.pointer` for every document that predates M6.
+    public var canvasMode: CanvasMode = .pointer
+    /// The iPad's trailing inspector column — preview, inspector and (with `showsCode`) the code
+    /// panel — on by default (spec §22.3).
+    public var showsInspector = true
     public init() {}
 
     /// The graph the editor is bound to: the last dived instance's definition, else the edited
@@ -49,7 +60,7 @@ public struct EditorViewState: Sendable, Hashable {
 extension EditorViewState: Codable {
     private enum Keys: String, CodingKey {
         case cameras, editingStack, editingDefinition, viewer, viewerPath, viewerDefinition, selection
-        case selectedComments, showsCode, showsMinimap
+        case selectedComments, showsCode, showsMinimap, canvasMode, showsInspector
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -63,6 +74,8 @@ extension EditorViewState: Codable {
         selectedComments = try c.decodeIfPresent(Set<CommentID>.self, forKey: .selectedComments) ?? []
         showsCode = try c.decodeIfPresent(Bool.self, forKey: .showsCode) ?? false
         showsMinimap = try c.decodeIfPresent(Bool.self, forKey: .showsMinimap) ?? true
+        canvasMode = try c.decodeIfPresent(CanvasMode.self, forKey: .canvasMode) ?? .pointer
+        showsInspector = try c.decodeIfPresent(Bool.self, forKey: .showsInspector) ?? true
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -73,5 +86,6 @@ extension EditorViewState: Codable {
         try c.encode(selection, forKey: .selection)
         try c.encode(selectedComments, forKey: .selectedComments)
         try c.encode(showsCode, forKey: .showsCode); try c.encode(showsMinimap, forKey: .showsMinimap)
+        try c.encode(canvasMode, forKey: .canvasMode); try c.encode(showsInspector, forKey: .showsInspector)
     }
 }

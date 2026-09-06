@@ -1,7 +1,9 @@
 import CoreGraphics
 import MetalNodesCore
 
-public enum SelectionMode: Sendable { case replace, add, toggle }
+/// `nonisolated` so `CanvasIntent`'s synthesized `Equatable` is a plain conformance rather than a
+/// main-actor-isolated one (the module defaults to `MainActor` isolation).
+nonisolated public enum SelectionMode: Sendable { case replace, add, toggle }
 
 /// Selection lives in `viewState` (persisted, never undone — spec §5, §18.2).
 extension EditorModel {
