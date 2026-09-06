@@ -7,6 +7,7 @@ struct ParamControl: View {
     let kind: ParamKind
     let value: ParamValue
     let onChange: (ParamValue) -> Void
+    var onEditing: ((Bool) -> Void)? = nil
 
     var body: some View {
         switch kind {
@@ -32,7 +33,8 @@ struct ParamControl: View {
             let f: Float = { if case .float(let x) = value { return x } else { return 0 } }()
             HStack(spacing: 4) {
                 Text(label).font(.caption).frame(width: 46, alignment: .leading)
-                Slider(value: Binding(get: { f }, set: { onChange(.float($0)) }), in: range ?? -10...10)
+                Slider(value: Binding(get: { f }, set: { onChange(.float($0)) }), in: range ?? -10...10,
+                       onEditingChanged: { onEditing?($0) })
                     .controlSize(.mini)
                 Text(f.formatted(.number.precision(.fractionLength(2)))).font(.caption2.monospacedDigit()).frame(width: 36, alignment: .trailing)
             }

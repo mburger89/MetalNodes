@@ -3,13 +3,32 @@ import Observation
 import MetalNodesCore
 import MetalNodesRender
 
+public enum CanvasRequest: Equatable, Sendable {
+    case fitAll, fitSelection
+    /// Add a builtin at the viewport centre (palette double-click).
+    case place(defID: String)
+}
+
 @MainActor
 @Observable
 public final class EditorModel {
     public private(set) var document: ShaderDocument
     public var viewState = EditorViewState()
+    /// The one selected wire, by its input socket. Transient (not view state, not undo).
+    public var selectedWire: SocketRef?
+    /// One-shot requests from menus/commands to the canvas view, which consumes and clears them.
+    public var canvasRequest: CanvasRequest?
+    public func requestCanvas(_ r: CanvasRequest) { canvasRequest = r }
+    /// Bumped whenever the undo stack changes, so `canUndo`/`canRedo` (which forward to the
+    /// non-`@Observable` `UndoManager`) trigger SwiftUI updates (menu `.disabled(...)`).
+    public var undoStackVersion = 0
+    /// Whether the canvas (as opposed to a node's parameter field) is the focused responder.
+    /// Gates menu-command keyboard shortcuts so they don't steal keystrokes from text fields.
+    public var canvasHasFocus = false
     public let preview: PreviewState
     public let registry: NodeRegistry
+    public let pasteboard: any Pasteboarding
+    public nonisolated static let pasteboardType = "com.maxburger.metalnodes.graph"
     public private(set) var diagnostics: [Diagnostic] = []
     public private(set) var generatedSource = ""
     public private(set) var resolvedTypes: [NodeID: ResolvedNode] = [:]
@@ -23,12 +42,21 @@ public final class EditorModel {
     /// new edit landed while it was suspended (`Task` is a struct — no identity to compare).
     private var scheduleCount = 0
 
+    // MARK: Undo (spec §18.3) — see EditorModel+Undo.swift
+    public let undoManager = UndoManager()
+    var transactionSnapshot: ShaderDocument?
+    var transactionName = ""
+    var transactionDepth = 0
+
     public init(document: ShaderDocument, compiler: any ShaderCompiling,
-                registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState()) {
+                registry: NodeRegistry = .builtin, preview: PreviewState = PreviewState(),
+                pasteboard: any Pasteboarding = SystemPasteboard()) {
         self.document = document
         self.compiler = compiler
         self.registry = registry
         self.preview = preview
+        self.pasteboard = pasteboard
+        undoManager.groupsByEvent = false
     }
 
     /// First compile, undebounced.
@@ -51,19 +79,49 @@ public final class EditorModel {
     }
 
     public func apply(_ change: DocumentChange) {
+        if case .restore = change {             // undo/redo path: no transaction, no registration
+            perform(change)
+            return
+        }
+        if transactionSnapshot != nil {
+            perform(change)
+        } else {
+            let before = document
+            perform(change)
+            commitUndo(before: before, name: change.undoName)
+        }
+    }
+
+    private func perform(_ change: DocumentChange) {
+        // Set by a case that is topology for a reason `changeClass` cannot see on its own.
+        var recompile = false
         switch change {
-        case .moveNode(let id, let p):
-            document.root.nodes[id]?.position = p
+        case .moveNodes(let positions):
+            for (id, p) in positions { document.root.nodes[id]?.position = p }
         case .setParam(let id, let key, let value):
             document.root.nodes[id]?.params[key] = value
+        case .setTitle(let id, let title):
+            document.root.nodes[id]?.customTitle = title.flatMap { $0.isEmpty ? nil : $0 }
         case .connect(let from, let to):
             document.root.connect(from, to: to)
         case .disconnect(let input):
             document.root.disconnect(input)
         case .addNode(let n):
             document.root.nodes[n.id] = n
-        case .removeNode(let id):
-            document.root.remove(node: id)
+        case .removeNodes(let ids):
+            document.root.remove(nodes: ids)
+            pruneSelection()
+        case .insert(let nodes, let edges):
+            for n in nodes { document.root.nodes[n.id] = n }
+            for e in edges { document.root.connect(e.from, to: e.to) }
+        case .setSettings(let s):
+            // Spec §18.2: settings are cosmetic unless `fastMath` flips — that one is part of the
+            // pipeline cache key, so it needs a rebuild; preview size and time mode do not.
+            recompile = s.fastMath != document.settings.fastMath
+            document.settings = s
+        case .restore(let doc):
+            document = doc
+            pruneSelection()
         }
 
         switch change.changeClass {
@@ -77,8 +135,14 @@ public final class EditorModel {
                 preview.uniforms = img
             }
         case .topology:
-            scheduleCompile()
+            recompile = true
         }
+        if recompile { scheduleCompile() }
+    }
+
+    /// Selection may only reference nodes that exist (spec §18.3).
+    func pruneSelection() {
+        viewState.selection = viewState.selection.filter { document.root.nodes[$0] != nil }
     }
 
     private func scheduleCompile() {
@@ -111,13 +175,14 @@ public final class EditorModel {
             case .invalid(let diags):
                 diagnostics = diags
             }
+            preview.lastError = nil
             return                                   // keep last-good pipeline
         }
         diagnostics = []
         generatedSource = shader.source
         resolvedTypes = shader.resolved
 
-        switch await compiler.compile(shader, generation: gen) {
+        switch await compiler.compile(shader, generation: gen, fastMath: doc.settings.fastMath) {
         case .success(let pipeline):
             guard pipeline.generation == generation else { return }
             preview.pipeline = pipeline
@@ -128,9 +193,8 @@ public final class EditorModel {
             preview.lastError = message
             var mapped: [Diagnostic] = []
             for l in lines {
-                if let node = shader.lineMap.node(forLine: l.line) {
-                    mapped.append(Diagnostic(.error, l.message, node: node))
-                }
+                let sev: Diagnostic.Severity = l.severity == .error ? .error : .warning
+                mapped.append(Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line)))
             }
             diagnostics = mapped.isEmpty ? [Diagnostic(.error, message)] : mapped
         case .superseded:

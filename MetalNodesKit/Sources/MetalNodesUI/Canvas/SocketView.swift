@@ -9,9 +9,12 @@ struct SocketAnchorKey: PreferenceKey {
 }
 
 /// Circle for scalars/vectors, diamond for color, square for texture (spec §7.1).
+/// The visible dot is 10 pt; the hit area is 20 pt so wires are easy to grab.
 struct SocketView: View {
     let type: SocketType
+    var dimmed = false
     static let size: CGFloat = 10
+    static let hitSize: CGFloat = 20
 
     var body: some View {
         let fill = DraculaTheme.token(for: type).color
@@ -35,6 +38,10 @@ struct SocketView: View {
                 }
             }
         }
+        .opacity(dimmed ? 0.3 : 1)
+        .frame(width: Self.hitSize, height: Self.hitSize)
+        .contentShape(Rectangle())
+        .frame(width: Self.size, height: Self.size)   // report 10 pt to the row
     }
 }
 

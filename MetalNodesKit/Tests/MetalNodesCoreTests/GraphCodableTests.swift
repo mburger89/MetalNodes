@@ -69,4 +69,25 @@ import Foundation
         let data = try JSONEncoder().encode(vs)
         #expect(try JSONDecoder().decode(EditorViewState.self, from: data) == vs)
     }
+
+    @Test func internalEdgesOnlyIncludeEdgesWithBothEndsInside() {
+        var (g, a, b) = twoNodeGraph()
+        let c = NodeInstance(kind: .builtin("input.time"))
+        g.nodes[c.id] = c
+        g.connect(SocketRef(c.id, "time"), to: SocketRef(b, "color"))   // replaces a→b
+        g.connect(SocketRef(a, "uv"), to: SocketRef(c.id, "x"))         // a→c (nonsense socket, fine for the graph type)
+        #expect(g.internalEdges(among: [a, c.id]) == [Edge(to: SocketRef(c.id, "x"), from: SocketRef(a, "uv"))])
+        #expect(g.internalEdges(among: [b]).isEmpty)
+        #expect(g.edgeList.count == 2)
+    }
+
+    @Test func removeNodesDropsAllTouchingWiresInOneCall() {
+        var (g, a, b) = twoNodeGraph()
+        let c = NodeInstance(kind: .builtin("math.math"))
+        g.nodes[c.id] = c
+        g.connect(SocketRef(a, "uv"), to: SocketRef(c.id, "a"))
+        g.remove(nodes: [a, c.id])
+        #expect(g.nodes.keys.sorted { $0.raw.uuidString < $1.raw.uuidString } == [b])
+        #expect(g.inputs.isEmpty)
+    }
 }
