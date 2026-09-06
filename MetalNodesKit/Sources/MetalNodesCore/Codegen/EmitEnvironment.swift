@@ -10,6 +10,8 @@ public struct EmitEnvironment: Sendable {
     public var textureSample: @Sendable (TextureSlot, _ uvExpr: String) -> String
     /// How a *call site* in this program spells a slot it passes to a group function.
     public var textureName: @Sendable (TextureSlot) -> String
+    /// True in the two environments that sample a SwiftUI `Layer` instead of a bound texture.
+    public var usesLayer: Bool
 
     public static let sysNames: Set<String> = ["uv", "time", "resolution", "mouse"]
 
@@ -21,11 +23,13 @@ public struct EmitEnvironment: Sendable {
     public init(uniform: @escaping @Sendable (UniformField) -> String, sys: [String: String],
                 textureSample: @escaping @Sendable (TextureSlot, String) -> String
                     = { slot, uv in EmitEnvironment.flippedSample(slot.fragmentName, uv) },
-                textureName: @escaping @Sendable (TextureSlot) -> String = { $0.fragmentName }) {
+                textureName: @escaping @Sendable (TextureSlot) -> String = { $0.fragmentName },
+                usesLayer: Bool = false) {
         self.uniform = uniform
         self.sys = sys
         self.textureSample = textureSample
         self.textureName = textureName
+        self.usesLayer = usesLayer
     }
 
     /// The fragment program (and every viewer program): a `constant Uniforms &u` buffer.
@@ -43,6 +47,16 @@ public struct EmitEnvironment: Sendable {
         sys: ["uv": "uv", "time": "time", "resolution": "size", "mouse": "mouse"],
         textureSample: { slot, uv in flippedSample(slot.parameterName, uv) },
         textureName: { $0.parameterName })
+
+    /// Inside a group function's **layer variant** (spec §22.7): the definition takes no texture
+    /// parameter at all — every Texture Sample reads the `SwiftUI::Layer` the caller passes down,
+    /// at the caller's `position`, exactly as the exported root function does.
+    public static let groupFunctionLayer = EmitEnvironment(
+        uniform: groupFunction.uniform,
+        sys: groupFunction.sys,
+        textureSample: { _, _ in "float4(layer.sample(position))" },
+        textureName: { _ in "layer" },
+        usesLayer: true)
 
     /// Inside a stitchable function: uniforms are arguments named after their slots; SwiftUI has
     /// no int/bool `Shader.Argument`, so those arrive as `float` and are cast on read, and
@@ -66,5 +80,6 @@ public struct EmitEnvironment: Sendable {
         uniform: stitchableFunction.uniform,
         sys: stitchableFunction.sys,
         textureSample: { _, _ in "float4(layer.sample(position))" },
-        textureName: { _ in "layer" })
+        textureName: { _ in "layer" },
+        usesLayer: true)
 }

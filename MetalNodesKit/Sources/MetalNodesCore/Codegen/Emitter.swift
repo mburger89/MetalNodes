@@ -51,7 +51,8 @@ enum Emitter {
                      env: EmitEnvironment = .fragment,
                      reserved: [UniformLayoutBuilder.Reserved] = UniformLayoutBuilder.standardReserved,
                      functions: [GroupID: GroupFunction] = [:],
-                     viewInstance: (id: NodeID, function: GroupFunction)? = nil) -> Output {
+                     viewInstance: (id: NodeID, function: GroupFunction)? = nil,
+                     layerFunctions: [GroupID: GroupFunction] = [:]) -> Output {
         let doc = doc ?? { var d = ShaderDocument(); d.root = graph; return d }()
         func shape(_ inst: NodeInstance) -> NodeShape? { doc.shape(of: inst, in: path, registry: registry) }
         /// A pseudo-node's shape ends in the `+` socket, which is a gesture target rather than
@@ -220,10 +221,19 @@ enum Emitter {
                             env.sys["resolution"] ?? "u.resolution", env.sys["mouse"] ?? "u.mouse"]
                 args += fn.inputs.map { inputs[$0.name] ?? GroupCodegen.zeroLiteral(r.inputTypes[$0.name] ?? .float) }
                 args += fn.uniformParams.map { uniformExpr($0.path) }
-                // The function names its texture parameters by asset; this program spells the same
-                // assets by its own slots (spec §21.2).
-                args += fn.textureParams.map { env.textureName(textureSlots[$0.asset]!) }
-                out.bodyLines.append("\(fn.structName) \(result) = \(fn.name)(\(args.joined(separator: ", ")));")
+                // A program that samples the layer has no texture to pass: it calls the callee's
+                // layer variant and hands down its own `layer` and `position` (spec §22.7).
+                let callee: GroupFunction
+                if env.usesLayer, !fn.textureParams.isEmpty, let variant = layerFunctions[gid] {
+                    callee = variant
+                    args += ["layer", "position"]
+                } else {
+                    callee = fn
+                    // The function names its texture parameters by asset; this program spells the
+                    // same assets by its own slots (spec §21.2).
+                    args += fn.textureParams.map { env.textureName(textureSlots[$0.asset]!) }
+                }
+                out.bodyLines.append("\(callee.structName) \(result) = \(callee.name)(\(args.joined(separator: ", ")));")
                 out.lineOwners.append(id)
                 if let viewed = fn.viewedType {
                     // A view variant yields one socket, `value`: the viewed node's output (spec §20.5).

@@ -78,16 +78,6 @@ import CoreGraphics
         #expect(g.source.contains("t_20000000.sample(mn_sampler, "))
     }
 
-    @Test func layerEffectRefusesATextureSampleInsideAGroup() throws {
-        // The export has only `layer`, which cannot bind to the group function's `texture2d<float>`
-        // parameter — so the Layer Effect refuses a grouped sample even though it allows a root one.
-        var (d, sample) = groupDoc()
-        d.settings.target = .stitchable(.layerEffect)
-        let diags = GraphValidator.validate(document: d, registry: reg, target: d.settings.target)
-        #expect(diags.contains { $0.message == "Texture Sample inside a group needs the Fragment target" && $0.node == sample })
-        #expect(throws: GenerationError.self) { try ShaderGenerator.generate(d, target: d.settings.target, registry: reg) }
-    }
-
     @Test func colorEffectRefusesTextureSampleAndLayerEffectSamplesTheLayer() throws {
         var d = doc()
         d.settings.target = .stitchable(.colorEffect)
@@ -106,19 +96,21 @@ import CoreGraphics
     /// The Color/Distortion Effect refusal is a property of the target, not of each node: however
     /// many samples the document holds — including ones inside definitions, whose nodes the root
     /// canvas never shows — the reader is told once.
-    /// Ungroup leaves the definition in My Functions with no instance. Nothing exports it, so the
-    /// Layer Effect has no quarrel with the sample inside it — the document must still generate.
+    /// Ungroup leaves the definition in My Functions with no instance. Nothing exports it, so its
+    /// Texture Sample reaches no program: no diagnostic, no slot, and no `_layer` variant — the
+    /// Layer Effect's grouped-sample refusal is gone entirely (spec §22.7).
     @Test func layerEffectIgnoresATextureSampleInAnUninstantiatedDefinition() throws {
         var (d, sample) = groupDoc()
         let gid = d.definitions.keys.first!
         for n in d.root.nodes.values where n.kind == .group(gid) { d.root.remove(node: n.id) }
         d.settings.target = .stitchable(.layerEffect)
         d.settings.exportName = "fx"
-        let message = "Texture Sample inside a group needs the Fragment target"
         let diags = GraphValidator.validate(document: d, registry: reg, target: d.settings.target)
-        #expect(!diags.contains { $0.message == message })
         #expect(!diags.contains { $0.node == sample })
-        #expect(throws: Never.self) { try ShaderGenerator.generate(d, target: d.settings.target, registry: reg) }
+        #expect(GraphValidator.reachableDefinitions(d).isEmpty)
+        let s = try ShaderGenerator.generate(d, target: d.settings.target, registry: reg)
+        #expect(s.textures.isEmpty)
+        #expect(s.exportSource?.contains("_layer") == false)
     }
 
     /// The Color/Distortion refusal is scoped the same way: an uninstantiated definition is not part

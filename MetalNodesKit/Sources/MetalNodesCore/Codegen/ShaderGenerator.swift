@@ -103,8 +103,8 @@ public enum ShaderGenerator {
             return assembleFragment(doc, order: order, terminal: terminal, viewer: viewer, resolved: resolved, registry: registry,
                                     functions: functions, groupFunctions: groupFunctions)
         case .stitchable(let kind):
-            return assembleStitchable(doc, kind: kind, order: order, terminal: terminal, resolved: resolved, registry: registry,
-                                      functions: functions, groupFunctions: groupFunctions)
+            return try assembleStitchable(doc, kind: kind, order: order, terminal: terminal, resolved: resolved, registry: registry,
+                                          functions: functions, groupOrder: groupOrder, groupFunctions: groupFunctions)
         }
     }
 
@@ -158,17 +158,33 @@ public enum ShaderGenerator {
 
     private static func assembleStitchable(_ doc: ShaderDocument, kind: StitchableKind, order: [NodeID], terminal: NodeID,
                                            resolved: [NodeID: ResolvedNode], registry: NodeRegistry,
-                                           functions: [GroupID: GroupFunction], groupFunctions: [GroupFunction]) -> GeneratedShader {
+                                           functions: [GroupID: GroupFunction], groupOrder: [GroupID],
+                                           groupFunctions: [GroupFunction]) throws(GenerationError) -> GeneratedShader {
         let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
         let emitted = Emitter.emit(order: order, graph: doc.root, path: .root, document: doc, registry: registry, resolved: resolved,
                                    env: .stitchableFunction, functions: functions)
         let textures = emitted.textureRequests
         // The preview binds the assets as textures; the export has none to bind and reads the layer
-        // SwiftUI passes instead, so it needs its own emission (spec §21.2). Only the Layer Effect
-        // gets here with textures at all — validation refuses the other two kinds.
+        // SwiftUI passes instead, so it needs its own emission (spec §21.2).
+        //
+        // Every reachable definition whose *transitive* body samples gets a `_layer` variant —
+        // `textureParams` already carries containment transitively, so a definition that only
+        // instantiates a sampling one is in this list too. `groupOrder` is inner-first, so each
+        // variant is built after the variants it calls and can name them (spec §22.7).
+        var layerFunctions: [GroupID: GroupFunction] = [:]
+        if kind == .layerEffect, !textures.isEmpty {
+            for gid in groupOrder where !(functions[gid]?.textureParams.isEmpty ?? true) {
+                layerFunctions[gid] = try GroupCodegen.function(for: doc.definitions[gid]!, document: doc, registry: registry,
+                                                                functions: functions, layer: true, layerFunctions: layerFunctions)
+            }
+        }
+        /// What the export splices in: the layer variant where there is one, the normal function
+        /// otherwise. Identical to `groupFunctions` for every target but the Layer Effect.
+        let exportFunctions = groupOrder.compactMap { layerFunctions[$0] ?? functions[$0] }
         let exported = textures.isEmpty ? emitted
             : Emitter.emit(order: order, graph: doc.root, path: .root, document: doc, registry: registry,
-                           resolved: resolved, env: .layerExport, functions: functions)
+                           resolved: resolved, env: .layerExport, functions: functions,
+                           layerFunctions: layerFunctions)
         let args = StitchableCodegen.arguments(layout: emitted.layout)
         let stdlib = MSLStdlib.resolve(emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib))
 
@@ -188,7 +204,7 @@ public enum ShaderGenerator {
         var export = SourceBuilder()
         export.add("#include <metal_stdlib>" + (kind == .layerEffect ? "\n#include <SwiftUI/SwiftUI_Metal.h>" : "") + "\nusing namespace metal;\n")
         for f in stdlib { export.add(f.source + "\n") }
-        for fn in groupFunctions { export.add(fn.source, map: fn.lineMap) }
+        for fn in exportFunctions { export.add(fn.source, map: fn.lineMap) }
         function(into: &export, forExport: true)
 
         var preview = SourceBuilder()

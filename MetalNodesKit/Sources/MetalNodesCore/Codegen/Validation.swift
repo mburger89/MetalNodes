@@ -21,30 +21,17 @@ public enum GraphValidator {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
         }
-        return out + textureTargetDiagnostics(doc, target: target)
+        return out + textureTargetDiagnostics(doc, target: target, reachable: reachableDefinitions(doc))
     }
 
     /// What the SwiftUI targets make of Texture Sample (spec §21.2). Document-wide, because that is
     /// the scale each rule works at.
-    private static func textureTargetDiagnostics(_ doc: ShaderDocument, target: OutputTarget) -> [Diagnostic] {
+    private static func textureTargetDiagnostics(_ doc: ShaderDocument, target: OutputTarget,
+                                                 reachable: [GroupDefinition]) -> [Diagnostic] {
         guard case .stitchable(let kind) = target else { return [] }
-
-        // The Layer Effect has a layer to sample instead of an asset, but only the exported
-        // function can name it: a group function would take a `texture2d<float>` parameter that
-        // nothing in the export could supply. So a sample inside a definition is refused — once per
-        // node, since each is its own place to fix.
-        //
-        // Only definitions the export would actually emit, though: an unused definition (My
-        // Functions keeps the one an ungroup leaves behind) reaches no `texture2d<float>` parameter
-        // and would otherwise fail the whole document over a node the canvas cannot show.
-        let reachable = GroupDependencies.reachable(from: doc.root, in: doc)
-            .sorted { $0.raw.uuidString < $1.raw.uuidString }
-            .compactMap { doc.definitions[$0] }
-        if kind == .layerEffect {
-            return reachable
-                .flatMap { samples(in: $0.graph) }
-                .map { Diagnostic(.error, "Texture Sample inside a group needs the Fragment target", node: $0) }
-        }
+        // The Layer Effect samples the layer instead of an asset — in the root and, since M6, in
+        // every definition it emits, through the `_layer` variants (spec §22.7). Nothing to refuse.
+        guard kind != .layerEffect else { return [] }
 
         // A Color or Distortion Effect gets no texture argument from SwiftUI and has no layer
         // either, so it refuses Texture Sample outright. That is a property of the target rather
@@ -58,6 +45,15 @@ public enum GraphValidator {
         let anchor = samples(in: doc.root).first ?? reachable.lazy.flatMap { samples(in: $0.graph) }.first
         guard let anchor else { return [] }
         return [Diagnostic(.error, "Texture Sample needs the Layer Effect target", node: anchor)]
+    }
+
+    /// The definitions the root's program actually emits — every definition instantiated in the
+    /// root, transitively — sorted by id so callers see a stable order (spec §22.6). Both texture
+    /// target rules and the codegen agree on this set.
+    public static func reachableDefinitions(_ doc: ShaderDocument) -> [GroupDefinition] {
+        GroupDependencies.reachable(from: doc.root, in: doc)
+            .sorted { $0.raw.uuidString < $1.raw.uuidString }
+            .compactMap { doc.definitions[$0] }
     }
 
     /// Every Texture Sample in `graph`, ordered by id so a diagnostic always names the same one.

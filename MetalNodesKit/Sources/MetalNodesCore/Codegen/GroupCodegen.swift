@@ -28,16 +28,22 @@ public struct GroupFunction: Sendable {
     /// Every node of the definition's graph, typed. `GeneratedShader.resolved` merges these in, so
     /// the editor knows a socket's real type while dived into a definition (ruling R20).
     public let resolved: [NodeID: ResolvedNode]
+    /// True for the `…_layer` variant emitted for the Layer Effect export (spec §22.7). Its
+    /// `textureParams` still lists what the body samples — that is how a caller knows to call it —
+    /// but its signature takes `SwiftUI::Layer layer, float2 position` instead of those textures.
+    public let isLayerVariant: Bool
 
     init(id: GroupID, name: String, structName: String, inputs: [SocketDecl], outputs: [SocketDecl],
          uniformParams: [(path: ParamPath, type: SocketType)], textureParams: [TextureSlot] = [],
          requiredStdlib: [String], source: String,
-         lineMap: LineMap, viewedType: SocketType? = nil, resolved: [NodeID: ResolvedNode] = [:]) {
+         lineMap: LineMap, viewedType: SocketType? = nil, resolved: [NodeID: ResolvedNode] = [:],
+         isLayerVariant: Bool = false) {
         self.id = id; self.name = name; self.structName = structName
         self.inputs = inputs; self.outputs = outputs; self.uniformParams = uniformParams
         self.textureParams = textureParams
         self.requiredStdlib = requiredStdlib; self.source = source
         self.lineMap = lineMap; self.viewedType = viewedType; self.resolved = resolved
+        self.isLayerVariant = isLayerVariant
     }
 }
 
@@ -70,8 +76,13 @@ public enum GroupCodegen {
     /// Emits `def`'s function. `functions` must already hold every definition `def` instantiates.
     /// With `view`, emits the definition's **view variant** instead: named `…_view`, its single
     /// output `value` is the viewed socket and its body is emitted from that socket's node.
+    /// With `layer`, emits the definition's **layer variant**: named `…_layer`, it takes
+    /// `SwiftUI::Layer layer, float2 position` in place of its texture parameters and its samples
+    /// read the layer (spec §22.7). `layerFunctions` must already hold the layer variant of every
+    /// sampling definition `def` instantiates, so nested calls resolve to variants too.
     static func function(for def: GroupDefinition, document doc: ShaderDocument, registry: NodeRegistry,
-                         functions: [GroupID: GroupFunction], view: ViewOutput? = nil) throws(GenerationError) -> GroupFunction {
+                         functions: [GroupID: GroupFunction], view: ViewOutput? = nil,
+                         layer: Bool = false, layerFunctions: [GroupID: GroupFunction] = [:]) throws(GenerationError) -> GroupFunction {
         let path = GraphPath.definition(def.id)
         let terminal: NodeID
         if let view {
@@ -84,8 +95,10 @@ public enum GroupCodegen {
         let (resolved, diags) = TypeResolver.resolve(def.graph, path: path, document: doc, registry: registry, order: order)
         if !diags.isEmpty { throw .invalid(diags) }
         let emitted = Emitter.emit(order: order, graph: def.graph, path: path, document: doc, registry: registry,
-                                   resolved: resolved, env: .groupFunction, reserved: [], functions: functions,
-                                   viewInstance: view.flatMap { v in v.innerVariant.map { (id: v.socket.node, function: $0) } })
+                                   resolved: resolved, env: layer ? .groupFunctionLayer : .groupFunction,
+                                   reserved: [], functions: functions,
+                                   viewInstance: view.flatMap { v in v.innerVariant.map { (id: v.socket.node, function: $0) } },
+                                   layerFunctions: layerFunctions)
 
         // A view variant returns one field, `value`; a normal function one per declared output.
         var viewed: (type: SocketType, variable: String)?
@@ -96,7 +109,7 @@ public enum GroupCodegen {
             }
             viewed = (type, variable)
         }
-        let fnName = functionName(def) + (viewed == nil ? "" : "_view")
+        let fnName = functionName(def) + (viewed == nil ? "" : "_view") + (layer ? "_layer" : "")
         let outStruct = viewed == nil ? structName(def.id) : viewStructName(def.id)
         let outputs = viewed.map { [SocketDecl(name: "value", type: .concrete($0.type))] } ?? def.outputs
 
@@ -107,7 +120,8 @@ public enum GroupCodegen {
         var params = ["float2 uv", "float time", "float2 size", "float2 mouse"]
         params += def.inputs.map { "\(concrete($0.type).mslName) in_\($0.name)" }
         params += emitted.uniformRequests.map { "\($0.type.mslName) \(parameterName(for: $0.path))" }
-        params += emitted.textureRequests.map { "texture2d<float> \($0.parameterName)" }
+        params += layer ? ["SwiftUI::Layer layer", "float2 position"]
+                        : emitted.textureRequests.map { "texture2d<float> \($0.parameterName)" }
         b.add("\(outStruct) \(fnName)(\(params.joined(separator: ", "))) {")
         for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
         b.add("    \(outStruct) out;")
@@ -122,7 +136,8 @@ public enum GroupCodegen {
         return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
                              uniformParams: emitted.uniformRequests, textureParams: emitted.textureRequests,
                              requiredStdlib: emitted.requiredStdlib,
-                             source: b.text, lineMap: b.map, viewedType: viewed?.type, resolved: resolved)
+                             source: b.text, lineMap: b.map, viewedType: viewed?.type, resolved: resolved,
+                             isLayerVariant: layer)
     }
 
     /// Definitions carry no generics (spec §20.2), so an unresolved socket type is a `float`.
