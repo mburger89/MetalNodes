@@ -15,6 +15,11 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
     public var stickies: [StickyNote] = []
     public var frames: [CommentFrame] = []
     public var definitions: [GroupDefinition] = []
+    /// Manifest entries for every `.asset` referenced by a copied node or by a node inside a
+    /// carried definition (spec §13, §21.2). Present even when `textures` lacks the bytes.
+    public var assetInfos: [AssetID: AssetInfo] = [:]
+    /// Bytes for the assets above, when the source had them (never re-encoded).
+    public var textures: [AssetID: Data] = [:]
 
     public init(nodes: [NodeInstance], edges: [Edge], sourceOrigin: CGPoint = .zero) {
         self.nodes = nodes
@@ -62,7 +67,13 @@ public struct GraphClipboard: Codable, Sendable, Equatable {
 public extension GraphClipboard {
     /// Spec §6, §20.7: the payload also carries every `GroupDefinition` transitively referenced
     /// by the copied instances, sorted by id. Pseudo-nodes (`.groupInput`/`.groupOutput`) never copy.
-    static func extract(_ ids: Set<NodeID>, from graph: Graph, document doc: ShaderDocument) -> GraphClipboard {
+    ///
+    /// Spec §13, §21.2: also carries every asset (manifest entry, and bytes when `textures` has
+    /// them) referenced by a `.asset` param on a copied node or on any node inside a carried
+    /// definition — the carried definitions already are the transitive closure, so no further
+    /// recursion is needed to reach nested ones.
+    static func extract(_ ids: Set<NodeID>, from graph: Graph, document doc: ShaderDocument,
+                         textures: [AssetID: Data] = [:]) -> GraphClipboard {
         let real = ids.filter { graph.nodes[$0].map { $0.kind != .groupInput && $0.kind != .groupOutput } ?? false }
         var clip = extract(real, from: graph)
         var refs = Set<GroupID>()
@@ -73,6 +84,21 @@ public extension GraphClipboard {
             }
         }
         clip.definitions = refs.compactMap { doc.definitions[$0] }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+
+        var assetIDs = Set<AssetID>()
+        func scan<S: Sequence>(_ nodes: S) where S.Element == NodeInstance {
+            for n in nodes {
+                for v in n.params.values {
+                    if case .asset(let id?) = v { assetIDs.insert(id) }
+                }
+            }
+        }
+        scan(clip.nodes)
+        for d in clip.definitions { scan(d.graph.nodes.values) }
+        for id in assetIDs {
+            if let info = doc.settings.assets[id] { clip.assetInfos[id] = info }
+            if let data = textures[id] { clip.textures[id] = data }
+        }
         return clip
     }
 }
@@ -118,11 +144,13 @@ public enum ClipboardMerge {
 }
 
 extension GraphClipboard {
-    private enum Keys: String, CodingKey { case formatVersion, sourceOrigin, nodes, edges, stickies, frames, definitions }
+    private enum Keys: String, CodingKey {
+        case formatVersion, sourceOrigin, nodes, edges, stickies, frames, definitions, assetInfos, textures
+    }
 
     /// Tolerant decoding: every key but the payload itself is optional, so a clipboard written by
-    /// an older build (or one that predates `stickies`/`frames`/`definitions`) still pastes.
-    /// Encoding stays synthesized, so a round trip is unchanged.
+    /// an older build (or one that predates `stickies`/`frames`/`definitions`/`assetInfos`/`textures`)
+    /// still pastes. Encoding stays synthesized, so a round trip is unchanged.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         formatVersion = try c.decodeIfPresent(Int.self, forKey: .formatVersion) ?? GraphClipboard.currentFormatVersion
@@ -132,5 +160,7 @@ extension GraphClipboard {
         stickies = try c.decodeIfPresent([StickyNote].self, forKey: .stickies) ?? []
         frames = try c.decodeIfPresent([CommentFrame].self, forKey: .frames) ?? []
         definitions = try c.decodeIfPresent([GroupDefinition].self, forKey: .definitions) ?? []
+        assetInfos = try c.decodeIfPresent([AssetID: AssetInfo].self, forKey: .assetInfos) ?? [:]
+        textures = try c.decodeIfPresent([AssetID: Data].self, forKey: .textures) ?? [:]
     }
 }

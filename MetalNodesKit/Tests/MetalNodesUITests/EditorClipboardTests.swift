@@ -16,6 +16,17 @@ import MetalNodesRender
         m.document.root.nodes.values.first { $0.kind == .builtin(defID) }!
     }
 
+    private func aid(_ n: Int) -> AssetID { AssetID(raw: UUID(uuidString: String(format: "30000000-0000-0000-0000-%012d", n))!) }
+
+    /// A minimal document holding one `texture.sample` node that references `assetID`.
+    private func docWithTexture(_ assetID: AssetID, info: AssetInfo) -> ShaderDocument {
+        var d = ShaderDocument()
+        d.settings.assets[assetID] = info
+        let sample = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(assetID)])
+        d.root.nodes[sample.id] = sample
+        return d
+    }
+
     @Test func copyWritesTheGraphTypeAndPasteInsertsFreshNodes() throws {
         let pb = MemoryPasteboard()
         let m = model(pb)
@@ -117,5 +128,51 @@ import MetalNodesRender
         let written = try JSONDecoder().decode(GraphClipboard.self, from: try #require(pb.read(type: EditorModel.pasteboardType)))
         #expect(Set(written.nodes.map(\.id)) == Set(direct.nodes.map(\.id)))
         #expect(written.nodes.count == m.document.root.nodes.count)
+    }
+
+    /// Spec §13, §21.2: pasting a node that samples an asset the destination doesn't know about
+    /// adds the manifest entry and the bytes, and the pasted node still points at the same id.
+    @Test func pastingAnAssetTheDestinationLacksAddsManifestAndBytes() {
+        let pb = MemoryPasteboard()
+        let id = aid(1)
+        let info = AssetInfo(name: "rock.png", pixelSize: CGSize(width: 64, height: 64), fileExtension: "png")
+        let bytes = Data([0xAA, 0xBB, 0xCC])
+        let a = EditorModel(document: docWithTexture(id, info: info), textures: [id: bytes],
+                             compiler: RecordingCompiler(), pasteboard: pb)
+        a.select(node(a, "texture.sample").id)
+        a.copySelection()
+
+        let b = EditorModel(document: ShaderDocument(), compiler: RecordingCompiler(), pasteboard: pb)
+        #expect(b.document.settings.assets[id] == nil)
+        let pasted = b.paste()
+        #expect(pasted.count == 1)
+        #expect(b.document.settings.assets[id] == info)
+        #expect(b.textures[id] == bytes)
+        #expect(b.document.root.nodes[pasted.first!]?.params["asset"] == .asset(id))
+    }
+
+    /// An asset id the destination already has keeps its own bytes and manifest entry — the
+    /// source's never overwrite them.
+    @Test func pastingAnAssetTheDestinationAlreadyHasLeavesItUntouched() {
+        let pb = MemoryPasteboard()
+        let id = aid(2)
+        let sourceInfo = AssetInfo(name: "source.png", pixelSize: CGSize(width: 64, height: 64), fileExtension: "png")
+        let sourceBytes = Data([0x01])
+        let a = EditorModel(document: docWithTexture(id, info: sourceInfo), textures: [id: sourceBytes],
+                             compiler: RecordingCompiler(), pasteboard: pb)
+        a.select(node(a, "texture.sample").id)
+        a.copySelection()
+
+        let destInfo = AssetInfo(name: "dest.png", pixelSize: CGSize(width: 32, height: 32), fileExtension: "png")
+        let destBytes = Data([0x02])
+        var destDoc = ShaderDocument()
+        destDoc.settings.assets[id] = destInfo
+        let b = EditorModel(document: destDoc, textures: [id: destBytes], compiler: RecordingCompiler(), pasteboard: pb)
+
+        let pasted = b.paste()
+        #expect(pasted.count == 1)
+        #expect(b.document.settings.assets[id] == destInfo)
+        #expect(b.textures[id] == destBytes)
+        #expect(b.document.root.nodes[pasted.first!]?.params["asset"] == .asset(id))
     }
 }

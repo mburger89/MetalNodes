@@ -206,7 +206,7 @@ public final class EditorModel {
             // Pseudo-nodes are part of their definition's shape and cannot be deleted (spec §20.8).
             document[path].remove(nodes: ids.filter { shape(of: $0)?.isPseudo != true })
             pruneAfterRemoval()
-        case .insert(let nodes, let edges, let definitions):
+        case .insert(let nodes, let edges, let definitions, let assets):
             // Reuse, import or insert what the payload brought, then retarget the instances (spec §20.7).
             let plan = ClipboardMerge.plan(definitions: definitions, into: document)
             for d in plan.insert { document.definitions[d.id] = d }
@@ -215,6 +215,12 @@ public final class EditorModel {
             for n in ClipboardMerge.apply(plan, to: nodes) { g.nodes[n.id] = n }
             for e in edges { g.connect(e.from, to: e.to) }
             document[path] = g
+            // Spec §13, §21.2: add what the destination lacks; an id it already has keeps its
+            // own manifest entry and bytes, never overwritten.
+            for (id, asset) in assets where document.settings.assets[id] == nil {
+                document.settings.assets[id] = asset.info
+                textures[id] = asset.data
+            }
         case .groupSelection(let ids, let name):
             if let r = GroupOperations.group(ids, in: path, of: document, registry: registry, name: name) {
                 document = r.document

@@ -1,3 +1,4 @@
+import Foundation
 import CoreGraphics
 import MetalNodesCore
 
@@ -14,8 +15,11 @@ public enum DocumentChange: Sendable {
     case addNode(NodeInstance)
     case removeNodes(Set<NodeID>)
     /// Paste / duplicate: the definitions the payload carries, then the nodes, then the wires
-    /// among them, as one change (spec §20.7).
-    case insert(nodes: [NodeInstance], edges: [Edge], definitions: [GroupDefinition] = [])
+    /// among them, as one change (spec §20.7). `assets` are the manifest entry and bytes for
+    /// every asset the payload referenced that the source had bytes for (spec §13, §21.2);
+    /// applying never overwrites an asset id the destination already has.
+    case insert(nodes: [NodeInstance], edges: [Edge], definitions: [GroupDefinition] = [],
+                assets: [AssetID: (info: AssetInfo, data: Data)] = [:])
     case setSettings(DocumentSettings)
 
     // MARK: Groups (spec §20.6)
