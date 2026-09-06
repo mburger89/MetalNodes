@@ -798,7 +798,12 @@ public struct GraphCanvasView: View {
             // The mapper only ever latches a move onto a node or a comment.
             if case .comment(let id) = hit { beginCommentDrag(id, resizing: false) } else { beginNodeDrag() }
         case .move(let t):
-            if case .comment = activeMove { dragComments(by: t) } else { moveSelection(by: t) }
+            // The recognizer reports viewport points; `moveSelection`/`dragComments` add straight
+            // onto canvas positions (their macOS callers drag in the "canvas" space, which is
+            // already unscaled), so the translation converts here — or a node would travel 2× the
+            // finger at zoom 2.
+            let d = CGSize(width: t.width / transform.zoom, height: t.height / transform.zoom)
+            if case .comment = activeMove { dragComments(by: d) } else { moveSelection(by: d) }
         case .endMove:
             if case .comment = activeMove { endCommentDrag() } else { endNodeDrag() }
             activeMove = nil

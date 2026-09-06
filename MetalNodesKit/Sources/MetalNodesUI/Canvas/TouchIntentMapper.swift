@@ -17,8 +17,10 @@ nonisolated public enum CanvasIntent: Equatable, Sendable {
     case select(CanvasHit, SelectionMode)
     case clearSelection
     case beginMove(CanvasHit)
-    /// Translation since the drag began, in viewport points — the same value `DragGesture`
-    /// hands `NodeView.onDrag`, which is why the canvas can reuse `moveSelection(by:)`.
+    /// Translation since the drag began, in **viewport** points — the recognizer's own units,
+    /// unscaled. The canvas divides it by the zoom before handing it to `moveSelection(by:)` /
+    /// `dragComments(by:)`, which move canvas positions (the macOS drag gestures already report
+    /// canvas units, because they are attached in the "canvas" coordinate space).
     case move(CGSize)
     case endMove
     case beginWire(SocketRef, isInput: Bool)
