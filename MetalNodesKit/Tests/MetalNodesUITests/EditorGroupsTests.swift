@@ -223,6 +223,7 @@ import MetalNodesRender
         let def = m.document.definitions[g.definition]!
         #expect(def.outputs.map(\.name) == ["out", "out2"])
         #expect(def.outputs.last?.type == TypeRef.concrete(.float))
+        #expect(def.outputs.last?.label == "Out2")   // derived from the uniqued name, not "Out" twice
         #expect(def.graph.inputs[SocketRef(def.outputNode!, "out2")] == SocketRef(mul, "out"))
         #expect(m.shape(of: g.instance)?.outputs.map(\.name) == ["out", "out2"])   // the instance outside
         #expect(m.undoManager.undoActionName == "Expose Output")

@@ -213,6 +213,29 @@ import Testing
         #expect(GroupOperations.renameSocket(g.definition, kind: .input, from: "t", to: "2 bad", in: r)?.definitions[g.definition]?.inputs.first?.name == "_2_bad")
     }
 
+    /// Labels are always derived from the name (users cannot edit them independently in M4) —
+    /// a rename must keep what draws on the pseudo-nodes, instance nodes and inspector in sync.
+    @Test func renameSocketAlsoRewritesTheLabel() throws {
+        let (doc, mul, sine, _, _, _) = sample()
+        let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
+        let r = try #require(GroupOperations.renameSocket(g.definition, kind: .input, from: "time", to: "phase", in: g.document))
+        #expect(r.definitions[g.definition]!.inputs.first?.label == "Phase")
+    }
+
+    /// `addSocket` uniques the *name* on a clash (`out` -> `out2`); the label must follow the
+    /// uniqued name rather than keep the caller's un-uniqued label ("Out" on both).
+    @Test func addSocketDerivesTheLabelFromTheUniquedName() throws {
+        var def = GroupDefinition.make(name: "Group")
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        var doc = ShaderDocument()
+        doc.definitions[def.id] = def
+        let decl = SocketDecl(name: "out", type: .concrete(.float))
+        let r = try #require(GroupOperations.addSocket(def.id, kind: .output, decl: decl, in: doc))
+        let added = r.definitions[def.id]!.outputs.last!
+        #expect(added.name == "out2")
+        #expect(added.label == "Out2")
+    }
+
     @Test func removeSocketDeletesOrphansEverywhere() throws {
         let (doc, mul, sine, _, _, _) = sample()
         let g = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
