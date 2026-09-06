@@ -47,6 +47,30 @@ struct TouchInputOverlay: UIViewRepresentable {
     }
 }
 
+/// A one-finger pan that remembers where the finger actually went down.
+///
+/// `UIPanGestureRecognizer` measures its translation from where *recognition* began, not from the
+/// touch-down point, so `location - translation` at `.began` is already a slop's worth into the
+/// drag — and `hit(at:)` resolves a socket within `SocketView.hitSize / 2`, which is that same
+/// distance. A wire drag started on a socket therefore resolved as empty canvas and panned instead
+/// (spec §22.2). Recording the touch itself removes the guess.
+private final class TrackingPanGestureRecognizer: UIPanGestureRecognizer {
+    /// Where the first touch of this gesture went down, in the recognizer's view.
+    private(set) var initialLocation: CGPoint?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if initialLocation == nil, let touch = touches.first, let view {
+            initialLocation = touch.location(in: view)
+        }
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func reset() {
+        super.reset()
+        initialLocation = nil
+    }
+}
+
 /// The overlay's view. Six recognizers, all with `cancelsTouchesInView = false` so a touch that
 /// falls through to SwiftUI (an interactive rect) is unaffected, and all accepting Pencil touches —
 /// a Pencil is a precise finger (spec §22.2).
@@ -66,7 +90,7 @@ final class TouchOverlayView: UIView {
         let touchTypes: [NSNumber] = [NSNumber(value: UITouch.TouchType.direct.rawValue),
                                       NSNumber(value: UITouch.TouchType.pencil.rawValue)]
 
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        let pan = TrackingPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.minimumNumberOfTouches = 1
         pan.maximumNumberOfTouches = 1
 
@@ -117,9 +141,11 @@ final class TouchOverlayView: UIView {
         let translation = CGSize(width: t.x, height: t.y)
         switch g.state {
         case .began:
-            // `.began` already carries a little travel; report where the finger went *down*, which
-            // is the point the mapper resolves the drag's hit from.
-            send(.dragBegan(CGPoint(x: location.x - t.x, y: location.y - t.y)))
+            // Where the finger went *down* — the point the mapper resolves the drag's hit from.
+            // `TrackingPanGestureRecognizer` recorded it from the touch; subtracting the
+            // translation is only a fallback, and is off by the recognizer's slop.
+            let recorded = (g as? TrackingPanGestureRecognizer)?.initialLocation
+            send(.dragBegan(recorded ?? CGPoint(x: location.x - t.x, y: location.y - t.y)))
         case .changed:
             send(.dragChanged(location: location, translation: translation))
         case .ended, .cancelled, .failed:
