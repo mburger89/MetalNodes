@@ -55,6 +55,13 @@ public final class TextureStore {
         cache.removeValue(forKey: asset)
     }
 
+    /// Drops every cached texture. For a reseed of the whole document (File ▸ Revert To Saved, or
+    /// any other reload): the incoming package may carry different bytes under ids the cache already
+    /// holds, and the cache is keyed by id alone, so nothing short of clearing it is correct.
+    public func evictAll() {
+        cache.removeAll()
+    }
+
     /// Resolves every slot of a compiled program to its texture, keyed by slot index, so the
     /// renderer can bind them with `setFragmentTexture(_:index:)`.
     public func bindings(for slots: [TextureSlot], textures: [AssetID: Data]) -> [Int: MTLTexture] {

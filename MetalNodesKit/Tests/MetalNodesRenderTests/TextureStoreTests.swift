@@ -102,6 +102,20 @@ import MetalNodesCore
         #expect(first !== second)
     }
 
+    /// A reseed (File ▸ Revert To Saved, or any other reload) can bring different bytes under an id
+    /// the cache already holds, so the whole cache has to go — otherwise the store keeps serving the
+    /// texture decoded from the bytes the document just discarded.
+    @Test func evictAllDropsEveryCachedEntry() throws {
+        let s = try store()
+        let a = aid(7)
+        let slots = [TextureSlot(index: 0, asset: a)]
+        let textures: [AssetID: Data] = [a: fourByFourPNG()]
+        let first = try #require(s.bindings(for: slots, textures: textures)[0])
+        s.evictAll()
+        let second = try #require(s.bindings(for: slots, textures: textures)[0])
+        #expect(first !== second)
+    }
+
     @Test func bindingsMapsSlotIndicesToTextures() throws {
         let s = try store()
         let a = aid(6)

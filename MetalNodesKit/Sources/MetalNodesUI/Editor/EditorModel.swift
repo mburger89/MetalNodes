@@ -136,6 +136,10 @@ public final class EditorModel {
 
         document = package.document
         viewState = package.viewState
+        // The GPU cache is keyed by `AssetID` alone, and a reseed can bring different bytes under an
+        // id it already holds (relink an asset, then revert): drop it all before the new bytes land,
+        // so the rebind `textures` triggers decodes them afresh.
+        textureStore?.evictAll()
         textures = package.textures
         missingTextures = package.missingTextures
         selectedWire = nil
