@@ -103,4 +103,22 @@ import CoreGraphics
         let v = try JSONDecoder().decode(EditorViewState.self, from: Data(legacy.utf8))
         #expect(v.editingDefinition == nil)
     }
+
+    /// A `view.json` written before M5 has no comment selection and no panel flags (spec §21.4–§21.6).
+    @Test func viewStateDecodesWithoutTheM5Keys() throws {
+        let legacy = #"{"editingStack":[],"selection":[],"cameras":[]}"#
+        let v = try JSONDecoder().decode(EditorViewState.self, from: Data(legacy.utf8))
+        #expect(v.selectedComments.isEmpty)
+        #expect(v.showsCode == false)
+        #expect(v.showsMinimap == true)
+    }
+
+    @Test func viewStateRoundTripsTheM5Keys() throws {
+        var v = EditorViewState()
+        v.selectedComments = [.sticky(StickyID()), .frame(FrameID())]
+        v.showsCode = true
+        v.showsMinimap = false
+        let data = try JSONEncoder().encode(v)
+        #expect(try JSONDecoder().decode(EditorViewState.self, from: data) == v)
+    }
 }

@@ -27,6 +27,12 @@ public struct EditorViewState: Sendable, Hashable {
     public var viewerPath: [NodeID] = []
     public var viewerDefinition: GroupID? = nil
     public var selection: Set<NodeID> = []
+    /// Comments have their own selection set, cleared together with the node selection (spec §21.4).
+    public var selectedComments: Set<CommentID> = []
+    /// View ▸ Generated Code (spec §21.5).
+    public var showsCode = false
+    /// View ▸ Minimap, on by default (spec §21.6).
+    public var showsMinimap = true
     public init() {}
 
     /// The graph the editor is bound to: the last dived instance's definition, else the edited
@@ -43,6 +49,7 @@ public struct EditorViewState: Sendable, Hashable {
 extension EditorViewState: Codable {
     private enum Keys: String, CodingKey {
         case cameras, editingStack, editingDefinition, viewer, viewerPath, viewerDefinition, selection
+        case selectedComments, showsCode, showsMinimap
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -53,6 +60,9 @@ extension EditorViewState: Codable {
         viewerPath = try c.decodeIfPresent([NodeID].self, forKey: .viewerPath) ?? []
         viewerDefinition = try c.decodeIfPresent(GroupID.self, forKey: .viewerDefinition)
         selection = try c.decodeIfPresent(Set<NodeID>.self, forKey: .selection) ?? []
+        selectedComments = try c.decodeIfPresent(Set<CommentID>.self, forKey: .selectedComments) ?? []
+        showsCode = try c.decodeIfPresent(Bool.self, forKey: .showsCode) ?? false
+        showsMinimap = try c.decodeIfPresent(Bool.self, forKey: .showsMinimap) ?? true
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -61,5 +71,7 @@ extension EditorViewState: Codable {
         try c.encodeIfPresent(viewer, forKey: .viewer); try c.encode(viewerPath, forKey: .viewerPath)
         try c.encodeIfPresent(viewerDefinition, forKey: .viewerDefinition)
         try c.encode(selection, forKey: .selection)
+        try c.encode(selectedComments, forKey: .selectedComments)
+        try c.encode(showsCode, forKey: .showsCode); try c.encode(showsMinimap, forKey: .showsMinimap)
     }
 }

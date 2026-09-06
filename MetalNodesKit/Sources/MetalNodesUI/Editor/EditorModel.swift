@@ -260,6 +260,28 @@ public final class EditorModel {
                 || s.target != document.settings.target
                 || (s.target.stitchableKind != nil && s.exportName != document.settings.exportName)
             document.settings = s
+        case .addSticky(let note):
+            document[path].stickies[note.id] = note
+        case .updateSticky(let id, let text, let accent):
+            document[path].stickies[id]?.text = text
+            document[path].stickies[id]?.accent = accent
+        case .addFrame(let frame):
+            document[path].frames[frame.id] = frame
+        case .updateFrame(let id, let title, let accent):
+            document[path].frames[id]?.title = title
+            document[path].frames[id]?.accent = accent
+        case .moveComments(let origins):
+            // One graph write for the whole drag frame, as `.moveNodes` does.
+            var g = document[path]
+            for (id, p) in origins { g[comment: id]?.origin = p }
+            document[path] = g
+        case .resizeComment(let id, let rect):
+            document[path][comment: id] = rect
+        case .removeComments(let ids):
+            var g = document[path]
+            for id in ids { g.remove(comment: id) }
+            document[path] = g
+            pruneCommentSelection()
         case .restore(let doc):
             document = doc
             pruneAfterRemoval()
@@ -286,6 +308,7 @@ public final class EditorModel {
     private func pruneAfterRemoval() {
         pruneEditingStack()
         pruneSelection()
+        pruneCommentSelection()
         _ = pruneViewer()
     }
 

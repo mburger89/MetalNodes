@@ -25,6 +25,13 @@ public struct StickyID: EntityID { public let raw: UUID; public init(raw: UUID) 
 public struct FrameID: EntityID  { public let raw: UUID; public init(raw: UUID) { self.raw = raw } }
 public struct AssetID: EntityID  { public let raw: UUID; public init(raw: UUID) { self.raw = raw } }
 
+/// One comment — a sticky note or a comment frame. The canvas selects, moves, resizes and
+/// deletes both through this (spec §21.4).
+public enum CommentID: Hashable, Codable, Sendable {
+    case sticky(StickyID)
+    case frame(FrameID)
+}
+
 /// Parameter and socket-value keys on a node instance. Socket names and
 /// parameter names share one namespace per node definition (Task 5 enforces uniqueness).
 public typealias ParamID = String

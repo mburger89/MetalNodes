@@ -31,6 +31,17 @@ public enum DocumentChange: Sendable {
     case removeSocket(GroupID, SocketKind, String)
     case deleteDefinition(GroupID)
 
+    // MARK: Comments (spec §21.4)
+
+    case addSticky(StickyNote)
+    case updateSticky(StickyID, text: String, accent: DraculaAccent)
+    case addFrame(CommentFrame)
+    case updateFrame(FrameID, title: String, accent: DraculaAccent)
+    /// New origins, one drag frame at a time — the comment counterpart of `.moveNodes`.
+    case moveComments([CommentID: CGPoint])
+    case resizeComment(CommentID, CGRect)
+    case removeComments(Set<CommentID>)
+
     /// Undo/redo only. Bypasses transactions; never registers an undo of its own.
     case restore(ShaderDocument)
 
@@ -42,7 +53,10 @@ public enum DocumentChange: Sendable {
         switch self {
         // A definition's accent is a label; its *name* is part of the emitted function's
         // identifier (spec §20.4), so a rename changes the source and must rebuild (ruling R14).
-        case .moveNodes, .setTitle, .setSettings, .setDefinitionAccent: .cosmetic
+        // Comments are document data but never reach codegen (spec §21.4).
+        case .moveNodes, .setTitle, .setSettings, .setDefinitionAccent,
+             .addSticky, .updateSticky, .addFrame, .updateFrame,
+             .moveComments, .resizeComment, .removeComments: .cosmetic
         case .setParam(_, _, let v): v.isUniformable ? .parameter : .topology
         case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore, .groupSelection, .ungroup,
              .makeUnique, .renameDefinition, .addSocket, .renameSocket, .removeSocket, .deleteDefinition: .topology
@@ -71,6 +85,13 @@ public enum DocumentChange: Sendable {
         case .renameSocket: "Rename Socket"
         case .removeSocket: "Remove Socket"
         case .deleteDefinition: "Delete Group"
+        case .addSticky: "Add Note"
+        case .updateSticky: "Edit Note"
+        case .addFrame: "Add Frame"
+        case .updateFrame: "Edit Frame"
+        case .moveComments: "Move"
+        case .resizeComment: "Resize"
+        case .removeComments: "Delete"
         }
     }
 }

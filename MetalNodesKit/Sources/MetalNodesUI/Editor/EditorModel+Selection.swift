@@ -17,7 +17,8 @@ extension EditorModel {
     public func select(nodes ids: Set<NodeID>, mode: SelectionMode) {
         selectedWire = nil
         switch mode {
-        case .replace: selection = ids
+        // Replacing takes over the comment selection too (spec §21.4).
+        case .replace: selection = ids; selectedComments = []
         case .add: selection.formUnion(ids)
         case .toggle: selection.formSymmetricDifference(ids)
         }
@@ -31,10 +32,12 @@ extension EditorModel {
 
     public func clearSelection() {
         selection = []
+        selectedComments = []
         selectedWire = nil
     }
 
-    /// ⌫: a selected wire wins over selected nodes (spec §18.5).
+    /// ⌫: a selected wire wins over selected nodes; nodes and comments go together, in one
+    /// undo step (spec §18.5, §21.4).
     public func deleteSelection() {
         if let wire = selectedWire {
             selectedWire = nil
@@ -42,9 +45,14 @@ extension EditorModel {
             return
         }
         let ids = editableSelection
-        guard !ids.isEmpty else { return }
+        let comments = selectedComments
+        guard !ids.isEmpty || !comments.isEmpty else { return }
         selection = []
-        apply(.removeNodes(ids))
+        selectedComments = []
+        beginTransaction("Delete")
+        if !ids.isEmpty { apply(.removeNodes(ids)) }
+        if !comments.isEmpty { apply(.removeComments(comments)) }
+        endTransaction()
     }
 
     /// Arrow keys: one undo step for the whole selection.
