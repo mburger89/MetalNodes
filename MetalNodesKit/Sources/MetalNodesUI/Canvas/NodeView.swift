@@ -85,14 +85,26 @@ struct NodeView: View {
         // Doubled border: a group instance reads as "this is a function" (spec §12, §20.2). The
         // outer ring is the outline above — accent normally, and the selection/error colour when
         // one of those applies, so selection stays legible — and this is the inner one.
-        .overlay {
-            if isGroupInstance {
-                RoundedRectangle(cornerRadius: 5).stroke(accentColor, lineWidth: 1).padding(3)
-            }
-        }
+        .overlay { if isGroupInstance { innerAccentRing } }
         .shadow(color: isSelected ? DraculaTheme.selection.color.opacity(0.35) : .black.opacity(0.35), radius: isSelected ? 8 : 6, y: isSelected ? 0 : 3)
         .contentShape(Rectangle())
         .onTapGesture { onSelect(InputModifiers.selectionMode()) }
+    }
+
+    /// The inner ring of a group instance's doubled border, masked to the body: the header is
+    /// filled with the same accent, so a ring drawn across it would be invisible anyway — and the
+    /// header's own accent band is what doubles the border up there (spec §20.2). A compact node
+    /// is all header, so nothing of the ring shows, which is what LOD wants.
+    private var innerAccentRing: some View {
+        RoundedRectangle(cornerRadius: 5)
+            .stroke(accentColor, lineWidth: 1)
+            .padding(3)
+            .mask {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: NodeGeometry.headerHeight)
+                    Rectangle()
+                }
+            }
     }
 
     /// The dot's two socket grabs are narrowed from the standard 20 pt: at that size they meet in
@@ -204,18 +216,25 @@ struct NodeView: View {
                     lastHeaderClick = nil
                     return
                 }
-                // Second click of a double-click: open, and do nothing else — the selection must
-                // not toggle underneath the dive (the move it also started was a no-op, so its
-                // transaction registers nothing).
-                if let last = lastHeaderClick, Date.now.timeIntervalSince(last.time) < 0.4,
-                   hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
+                // Read once, before anything branches on it: a modified click is a selection
+                // gesture, so it may neither complete a double-click nor arm one — two quick
+                // ⌘-clicks stay two toggles.
+                let mode = InputModifiers.selectionMode()
+                if mode == .replace {
+                    // Second click of a double-click: open, and do nothing else — the selection
+                    // must not collapse underneath the dive (the move it also started was a no-op,
+                    // so its transaction registers nothing).
+                    if let last = lastHeaderClick, Date.now.timeIntervalSince(last.time) < 0.4,
+                       hypot(g.location.x - last.point.x, g.location.y - last.point.y) <= 4 {
+                        lastHeaderClick = nil
+                        onOpen()
+                        return
+                    }
+                    lastHeaderClick = (time: .now, point: g.location)
+                } else {
                     lastHeaderClick = nil
-                    onOpen()
-                    return
                 }
-                lastHeaderClick = (time: .now, point: g.location)
                 if wasSelectedAtStart {
-                    let mode = InputModifiers.selectionMode()
                     // A click (no movement) on an already-selected node collapses the selection to it.
                     if mode == .replace {
                         onSelect(.replace)
@@ -237,7 +256,9 @@ struct NodeView: View {
                 .socketAnchor(ref)
                 .offset(x: -8 - SocketView.size / 2)
                 .gesture(socketDrag(ref, isInput: true))
-            if !wired, case .value(let dflt) = decl.default {
+            // A pseudo-node carries no params of its own: its rows mirror the definition's
+            // sockets, so an unwired one stays a plain label (spec §20.8).
+            if !wired, !shape.isPseudo, case .value(let dflt) = decl.default {
                 ParamControl(label: decl.label, kind: .value(type, range: decl.range),
                              value: coerced(node.params[decl.name] ?? dflt, to: type),
                              onChange: { onChange(.setParam(node.id, decl.name, $0)) },
