@@ -1,6 +1,8 @@
 #if os(iOS)
 import SwiftUI
 import Metal
+import CoreTransferable
+import UniformTypeIdentifiers
 import MetalNodesCore
 import MetalNodesRender
 
@@ -82,14 +84,17 @@ struct EditorViewPad<Inspector: View>: View {
     }
 
     /// Export (spec §22.4). "Export to Files…" goes through `exportRequest` → `EditorView` →
-    /// `services.exporter`, the same path the macOS save panel uses; Share hands the same files to
-    /// `ShareLink` from a temporary directory. The URLs are computed in the menu's content, so
-    /// nothing is written to disk until the menu is actually opened.
+    /// `services.exporter`, the same path the macOS save panel uses; Share hands the share sheet an
+    /// `ExportShareItem`, which carries the document and generates on demand. `Menu`'s content is a
+    /// plain (non-escaping) builder that SwiftUI runs during `body`, so nothing here may generate
+    /// code or touch the file system: copying the document value is all this costs.
     private var exportMenu: some View {
         Menu {
             Button("Export to Files…") { model.requestExport() }
-            if let urls = shareURLs {
-                ShareLink("Share…", items: urls)
+            if canShare {
+                ShareLink("Share…",
+                          item: ExportShareItem(document: model.document, registry: model.registry),
+                          preview: SharePreview(StitchableCodegen.sanitizedName(model.document.settings.exportName)))
             }
         } label: {
             Label("Export", systemImage: "square.and.arrow.up")
@@ -97,12 +102,34 @@ struct EditorViewPad<Inspector: View>: View {
         .accessibilityIdentifier("toolbar.export")
     }
 
-    /// `nil` — so the menu shows only "Export to Files…" — when the graph has errors, or when the
-    /// injected exporter is a test double rather than the Pad presenter.
-    private var shareURLs: [URL]? {
-        guard let pad = services.exporter as? ExporterPad,
-              let files = try? model.exportFiles() else { return nil }
-        return try? pad.temporaryShareURLs(files: files, name: model.document.settings.exportName)
+    /// Share is offered only under the Pad exporter — an injected test double gets the menu without
+    /// it — and only while the graph has no errors, so the failure case stays where §22.4 puts it:
+    /// the "The graph has errors" alert of Export to Files…. Both reads are cheap; `diagnostics` is
+    /// already computed for the preview, and neither runs codegen.
+    private var canShare: Bool {
+        services.exporter is ExporterPad && !model.diagnostics.contains { $0.severity == .error }
+    }
+}
+
+/// What Share… hands the share sheet (spec §22.4): the document itself, not files. Codegen and the
+/// disk write happen inside the file representation — off the main actor, when the sheet asks for
+/// the payload — never during `body`, which SwiftUI re-evaluates on every document change (a node
+/// drag emits one per frame). The folder is what travels, so a stitchable target's `.metal` and
+/// `.swift` arrive together and the fragment target's single `.metal` arrives inside a folder named
+/// for the export, exactly as `ExportFolderDocument` writes it.
+nonisolated struct ExportShareItem: Transferable, Sendable {
+    let document: ShaderDocument
+    let registry: NodeRegistry
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .folder) { item in
+            let files = try ShaderExport.files(for: item.document, registry: item.registry)
+            let folder = try ExporterPad.temporaryShareFolder(
+                files: files, name: StitchableCodegen.sanitizedName(item.document.settings.exportName))
+            // The folder is ours, freshly written under `tmp` and never mutated afterwards, so the
+            // system can read it in place instead of copying it.
+            return SentTransferredFile(folder, allowAccessingOriginalFile: true)
+        }
     }
 }
 #endif

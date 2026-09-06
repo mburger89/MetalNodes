@@ -61,20 +61,28 @@ public final class ExporterPad: Exporter {
         }
     }
 
-    /// The same files on disk, for the toolbar's `ShareLink` (Task 8). A share sheet takes URLs, not
-    /// documents, so the files are written under `tmp/Exports/<uuid>/<name>/` — a fresh folder per
-    /// share, so two shares never race over one path, and the system reclaims `tmp`.
-    public func temporaryShareURLs(files: [ExportFile], name: String) throws -> [URL] {
+    /// The files on disk for the toolbar's Share… (Task 8), and the folder holding them. A share
+    /// sheet takes URLs, not documents, so they are written under `tmp/Exports/<uuid>/<name>/` — a
+    /// fresh folder per share, so two shares never race over one path, and the system reclaims
+    /// `tmp`. `nonisolated static` because `ExportShareItem`'s file representation calls it off the
+    /// main actor, when the share sheet asks for the payload: it reads no presenter state.
+    public nonisolated static func temporaryShareFolder(files: [ExportFile], name: String) throws -> URL {
         let directory = URL.temporaryDirectory
             .appending(path: "Exports", directoryHint: .isDirectory)
             .appending(path: UUID().uuidString, directoryHint: .isDirectory)
             .appending(path: name, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return try files.map { file in
-            let url = directory.appending(path: file.name, directoryHint: .notDirectory)
-            try Data(file.contents.utf8).write(to: url, options: .atomic)
-            return url
+        for file in files {
+            try Data(file.contents.utf8).write(to: directory.appending(path: file.name, directoryHint: .notDirectory),
+                                               options: .atomic)
         }
+        return directory
+    }
+
+    /// The same write, reported as one URL per file.
+    public func temporaryShareURLs(files: [ExportFile], name: String) throws -> [URL] {
+        let directory = try Self.temporaryShareFolder(files: files, name: name)
+        return files.map { directory.appending(path: $0.name, directoryHint: .notDirectory) }
     }
 }
 
