@@ -26,13 +26,18 @@ public struct CompileLine: Sendable, Hashable {
 public enum CompileResult: Sendable {
     case success(CompiledPipeline)
     case failure(message: String, lines: [CompileLine], generation: UInt64)
+    /// A compile the producer abandoned. `ShaderCompiler` never returns it — generations belong to
+    /// each document, not to the shared compiler — but clients still handle it (test doubles use it).
     case superseded(generation: UInt64)
 }
 
 public enum ShaderCompilerError: Error { case vertexFunctionMissing, fragmentFunctionMissing }
 
-/// Compiles generated MSL off the main actor. LRU cache keyed by (source, fastMath);
-/// latest generation wins for both success and failure (spec §9.6, §10, §18.1).
+/// Compiles generated MSL off the main actor. LRU cache keyed by (source, fastMath) (spec §9.6, §10, §18.1).
+///
+/// One compiler is shared by every open document, so it holds no notion of a "latest" generation:
+/// generations are per-`EditorModel` counters and are only echoed back here. Each client drops its
+/// own stale results (`EditorModel.compileNow` compares the echoed generation against its own).
 public actor ShaderCompiler {
     private struct CacheKey: Hashable { let source: String; let fastMath: Bool }
 
@@ -41,7 +46,6 @@ public actor ShaderCompiler {
     private let pixelFormat: MTLPixelFormat
     private var cache: [CacheKey: MTLRenderPipelineState] = [:]
     private var lru: [CacheKey] = []          // least recent first
-    private var latestRequested: UInt64 = 0
     public let cacheLimit: Int
 
     public init(device: MTLDevice, pixelFormat: MTLPixelFormat = .bgra8Unorm, cacheLimit: Int = 64) throws {
@@ -60,7 +64,6 @@ public actor ShaderCompiler {
     }
 
     public func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool = true) async -> CompileResult {
-        latestRequested = max(latestRequested, generation)
         let key = CacheKey(source: shader.source, fastMath: fastMath)
 
         if let hit = cache[key] {
@@ -84,16 +87,13 @@ public actor ShaderCompiler {
             insert(key, state)
             return finish(state, shader, generation)
         } catch {
-            if generation < latestRequested { return .superseded(generation: generation) }
             let msg = error.localizedDescription
             return .failure(message: msg, lines: ShaderCompiler.parseLines(msg), generation: generation)
         }
     }
 
     private func finish(_ state: MTLRenderPipelineState, _ shader: GeneratedShader, _ generation: UInt64) -> CompileResult {
-        generation < latestRequested
-            ? .superseded(generation: generation)
-            : .success(CompiledPipeline(state: state, shader: shader, generation: generation))
+        .success(CompiledPipeline(state: state, shader: shader, generation: generation))
     }
 
     private func touch(_ key: CacheKey) {

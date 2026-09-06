@@ -128,14 +128,32 @@ import MetalNodesCore
         if case .failure(let msg, _, _) = await c.compile(anchored, generation: 1) { Issue.record("anchored viewer: \(msg)\n\(anchored.source)") }
     }
 
-    @Test func olderGenerationIsSuperseded() async throws {
+    /// Generations belong to each `EditorModel`, not to the shared compiler: an older number is not
+    /// stale, it is another document's counter, and must still yield a pipeline.
+    @Test func olderGenerationStillSucceeds() async throws {
         let c = try compiler()
         let shader = try ShaderGenerator.generate(ShaderDocument.sample())
         _ = await c.compile(shader, generation: 2)
-        guard case .superseded(let g) = await c.compile(shader, generation: 1) else {
-            Issue.record("expected superseded"); return
+        guard case .success(let p) = await c.compile(shader, generation: 1) else {
+            Issue.record("expected success"); return
         }
-        #expect(g == 1)
+        #expect(p.generation == 1)
+    }
+
+    /// A second document window counts from 0 while the first has climbed: both must compile.
+    @Test func compilesForEveryClientRegardlessOfGeneration() async throws {
+        let c = try compiler()
+        let first = try ShaderGenerator.generate(ShaderDocument.sample())
+        let second = variant(first, tag: 77)
+        guard case .success(let a) = await c.compile(first, generation: 5) else {
+            Issue.record("expected success at generation 5"); return
+        }
+        guard case .success(let b) = await c.compile(second, generation: 1) else {
+            Issue.record("expected success at generation 1"); return
+        }
+        #expect(a.generation == 5)
+        #expect(b.generation == 1)
+        #expect(a.shader.source != b.shader.source)
     }
 
     @Test func identicalSourceHitsTheCache() async throws {
@@ -202,7 +220,9 @@ import MetalNodesCore
         #expect(await c.isCached(shader, fastMath: false))
     }
 
-    @Test func staleFailureIsSuperseded() async throws {
+    /// A failure is reported to whoever asked for it, whatever number they gave it: the compiler
+    /// cannot tell a stale generation from another document's.
+    @Test func failureIsReportedAtAnyGeneration() async throws {
         let c = try compiler()
         let good = try ShaderGenerator.generate(ShaderDocument.sample())
         _ = await c.compile(good, generation: 2)
@@ -210,10 +230,11 @@ import MetalNodesCore
         broken = GeneratedShader(source: broken.source.replacingOccurrences(of: "return", with: "retrun"),
                                  layout: broken.layout, lineMap: broken.lineMap, resolved: broken.resolved,
                                  fragmentFunctionName: broken.fragmentFunctionName, target: broken.target)
-        guard case .superseded(let g) = await c.compile(broken, generation: 1) else {
-            Issue.record("expected superseded, not failure, for a stale broken compile"); return
+        guard case .failure(_, let lines, let g) = await c.compile(broken, generation: 1) else {
+            Issue.record("expected failure for a broken compile"); return
         }
         #expect(g == 1)
+        #expect(!lines.isEmpty)
     }
 
     // MARK: - Textured documents (Task 2: renderer binds texture slots)
