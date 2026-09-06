@@ -92,21 +92,7 @@ public struct EditorServices {
         #if os(macOS)
         EditorServices(imageChooser: ImagePanelMac(), exporter: ExportPanelMac())
         #else
-        EditorServices(imageChooser: UnavailableImageChooser(), exporter: UnavailableExporter())
+        EditorServices(imageChooser: ImageChooserPad(), exporter: ExporterPad())
         #endif
     }
 }
-
-#if os(iOS)
-/// Placeholders until Task 5 lands the Pad presenters: the image well's buttons and Export exist on
-/// iPad from this task on, and do nothing until the pickers are attached.
-public final class UnavailableImageChooser: ImageChooser {
-    public init() {}
-    public func choose(from source: ImageSource) async -> PickedImage? { nil }
-}
-
-public final class UnavailableExporter: Exporter {
-    public init() {}
-    public func export(files: [ExportFile], name: String) async -> ExportOutcome { .cancelled }
-}
-#endif

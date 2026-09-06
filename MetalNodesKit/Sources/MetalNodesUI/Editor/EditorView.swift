@@ -39,6 +39,7 @@ public struct EditorView: View {
             .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("OK") { exportError = nil }
             } message: { Text(exportError ?? "") }
+            .padHosts(services)
     }
 
     @ViewBuilder
@@ -171,5 +172,20 @@ public struct EditorView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private extension View {
+    /// The iPad pickers' single attachment point (spec §22.4): the presenters are per-window state,
+    /// so their modifiers go on the window's root view exactly once. A no-op on macOS, and a
+    /// pass-through whenever the injected services are not the Pad ones (the tests' doubles).
+    @ViewBuilder
+    func padHosts(_ services: EditorServices) -> some View {
+        #if os(iOS)
+        modifier(ImageChooserPadHost(chooser: services.imageChooser as? ImageChooserPad))
+            .modifier(ExporterPadHost(exporter: services.exporter as? ExporterPad))
+        #else
+        self
+        #endif
     }
 }
