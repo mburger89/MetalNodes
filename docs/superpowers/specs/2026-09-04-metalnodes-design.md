@@ -1300,3 +1300,58 @@ palette; clipboard dedupe (same hash reuse, different hash import, absent
 insert); every group program compiles on the device (fragment, stitchable,
 viewer); model tests for dive-in/out (selection, active graph),
 `DocumentChange` on a definition graph, `pruneViewer` on instance deletion.
+
+## 21. M5 addendum — persistence, textures, comments, code panel, minimap (added 2026-09-06)
+
+M5 implements §3 (package persistence), §6 (cross-document paste with textures), §11.5 (comments), §11.6 (generated-code panel), the minimap, the `.metal` export for the fragment target, Texture Sample and two procedural texture sources, and the carry-overs from M4 (⇧A definitions, shape cache, cleanups). Decisions taken with the user: **one milestone** (iPad becomes M6); textures come from **image files and two procedural nodes** (Gradient, Checker) — pasteboard images later; export is **`.metal` source only** (no `.metallib`); **File ▸ New opens a minimal starter** (UV → Fragment Output) and the demo moves to Help ▸ Open Sample Shader. §21 wins for M5 wherever it and §3/§6/§11 differ in detail.
+
+### 21.1 Package persistence
+
+- The document is a package `Name.mnshader` (UTType `com.maxburger.metalnodes.shader`, conforms to `com.apple.package`), containing `document.json` (`ShaderDocument`), `view.json` (`EditorViewState`) and `textures/<AssetID uuid>.<ext>` (`png`, `jpg`/`jpeg`, `heic`; bytes stored as imported, never re-encoded).
+- `ShaderPackage` (Core, Foundation only) is the value read from and written to a `FileWrapper`: `document`, `viewState`, `textures: [AssetID: Data]`. Decoding is tolerant: a missing `view.json` yields defaults; an unreadable `view.json` yields defaults and does not fail the open; a missing texture file leaves the asset in the manifest and produces a validation *warning* "Texture “name” is missing" (the preview renders the placeholder). An unreadable `document.json` fails the open with the decoding error. Files not in the manifest are ignored on read and dropped on write.
+- JSON is written with sorted keys and a two-space indent so packages diff in git.
+- The app uses `DocumentGroup` with a `FileDocument` (`ShaderFileDocument`) holding a `ShaderPackage`. Each window's host view owns the `EditorModel`, seeds it from the file document, mirrors every `document` / `viewState` / textures change back into the file document (that is what marks the document dirty and drives autosave), and injects the window's `UndoManager` from the environment so ⌘Z / ⇧⌘Z, the Edit menu titles and the dirty indicator are the system's. `EditorModel` keeps its snapshot-undo design; only the manager is injected.
+- `formatVersion` stays 1. A newer version is refused with "This shader was saved by a newer version of MetalNodes".
+- Assets are never auto-pruned; unreferenced assets stay in the package until removed in the inspector (Assets list in the document settings, "Remove" enabled only when unreferenced).
+
+### 21.2 Textures
+
+- Manifest: `DocumentSettings.assets: [AssetID: AssetInfo]`, `AssetInfo { name: String, pixelSize: CGSize, fileExtension: String }`. `ParamValue.asset(AssetID?)` already exists; `ParamKind.asset` draws an image well with "Choose Image…" in the inspector.
+- Node `texture.sample` **Texture Sample** (category `input`): param `asset` (`.asset`), input `uv` (`float2`, default `.uv`), outputs `color` (`color`) and `alpha` (`float`). Sampling uses a `constexpr sampler` (linear filter, repeat address). The sample call flips `y` (`float2(uv.x, 1.0 - uv.y)`) so `uv.y = 0` is the bottom, matching §9.1; the loader keeps the image's row order.
+- Procedural sources, category `input`, plain codegen nodes with no asset: `texture.gradient` **Gradient** (params `shape` enum `linear`/`radial`, `angle` float 0…360, `colorA`, `colorB` colors; input `uv`; output `color`) and `texture.checker` **Checker** (params `scale` float 1…64, `colorA`, `colorB`; input `uv`; output `color`).
+- Codegen: `GeneratedShader.textures: [TextureSlot { index: Int, asset: AssetID? }]` — one slot per distinct asset in first-use order across the root and every emitted function; a Texture Sample with no asset uses the shared `asset == nil` slot. The fragment program declares `texture2d<float> tex<i> [[texture(i)]]` after the uniform buffer; group functions take `texture2d<float>` parameters for the slots their bodies use, the way they take uniform parameters (`EmitEnvironment.texture: (TextureSlot) -> String`). Stitchable: under Color Effect and Distortion Effect a Texture Sample is a validation error "Texture Sample needs the Layer Effect target"; under Layer Effect the export samples `layer.sample(position)` (asset ignored, alpha from the layer) while the preview samples the asset as the stand-in layer.
+- Render: `TextureStore` (Render) loads `MTLTexture`s with `MTKTextureLoader` from the package bytes, cached by `AssetID`, plus a 2×2 magenta/black checker placeholder; `PreviewState.textures: [Int: MTLTexture]` is rebuilt whenever the pipeline or the manifest changes; the renderer binds each slot with `setFragmentTexture`.
+- Import: the inspector's image well opens an `NSOpenPanel` (PNG, JPEG, HEIC); dropping an image file on the canvas creates a Texture Sample at the drop point with the imported asset. Import copies the bytes into the package (`EditorModel.importImage(data:name:) -> AssetID`), reads the pixel size, and is one undo step together with the node or param change. Undoing an import leaves the bytes in the package (harmless; the manifest entry is what undo tracks).
+
+### 21.3 `.metal` export for the fragment target
+
+File ▸ Export… (⌘E) on the fragment target writes one file `<exportName>.metal`: a header comment listing the uniform layout (`offset  type  name  ← node · param`) and the texture slots, then the same source the preview compiles (`Uniforms`, `VertexOut`, stdlib, group functions, `shaderMain`). The single-file save panel from M3 is reused. The exported source must compile with `xcrun metal` when the toolchain is installed (test skips when it is not).
+
+### 21.4 Comments
+
+- Data: `Graph.stickies` / `Graph.frames` (already persisted and carried by the clipboard). `CommentFrame.collapsed` stays persisted but unused in M5.
+- Canvas: frames draw behind wires and nodes (filled with the accent at 12 % plus a 1 pt border and a title bar 22 pt tall); stickies draw above the grid and below nodes (accent-tinted card, text in `foreground`, 8 pt padding). Both hit-test on their body, move by dragging, resize by a 12 pt corner handle, and participate in selection (frames and stickies have their own selection set in `EditorViewState.selectedComments: Set<CommentID>`, `enum CommentID { case sticky(StickyID), frame(FrameID) }`, cleared together with node selection). Delete removes selected comments together with selected nodes.
+- Commands: Edit ▸ Add Sticky Note (⌘⇧N) at the viewport centre (160×100, "Note"); Edit ▸ Frame Selection (⌘⇧C) around the selection's bounding box plus 24 pt padding and the title bar (title "Frame"), disabled when nothing is selected. The inspector edits a sticky's text (multi-line) and accent, a frame's title and accent.
+- Ownership by geometry (§11.5): a node belongs to a frame when the node's frame centre lies inside the comment frame. Dragging a frame moves its members by the same delta in the same transaction ("Move Frame"). Nodes dragged across a frame's edge simply change membership because membership is computed from geometry; nothing is stored.
+- `DocumentChange`: `.addSticky(StickyNote)`, `.updateSticky(StickyID, text:, accent:)`, `.addFrame(CommentFrame)`, `.updateFrame(FrameID, title:, accent:)`, `.moveComments([CommentID: CGPoint])`, `.resizeComment(CommentID, CGRect)`, `.removeComments(Set<CommentID>)`; all `.cosmetic`; undo names "Add Note", "Edit Note", "Add Frame", "Edit Frame", "Move", "Resize", "Delete".
+
+### 21.5 Generated-code panel
+
+View ▸ Generated Code (⌘⌥C) toggles a pane below the preview (a vertical split, min 120 pt, persisted in `EditorViewState.showsCode`). It shows `EditorModel.generatedSource` — updated on every successful generation, before compilation — with Dracula syntax colouring from a small tokenizer (keywords, types, numbers, comments, preprocessor, identifiers) rendered as an `AttributedString`, a Copy button, and the selected node's lines highlighted (background `currentLine`) via `GeneratedShader.lineMap`. The line map now covers group-function bodies: `GroupFunction` carries its body owners and `ShaderGenerator` offsets them into the program's map when it adds each function.
+
+### 21.6 Minimap
+
+View ▸ Minimap (⌘⌥M, persisted in `EditorViewState.showsMinimap`, default on) shows a 180×120 overlay at the canvas's bottom-right: the active graph's node frames in their category colour (accent for group instances), frames as outlines, the viewport as a `foreground` rectangle; the map scale fits the graph's bounds plus the viewport. Clicking or dragging on it centres the viewport at that point. Pure geometry lives in `MinimapLayout` (a UI struct with no view dependencies, testable).
+
+### 21.7 ⇧A definitions
+
+`NodeSearchPopover` rows become `SearchRow { case builtin(NodeDef), definition(GroupDefinition) }`; definitions match by name and are listed after builtins under a "My Functions" caption; picking one places an instance through `addInstance(of:at:)` (recursion refusal with the notice). Closes the §11.4 carry-over.
+
+### 21.8 Shape cache and cleanups
+
+- `EditorModel.shapes: [NodeID: NodeShape]` is a cache over the active graph, rebuilt lazily after any `perform` and on `activePath` change; `NodeGeometry` / `DropResolver` / `WireLayer` callers pass `{ shapes[$0.id] }`. `ShaderDocument.node(_:)` keeps its sorted lookup (still used off the hot path).
+- Deleted: the test-only `registry:` overloads in `NodeGeometry` / `DropResolver` (their tests move to `shapes:`), the uncalled `ShaderGenerator.diagnostics(_:)`.
+
+### 21.9 Tests
+
+Package round-trip with and without textures, missing `view.json`, missing texture file (warning), newer `formatVersion` (refused); texture codegen goldens for the fragment program (two samples of one asset share a slot), a group function taking a texture parameter, Layer Effect export (`layer.sample`), the Color Effect validation error; Gradient/Checker goldens; `.metal` export golden plus a toolchain compile when available; GPU compile of a textured program with the placeholder bound; comment operations, frame ownership by geometry, undo names; clipboard textures round-trip and paste into a document that lacks the asset; popover rows; line map with group-function owners; minimap layout maths; shape-cache invalidation.
