@@ -10,9 +10,38 @@ struct CanvasContextMenu: View {
     let model: EditorModel
     /// Canvas coordinates: where Paste lands and where a new sticky note is centred.
     let canvasPoint: CGPoint
-    /// What the press landed on, for the viewer items. `nil` on macOS, where the menu comes from
-    /// the pointer and the ◉ badge is one click away anyway.
+    /// What the press landed on — the viewer items read the socket, and a node outside the
+    /// selection becomes the selection (see `adoptedNode`). On macOS it is the hit under the
+    /// pointer when the menu opened.
     let hit: CanvasHit?
+
+    /// The node a context-menu press makes the selection before any item acts: the pressed node
+    /// (through its body or a socket) when it is not already selected — the way a secondary click
+    /// on an unselected Finder item selects it first. `nil` leaves the selection as it is: a press
+    /// on a selected node, on a comment, a wire, or empty canvas.
+    nonisolated static func adoptedNode(hit: CanvasHit?, selection: Set<NodeID>) -> NodeID? {
+        let pressed: NodeID? = switch hit {
+        case .node(let id)?: id
+        case .socket(let ref, _)?: ref.node
+        default: nil
+        }
+        guard let pressed, !selection.contains(pressed) else { return nil }
+        return pressed
+    }
+
+    private var adopted: NodeID? { Self.adoptedNode(hit: hit, selection: model.selection) }
+
+    /// The selection the items enable against — the one `act` will have installed by the time the
+    /// item runs.
+    private var selection: Set<NodeID> { adopted.map { [$0] } ?? model.selection }
+    private var editableSelection: Set<NodeID> {
+        adopted.map { model.shape(of: $0)?.isPseudo == true ? [] : [$0] } ?? model.editableSelection
+    }
+    private var selectedInstance: NodeID? {
+        guard selection.count == 1, let id = selection.first, case .group? = model.graph.nodes[id]?.kind else { return nil }
+        return id
+    }
+    private var canCopy: Bool { !editableSelection.isEmpty || (adopted == nil && !model.selectedComments.isEmpty) }
 
     /// The iPad menu is a popover this view is the content of, so each item has to close it; the
     /// macOS `.contextMenu` closes itself, and calling `dismiss()` in a window's root hierarchy
@@ -22,6 +51,7 @@ struct CanvasContextMenu: View {
     #endif
 
     private func act(_ body: () -> Void) {
+        if let adopted { model.select(adopted, mode: .replace) }
         body()
         #if os(iOS)
         dismiss()
@@ -30,29 +60,29 @@ struct CanvasContextMenu: View {
 
     var body: some View {
         Button("Cut") { act { model.cutSelection() } }
-            .disabled(!model.canCopy)
+            .disabled(!canCopy)
         Button("Copy") { act { model.copySelection() } }
-            .disabled(!model.canCopy)
+            .disabled(!canCopy)
         Button("Paste") { act { model.paste(at: canvasPoint) } }
             .disabled(!model.canPaste)
         Button("Duplicate") { act { model.duplicateSelection() } }
-            .disabled(!model.canCopy)
+            .disabled(!canCopy)
         Button("Delete") { act { model.deleteSelection() } }
-            .disabled(model.selection.isEmpty && model.selectedComments.isEmpty && model.selectedWire == nil)
+            .disabled(selection.isEmpty && adopted == nil && model.selectedComments.isEmpty && model.selectedWire == nil)
         Divider()
         Button("Group") { act { model.groupSelection() } }
-            .disabled(model.editableSelection.isEmpty)
+            .disabled(editableSelection.isEmpty)
         Button("Ungroup") { act { model.ungroupSelection() } }
-            .disabled(model.selectedInstance == nil)
+            .disabled(selectedInstance == nil)
         Button("Make Unique") { act { model.makeUniqueSelection() } }
-            .disabled(model.selectedInstance == nil)
+            .disabled(selectedInstance == nil)
         Button("Edit Group") { act { if let id = model.selectedInstance { model.diveIn(id) } } }
-            .disabled(model.selectedInstance == nil)
+            .disabled(selectedInstance == nil)
         Button("Exit Group") { act { model.exitGroup() } }
             .disabled(!model.canExitGroup)
         Divider()
         Button("Frame Selection") { act { model.frameSelection() } }
-            .disabled(model.selection.isEmpty)
+            .disabled(selection.isEmpty)
         Button("Add Sticky Note") { act { model.addSticky(centredAt: canvasPoint) } }
         if let ref = viewerSocket {
             Divider()

@@ -125,9 +125,11 @@ public struct GraphCanvasView: View {
             .contentShape(Rectangle())
             #if os(macOS)
             // Parity with the iPad long-press (spec §22.3). `hoverLocation` is where the pointer
-            // was when the menu opened, so Paste lands under the cursor like ⌘V does.
+            // was when the menu opened, so Paste lands under the cursor like ⌘V does, and the hit
+            // under it is what the menu's node items adopt (`CanvasContextMenu.adoptedNode`).
             .contextMenu {
-                CanvasContextMenu(model: model, canvasPoint: transform.toCanvas(hoverLocation), hit: nil)
+                let p = transform.toCanvas(hoverLocation)
+                CanvasContextMenu(model: model, canvasPoint: p, hit: hit(at: p))
             }
             #else
             // The long-press menu. A popover rather than SwiftUI's `.contextMenu`, because the
