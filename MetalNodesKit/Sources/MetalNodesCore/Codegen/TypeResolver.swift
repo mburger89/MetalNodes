@@ -41,10 +41,12 @@ public enum TypeResolver {
                 case .generic(let g): generics[g] ?? .float
                 }
             }
+            // A pseudo-node's `+` is a gesture target, not a socket with a value: it gets no entry
+            // here, so nothing downstream can mistake it for one (spec §20.6).
             let node = ResolvedNode(
                 id: id, generics: generics,
-                inputTypes: Dictionary(uniqueKeysWithValues: def.inputs.map { ($0.name, concrete($0.type)) }),
-                outputTypes: Dictionary(uniqueKeysWithValues: def.outputs.map { ($0.name, concrete($0.type)) }))
+                inputTypes: Dictionary(uniqueKeysWithValues: def.inputs.filter { !NodeShape.isPlus($0) }.map { ($0.name, concrete($0.type)) }),
+                outputTypes: Dictionary(uniqueKeysWithValues: def.outputs.filter { !NodeShape.isPlus($0) }.map { ($0.name, concrete($0.type)) }))
             resolved[id] = node
 
             // 2. Every wire into this node must be convertible. The canvas turns a drop on a

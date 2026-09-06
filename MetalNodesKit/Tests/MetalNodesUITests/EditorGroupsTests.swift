@@ -251,6 +251,39 @@ import MetalNodesRender
     }
 
     /// Both helpers name the socket after the wire's end and refuse what they cannot type.
+    /// UV → Separate → Combine → Normalize → Output. `Normalize`'s output is `.generic("T")`, so
+    /// only the wire feeding it says it is a `float3` — the type has to survive the trip into a
+    /// definition (ruling R20).
+    private func vectorModel() -> (EditorModel, NodeID) {
+        func n(_ id: String, _ x: CGFloat) -> NodeInstance { NodeInstance(kind: .builtin(id), position: CGPoint(x: x, y: 0)) }
+        let uv = n("input.uv", 0), sep = n("vector.separate", 200), comb = n("vector.combine", 400)
+        let norm = n("vector.normalize", 600), out = n("output.fragment", 800)
+        var g = Graph()
+        for node in [uv, sep, comb, norm, out] { g.nodes[node.id] = node }
+        g.connect(SocketRef(uv.id, "uv"), to: SocketRef(sep.id, "v"))
+        g.connect(SocketRef(sep.id, "x"), to: SocketRef(comb.id, "x"))
+        g.connect(SocketRef(sep.id, "y"), to: SocketRef(comb.id, "y"))
+        g.connect(SocketRef(comb.id, "out"), to: SocketRef(norm.id, "v"))
+        g.connect(SocketRef(norm.id, "out"), to: SocketRef(out.id, "color"))
+        var doc = ShaderDocument()
+        doc.root = g
+        let m = EditorModel(document: doc, compiler: RecordingCompiler(), pasteboard: MemoryPasteboard())
+        m.debounceInterval = .milliseconds(5)
+        return (m, norm.id)
+    }
+
+    @Test func exposeOutputTakesTheTypeResolvedInsideTheDefinition() async {
+        let (m, norm) = vectorModel()
+        m.start(); await m.awaitIdle()
+        m.select(nodes: [norm], mode: .replace)
+        let gid = m.groupSelection()!
+        m.diveIn(m.selection.first!)
+        await m.awaitIdle()
+        #expect(m.resolvedTypes[norm]?.outputTypes["out"] == SocketType.float3)
+        #expect(m.exposeOutput(from: SocketRef(norm, "out"), in: gid) == "out2")
+        #expect(m.document.definitions[gid]?.outputs.last?.type == TypeRef.concrete(.float3))
+    }
+
     @Test func exposingRefusesOutsideItsDefinition() {
         let m = model()
         let g = divedGroup(m)

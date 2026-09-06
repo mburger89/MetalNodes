@@ -34,6 +34,16 @@ import CoreGraphics
         return doc
     }
 
+    /// Ruling R20: `resolved` covers the whole document, not just the root, so the editor knows a
+    /// socket's type while dived into a definition.
+    @Test func resolvedTypesCoverNodesInsideDefinitions() throws {
+        let s = try ShaderGenerator.generate(twice(), registry: reg)
+        #expect(s.resolved[id(12)]?.outputTypes["out"] == SocketType.float)     // the Math inside "Twice"
+        #expect(s.resolved[id(10)]?.outputTypes["x"] == SocketType.float)       // its Group Input
+        #expect(s.resolved[id(10)]?.outputTypes["+"] == nil)                    // but never the `+`
+        #expect(s.resolved[id(2)]?.outputTypes["out"] == SocketType.float)      // and the root instance still
+    }
+
     @Test func oneLevelGroupGolden() throws {
         let s = try ShaderGenerator.generate(twice(), registry: reg)
         let expected = """

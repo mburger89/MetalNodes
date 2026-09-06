@@ -18,14 +18,17 @@ public struct GroupFunction: Sendable {
     /// The viewed value's type when this is a view variant (spec §20.5); `nil` for a normal function.
     /// A variant's only output is `value` of this type.
     public let viewedType: SocketType?
+    /// Every node of the definition's graph, typed. `GeneratedShader.resolved` merges these in, so
+    /// the editor knows a socket's real type while dived into a definition (ruling R20).
+    public let resolved: [NodeID: ResolvedNode]
 
     init(id: GroupID, name: String, structName: String, inputs: [SocketDecl], outputs: [SocketDecl],
          uniformParams: [(path: ParamPath, type: SocketType)], requiredStdlib: [String], source: String,
-         lineOwners: [NodeID?], viewedType: SocketType? = nil) {
+         lineOwners: [NodeID?], viewedType: SocketType? = nil, resolved: [NodeID: ResolvedNode] = [:]) {
         self.id = id; self.name = name; self.structName = structName
         self.inputs = inputs; self.outputs = outputs; self.uniformParams = uniformParams
         self.requiredStdlib = requiredStdlib; self.source = source
-        self.lineOwners = lineOwners; self.viewedType = viewedType
+        self.lineOwners = lineOwners; self.viewedType = viewedType; self.resolved = resolved
     }
 }
 
@@ -108,7 +111,7 @@ public enum GroupCodegen {
         b.add("}")
         return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
                              uniformParams: emitted.uniformRequests, requiredStdlib: emitted.requiredStdlib,
-                             source: b.text, lineOwners: emitted.lineOwners, viewedType: viewed?.type)
+                             source: b.text, lineOwners: emitted.lineOwners, viewedType: viewed?.type, resolved: resolved)
     }
 
     /// Definitions carry no generics (spec §20.2), so an unresolved socket type is a `float`.

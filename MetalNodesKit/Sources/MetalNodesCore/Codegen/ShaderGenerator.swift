@@ -36,6 +36,16 @@ public struct GeneratedShader: Sendable, Hashable {
 public enum ShaderGenerator {
     public static let fragmentFunctionName = "shaderMain"
 
+    /// The root's types plus every emitted definition's (ruling R20). Node ids are unique
+    /// document-wide, so the maps cannot disagree — a definition emitted both normally and as a
+    /// view variant types the same nodes the same way. The editor reads this while dived into a
+    /// definition, where a generic socket's real type is otherwise unknowable (spec §20.5).
+    static func merged(_ root: [NodeID: ResolvedNode], _ functions: [GroupFunction]) -> [NodeID: ResolvedNode] {
+        var out = root
+        for f in functions { out.merge(f.resolved) { $1 } }
+        return out
+    }
+
     /// Validation and type diagnostics without generating. Never throws.
     public static func diagnostics(_ doc: ShaderDocument, target: OutputTarget, registry: NodeRegistry) -> [Diagnostic] {
         let structural = GraphValidator.validate(document: doc, registry: registry, target: target)
@@ -116,7 +126,8 @@ public enum ShaderGenerator {
         }
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib),
                                 functions: groupFunctions.map(\.source), body: body)
-        return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map, resolved: resolved,
+        return GeneratedShader(source: b.text, layout: emitted.layout, lineMap: b.map,
+                               resolved: merged(resolved, groupFunctions),
                                fragmentFunctionName: fragmentFunctionName, target: .fragment, viewer: viewer)
     }
 
@@ -176,7 +187,8 @@ public enum ShaderGenerator {
         for l in StitchableCodegen.previewBody(kind: kind, name: name, args: args) { preview.add("    " + l) }
         preview.add("}")
 
-        return GeneratedShader(source: preview.text, layout: emitted.layout, lineMap: preview.map, resolved: resolved,
+        return GeneratedShader(source: preview.text, layout: emitted.layout, lineMap: preview.map,
+                               resolved: merged(resolved, groupFunctions),
                                fragmentFunctionName: fragmentFunctionName, target: .stitchable(kind),
                                viewer: nil, exportSource: export.text, functionName: name)
     }

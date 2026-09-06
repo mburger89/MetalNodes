@@ -415,7 +415,7 @@ public struct GraphCanvasView: View {
                 model.exposeInput(to: input, in: gid)
             }
         case .empty where w.isWildcard:
-            model.endTransaction()
+            model.cancelTransaction()               // a wildcard dropped on nothing is abandoned, not committed
         default:
             return false
         }
