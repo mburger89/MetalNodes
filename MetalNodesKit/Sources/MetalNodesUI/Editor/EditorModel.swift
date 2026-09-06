@@ -142,7 +142,10 @@ public final class EditorModel {
         case .groupSelection(let ids, let name):
             if let r = GroupOperations.group(ids, in: path, of: document, registry: registry, name: name) {
                 document = r.document
+                // The grouped nodes left the active graph: prune *after* selecting the new
+                // instance, so it survives and only a viewer on what moved is dropped.
                 viewState.selection = [r.instance]
+                pruneAfterRemoval()
             }
         case .ungroup(let id):
             if let r = GroupOperations.ungroup(id, in: path, of: document) {
@@ -151,7 +154,12 @@ public final class EditorModel {
                 pruneAfterRemoval()
             }
         case .makeUnique(let id):
-            if let r = GroupOperations.makeUnique(id, in: path, of: document) { document = r.document }
+            // The instance now points at a copy with fresh inner ids, so a viewer routed through
+            // it no longer resolves.
+            if let r = GroupOperations.makeUnique(id, in: path, of: document) {
+                document = r.document
+                pruneAfterRemoval()
+            }
         case .renameDefinition(let id, let name):
             document = GroupOperations.rename(id, to: name, in: document) ?? document
         case .setDefinitionAccent(let id, let accent):
@@ -160,8 +168,10 @@ public final class EditorModel {
             document = GroupOperations.addSocket(id, kind: kind, decl: decl, in: document) ?? document
         case .renameSocket(let id, let kind, let old, let new):
             document = GroupOperations.renameSocket(id, kind: kind, from: old, to: new, in: document) ?? document
+            pruneAfterRemoval()                      // the viewed socket may have been the renamed one
         case .removeSocket(let id, let kind, let name):
             document = GroupOperations.removeSocket(id, kind: kind, name: name, in: document) ?? document
+            pruneAfterRemoval()
         case .deleteDefinition(let id):
             document = GroupOperations.deleteDefinition(id, in: document) ?? document
             pruneAfterRemoval()

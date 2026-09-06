@@ -42,15 +42,22 @@ extension EditorModel {
         clearSelection()
     }
 
-    public func exitGroup() { popToLevel(max(0, viewState.editingStack.count - 1)) }
+    /// Breadcrumb levels (ruling R16): 0 is the root, a palette-opened definition occupies level 1,
+    /// and the stack follows. So the deepest level is `base + editingStack.count`.
+    private var levelBase: Int { viewState.editingDefinition == nil ? 0 : 1 }
 
-    /// Level 0 is the root; level n keeps the first n stack entries.
+    /// Pops exactly one level — out of the innermost instance, or out of a palette-opened
+    /// definition once the stack above it is gone.
+    public func exitGroup() { popToLevel(max(0, levelBase + viewState.editingStack.count - 1)) }
+
+    /// Level 0 is the root and clears everything; any deeper level keeps the palette-opened
+    /// definition and truncates the stack to what sits above it.
     public func popToLevel(_ level: Int) {
         if level == 0 {
             viewState.editingStack = []
             viewState.editingDefinition = nil
         } else {
-            viewState.editingStack = Array(viewState.editingStack.prefix(level))
+            viewState.editingStack = Array(viewState.editingStack.prefix(max(0, level - levelBase)))
         }
         clearSelection()
     }
@@ -66,12 +73,11 @@ extension EditorModel {
     /// `Shader › Fbm › Turbulence` — one entry per level, `level` being what `popToLevel` takes.
     public var breadcrumb: [(title: String, level: Int)] {
         var out = [(title: "Shader", level: 0)]
+        if let d = viewState.editingDefinition, let def = document.definitions[d] { out.append((def.name, 1)) }
+        let base = levelBase
         for (i, instance) in viewState.editingStack.enumerated() {
             guard let n = document.node(instance)?.node, case .group(let g) = n.kind else { continue }
-            out.append((n.customTitle ?? document.definitions[g]?.name ?? "Group", i + 1))
-        }
-        if viewState.editingStack.isEmpty, let d = viewState.editingDefinition, let def = document.definitions[d] {
-            out.append((def.name, 1))
+            out.append((n.customTitle ?? document.definitions[g]?.name ?? "Group", base + i + 1))
         }
         return out
     }

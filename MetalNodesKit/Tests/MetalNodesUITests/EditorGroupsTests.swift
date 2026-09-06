@@ -57,6 +57,85 @@ import MetalNodesRender
         #expect(m.viewState.editingDefinition == nil)
     }
 
+    /// A "Group" definition holding a nested "Group 2" instance, with the editor back at the root.
+    private func nestedGroups(_ m: EditorModel) -> (outer: GroupID, inner: GroupID, innerInstance: NodeID) {
+        m.select(nodes: [node(m, "math.math", op: "multiply"), node(m, "math.math", op: "sine")], mode: .replace)
+        let outer = m.groupSelection()!
+        m.diveIn(m.selection.first!)
+        m.select(nodes: Set(m.graph.nodes.values.filter { $0.kind == .builtin("math.math") }.map(\.id)), mode: .replace)
+        let inner = m.groupSelection()!
+        let instance = m.selection.first!
+        m.popToLevel(0)
+        return (outer, inner, instance)
+    }
+
+    /// Ruling R16: a definition opened from the palette is level 1, and diving from it stacks above.
+    @Test func aPaletteOpenedDefinitionOccupiesItsOwnBreadcrumbLevel() {
+        let m = model()
+        let g = nestedGroups(m)
+        m.editDefinition(g.outer)
+        m.diveIn(g.innerInstance)
+        #expect(m.breadcrumb.map(\.title) == ["Shader", "Group", "Group 2"])
+        #expect(m.breadcrumb.map(\.level) == [0, 1, 2])
+        #expect(m.activePath == GraphPath.definition(g.inner))
+        m.exitGroup()
+        #expect(m.activePath == GraphPath.definition(g.outer))
+        #expect(m.viewState.editingDefinition == g.outer)
+        #expect(m.viewState.editingStack.isEmpty)
+        m.exitGroup()
+        #expect(m.activePath == GraphPath.root)
+        #expect(m.viewState.editingDefinition == nil)
+    }
+
+    @Test func popToLevelOneReturnsToThePaletteOpenedDefinition() {
+        let m = model()
+        let g = nestedGroups(m)
+        m.editDefinition(g.outer)
+        m.diveIn(g.innerInstance)
+        m.popToLevel(1)
+        #expect(m.activePath == GraphPath.definition(g.outer))
+        #expect(m.viewState.editingStack.isEmpty)
+    }
+
+    /// `Group` on a node that is being viewed moves it out of the active graph, so the viewer —
+    /// which recorded no route — has to go with it.
+    @Test func groupingTheViewedNodeClearsTheViewer() {
+        let m = model()
+        let mul = node(m, "math.math", op: "multiply"), sine = node(m, "math.math", op: "sine")
+        m.setViewer(SocketRef(sine, "out"))
+        m.select(nodes: [mul, sine], mode: .replace)
+        m.groupSelection()
+        #expect(m.viewer == nil)
+        #expect(m.selection.count == 1)
+    }
+
+    @Test func undoingAGroupLeavesTheDiveBehind() {
+        let m = model()
+        m.select(nodes: [node(m, "math.math", op: "multiply"), node(m, "math.math", op: "sine")], mode: .replace)
+        m.groupSelection()
+        m.diveIn(m.selection.first!)
+        m.undo()
+        #expect(m.viewState.editingStack.isEmpty)
+        #expect(m.activePath == GraphPath.root)
+    }
+
+    @Test func deletingTheEditedDefinitionLeavesIt() {
+        let m = model()
+        m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
+        let gid = m.groupSelection()!
+        m.apply(.removeNodes([m.selection.first!]))          // the definition is now unused
+        m.editDefinition(gid)
+        m.apply(.deleteDefinition(gid))
+        #expect(m.viewState.editingDefinition == nil)
+        #expect(m.document.definitions.isEmpty)
+    }
+
+    @Test func renamingADefinitionRebuilds() {
+        // The name is part of the emitted function's identifier (spec §20.4, ruling R14).
+        #expect(DocumentChange.renameDefinition(GroupID(), "X").changeClass == ChangeClass.topology)
+        #expect(DocumentChange.setDefinitionAccent(GroupID(), .cyan).changeClass == ChangeClass.cosmetic)
+    }
+
     @Test func pseudoNodesCannotBeDeletedOrCopied() {
         let m = model()
         m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
