@@ -53,6 +53,7 @@ public enum GraphValidator {
         let reachable = reachableDefinitions(doc)
         return out + textureTargetDiagnostics(doc, target: target, reachable: reachable)
                    + MaterialValidation.diagnostics(document: doc, registry: registry, target: target, reachable: reachable)
+                   + CustomCodeValidation.diagnostics(document: doc, registry: registry)
     }
 
     /// What the SwiftUI targets make of Texture Sample (spec §21.2). Document-wide, because that is
