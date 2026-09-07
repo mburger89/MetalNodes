@@ -123,15 +123,16 @@ enum MaterialFixture {
 
     // Rule 3 — target legality.
 
-    /// Task 11 replaced the two hand-written strings with the one the predicate produces: it names
-    /// the value the node reads and the target that cannot supply it, which covers both directions
-    /// of the rule instead of one each.
+    /// Task 11 replaced the two hand-written strings with one the predicate produces, which covers
+    /// both directions of the rule instead of one each. It still names the fix — the half a user
+    /// acts on — but derives it rather than hardcoding it.
     @Test func mouseAndResolutionAreRefusedUnderRealityKit() {
         for (id, name) in [("input.mouse", "mouse"), ("input.resolution", "resolution")] {
             let doc = MaterialFixture.document { g in MaterialFixture.wire(id, into: "baseColor", &g) }
             #expect(errors(doc).contains {
                 $0.message.contains("reads \(name), which the RealityKit Material target does not provide")
             }, "\(id)")
+            #expect(errors(doc).contains { $0.message.contains("needs the Fragment (preview) or SwiftUI target") }, "\(id)")
             // Exactly one refusal, not one per stage as well: a node legal in no stage is a target
             // error, and rule 2 stands down for it.
             #expect(errors(doc).count == 1, "\(id)")
@@ -147,9 +148,12 @@ enum MaterialFixture {
         g.nodes[terminal.id] = terminal
         g.nodes[normal.id] = normal
         doc.root = g
+        // The problem, in the vocabulary the predicate reasons in…
         #expect(errors(doc).contains {
             $0.message.contains("reads normal3d, which the Fragment (preview) target does not provide")
         })
+        // …and the fix, which is the half the user acts on and the retired string carried.
+        #expect(errors(doc).contains { $0.message.contains("needs the RealityKit Material target") })
     }
 
     @Test func aThreeDimensionalNodeIsFineUnderRealityKit() {

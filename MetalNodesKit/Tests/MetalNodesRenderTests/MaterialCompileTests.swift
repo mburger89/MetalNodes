@@ -218,9 +218,10 @@ import Metal
     /// bug, not one instance of it.
     ///
     /// `resolution` and `mouse` are neutral literals (`float2(1.0, 1.0)` / `float2(0.0, 0.0)`),
-    /// not accessors — no shim declares them, and RealityKit refuses the two nodes that could
-    /// reach them (`MaterialValidation.twoDimensionalOnly`) — so they are excluded here on
-    /// purpose, not by oversight.
+    /// not accessors — no shim declares them, and RealityKit refuses every body that reads them
+    /// (they are `SysValue(readable: false)`, so `EmitEnvironment.canEmit` reports `.missing` and
+    /// `MaterialValidation`'s target rule turns that into a diagnostic) — so they are excluded here
+    /// on purpose, not by oversight.
     @Test(arguments: MaterialStage.allCases)
     func everyMaterialSysSpellingResolvesAgainstItsShim(_ stage: MaterialStage) async throws {
         guard let device = MTLCreateSystemDefaultDevice() else {

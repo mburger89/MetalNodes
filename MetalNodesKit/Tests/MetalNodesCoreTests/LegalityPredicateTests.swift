@@ -242,8 +242,19 @@ import Testing
     /// property's default — so the derivation has to keep answering "both" for all of them. The
     /// two tables above plus this loop cover the whole library, not a sample of it.
     @Test func everyOtherBuiltinWasDeclaredBothStagesAndStillDerivesBoth() {
-        for def in NodeRegistry.builtin.all
-        where Self.declared[def.id] == nil && Self.declarationWasWrong[def.id] == nil {
+        // Guard the guard: this is a loop over a registry, so an empty or shrunken one would pass
+        // it vacuously and the migration's whole-library claim would quietly stop being true. The
+        // library held 54 builtins when the derivation landed, 42 of them outside the two tables;
+        // the floor only has to be tight enough that "the loop ran over the real library" stays a
+        // fact rather than an assumption.
+        let checked = NodeRegistry.builtin.all
+            .filter { Self.declared[$0.id] == nil && Self.declarationWasWrong[$0.id] == nil }
+        #expect(checked.count >= 40)
+        // …and both tables name real nodes, so a renamed id cannot silently empty them either.
+        for id in Self.declared.keys { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }
+        for id in Self.declarationWasWrong.keys { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }
+
+        for def in checked {
             #expect(def.stages == MaterialStage.all, "\(def.id)")
         }
     }
@@ -484,5 +495,140 @@ import Testing
         let d = errors(definitionDoc("return params.surface().base_color();"))
         #expect(d.contains { $0.message.contains("return") })
         #expect(d.contains { $0.message.contains("params.surface()") })
+    }
+}
+
+/// The production seam `readableSys` exists for: what `Emitter` actually puts in `EmitContext.sys`.
+/// `ReadableSysTests` above pins the property; this pins the *call site*, which reverting alone
+/// would otherwise leave green.
+@Suite struct EmitterSysContextTests {
+    /// A node the builtin library deliberately does not contain: a template that reads
+    /// `{sys.mouse}` and is nevertheless asked to emit under a material environment. Real
+    /// documents cannot reach this — `MaterialValidation` refuses the Mouse node first — which is
+    /// exactly why the emitter's own behaviour has to be pinned directly.
+    private static let mouseReader = NodeDef(
+        id: "test.mouseReader", title: "Mouse Reader", category: .input,
+        outputs: [SocketDecl(name: "out", type: .concrete(.float2))],
+        body: .template("{out.out} = {sys.mouse};"))
+
+    private func emittedLine(env: EmitEnvironment) throws -> String {
+        let registry = try NodeRegistry(BuiltinNodes.all + [Self.mouseReader])
+        var doc = ShaderDocument()
+        var g = Graph()
+        let node = NodeInstance(kind: .builtin(Self.mouseReader.id), position: .zero)
+        g.nodes[node.id] = node
+        doc.root = g
+        let (resolved, diags) = TypeResolver.resolve(g, path: .root, document: doc, registry: registry, order: [node.id])
+        #expect(diags.isEmpty)
+        let out = Emitter.emit(order: [node.id], graph: g, path: .root, document: doc, registry: registry,
+                               resolved: resolved, env: env)
+        return try #require(out.bodyLines.first { $0.contains("=") })
+    }
+
+    /// The whole point: under RealityKit, `mouse` is spelled but not readable, so the emitted
+    /// statement must carry the unresolved marker — loud — rather than `float2(0.0, 0.0)`, which
+    /// would compile and silently compute with a constant the user never asked for.
+    @Test func aFillOnlySystemValueEmitsTheUnresolvedMarkerRatherThanItsLiteral() throws {
+        for env in [EmitEnvironment.realityKitSurface, .realityKitGeometry] {
+            let line = try emittedLine(env: env)
+            #expect(line.contains("/* ?sys.mouse */"))
+            #expect(!line.contains("float2(0.0, 0.0)"))
+        }
+    }
+
+    /// The control: where `mouse` *is* readable the same node emits the environment's real
+    /// spelling, so the test above is measuring `readable`, not a broken emitter.
+    @Test func aReadableSystemValueStillEmitsItsSpelling() throws {
+        #expect(try emittedLine(env: .fragment).contains("u.mouse"))
+        #expect(try emittedLine(env: .groupFunction).contains("mouse"))
+        #expect(try !emittedLine(env: .fragment).contains("?sys."))
+    }
+
+    /// And the same is true of a readable key under the *material* environments, so the refusal
+    /// above is specific to the fill-only entries rather than to RealityKit as a whole.
+    @Test func aReadableMaterialSystemValueIsUnaffected() throws {
+        let uvReader = NodeDef(id: "test.uvReader", title: "UV Reader", category: .input,
+                               outputs: [SocketDecl(name: "out", type: .concrete(.float2))],
+                               body: .template("{out.out} = {sys.uv};"))
+        let registry = try NodeRegistry(BuiltinNodes.all + [uvReader])
+        var doc = ShaderDocument()
+        var g = Graph()
+        let node = NodeInstance(kind: .builtin(uvReader.id), position: .zero)
+        g.nodes[node.id] = node
+        doc.root = g
+        let (resolved, _) = TypeResolver.resolve(g, path: .root, document: doc, registry: registry, order: [node.id])
+        let out = Emitter.emit(order: [node.id], graph: g, path: .root, document: doc, registry: registry,
+                               resolved: resolved, env: .realityKitSurface)
+        let line = try #require(out.bodyLines.first { $0.contains("=") })
+        #expect(line.contains("params.geometry().uv0()"))
+        #expect(!line.contains("?sys."))
+    }
+}
+
+/// The third `canEmit` call site — `MaterialValidation.definitionNodeDiagnostics` — asks about a
+/// node inside a group definition, in `groupFunction`'s vocabulary. It must ask with the resolved
+/// case for the same reason the other two do: the fail-closed `.variants` rule would otherwise
+/// refuse a definition over a case the node will never emit.
+///
+/// No builtin can show this. Every `.variants` body in the library reads only names `groupFunction`
+/// already spells, so `chosen: nil` and `chosen: <case>` agree for all of them — which is precisely
+/// why the argument was unpinned. This synthetic node makes the two answers differ.
+@Suite struct DefinitionScopeVariantTests {
+    private static let modal = NodeDef(
+        id: "test.modalReader", title: "Modal Reader", category: .input,
+        outputs: [SocketDecl(name: "out", type: .concrete(.float3))],
+        params: [ParamDecl(name: "mode", kind: .enumeration(["plain", "world"]),
+                           defaultValue: .enumCase("plain"))],
+        body: .variants(param: "mode", [
+            // Legal in a group function: `uv` is one of its four parameters.
+            "plain": "{out.out} = float3({sys.uv}, 0.0);",
+            // Not legal there: a group function is target-agnostic and cannot spell RealityKit's
+            // geometry accessors at all.
+            "world": "{out.out} = {sys.worldPosition};",
+        ]))
+
+    /// The node in a reachable definition, wired to that definition's Group Output, under a
+    /// RealityKit document — the exact shape `definitionNodeDiagnostics` walks.
+    private func document(mode: String?) throws -> (ShaderDocument, NodeRegistry) {
+        let registry = try NodeRegistry(BuiltinNodes.all + [Self.modal])
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var def = GroupDefinition(name: "Wrapper", outputs: [SocketDecl(name: "out", type: .concrete(.float3))])
+        var inner = Graph()
+        let gin = NodeInstance(kind: .groupInput, position: .zero)
+        let gout = NodeInstance(kind: .groupOutput, position: .zero)
+        var node = NodeInstance(kind: .builtin(Self.modal.id), position: .zero)
+        if let mode { node.params["mode"] = .enumCase(mode) }
+        for n in [gin, gout, node] { inner.nodes[n.id] = n }
+        inner.inputs[SocketRef(gout.id, "out")] = SocketRef(node.id, "out")
+        def.graph = inner
+        doc.definitions[def.id] = def
+
+        var g = Graph()
+        let terminal = NodeInstance(kind: .builtin("output.material"), position: .zero)
+        let instance = NodeInstance(kind: .group(def.id), position: .zero)
+        g.nodes[terminal.id] = terminal; g.nodes[instance.id] = instance
+        g.inputs[SocketRef(terminal.id, "normal")] = SocketRef(instance.id, "out")
+        doc.root = g
+        return (doc, registry)
+    }
+
+    private func errors(_ pair: (ShaderDocument, NodeRegistry)) -> [Diagnostic] {
+        GraphValidator.validate(document: pair.0, registry: pair.1, target: .realityKit)
+            .filter { $0.severity == .error }
+    }
+
+    /// The case the node actually emits is legal in a group function, so the definition is fine.
+    /// Asking without the resolved case checks `world` too and refuses — the regression this pins.
+    @Test func aDefinitionIsJudgedOnTheCaseItsNodeActuallyEmits() throws {
+        #expect(errors(try document(mode: nil)).isEmpty)
+        #expect(errors(try document(mode: "plain")).isEmpty)
+    }
+
+    /// The mirror, so the test above cannot pass by the rule having stopped firing altogether: the
+    /// same node switched to the case that really does read a RealityKit accessor is refused.
+    @Test func theCaseThatDoesReachOutOfScopeIsStillRefused() throws {
+        let d = errors(try document(mode: "world"))
+        #expect(d.contains { $0.message.contains("Modal Reader") && $0.message.contains("out of the group") })
     }
 }

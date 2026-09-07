@@ -34,7 +34,7 @@ import Foundation
             if let first = def.outputs.first { doc.root.connect(SocketRef(n.id, first.name), to: SocketRef(out.id, "color")) }
             let error = #expect(throws: GenerationError.self) { try ShaderGenerator.generate(doc, registry: reg) }
             guard let error, case .invalid(let diags) = error else { Issue.record("no diagnostics for \(def.id)"); continue }
-            #expect(diags.contains { $0.message.contains("which the Fragment (preview) target does not provide") }, "\(def.id)")
+            #expect(diags.contains { $0.message.contains("needs the RealityKit Material target") }, "\(def.id)")
         }
     }
 

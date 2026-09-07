@@ -116,11 +116,17 @@ public struct EmitEnvironment: Sendable {
 
     /// How each system value is spelled inside a RealityKit function (spec §23.3).
     ///
-    /// `resolution` and `mouse` resolve to neutral literals: every group function's signature
-    /// starts `(float2 uv, float time, float2 size, float2 mouse, …)` and the UV node's `aspect`
-    /// variant reads `{sys.resolution}`, so the keys must produce *something*. No node can observe
-    /// them — Resolution and Mouse are refused under this target — and a unit aspect ratio makes
-    /// `aspect` degenerate to centred UV rather than to nonsense.
+    /// `resolution` and `mouse` resolve to neutral literals, and both are `readable: false`. The
+    /// reason they must exist at all is the **call site**, not any node: every group function's
+    /// signature starts `(float2 uv, float time, float2 size, float2 mouse, …)`, and `Emitter`
+    /// spells that argument list from these very keys (`Emitter.swift`, the `.group` case), so a
+    /// RealityKit material calling a group would otherwise have nothing to pass. `readable: false`
+    /// is what keeps that plumbing from becoming a value a node can read.
+    ///
+    /// (M7 also justified them by the UV node's `aspect` variant, which reads `{sys.resolution}`
+    /// and was said to "degenerate to centred UV rather than to nonsense". M8 reversed that: a
+    /// degenerate value is a silently wrong one, and §24.10 records the reversal. Bodies that read
+    /// these names are now refused under this target — including that variant.)
     public static func materialSys(for stage: MaterialStage) -> [String: SysValue] {
         let geo = stage == .surface ? materialGeometryAccessor : "geo"
         var s: [String: SysValue] = [
@@ -227,14 +233,21 @@ public struct EmitEnvironment: Sendable {
         }
     }
 
-    /// The `sys` dictionary a `.custom` body is handed (`Emitter`): spellings only, with every
-    /// fill-only entry dropped rather than flattened away.
+    /// The `sys` dictionary `Emitter` hands a node: spellings only, with every fill-only entry
+    /// dropped rather than flattened away.
     ///
     /// `SysValue.readable` is the whole point of `sys` being a struct: under RealityKit `mouse`
-    /// spells `float2(0.0, 0.0)` so a group call's argument list still type-checks, and a `.custom`
-    /// body handed that string would read a plausible-looking constant as if it were the pointer
+    /// spells `float2(0.0, 0.0)` so a group call's argument list still type-checks, and a body
+    /// handed that string would read a plausible-looking constant as if it were the pointer
     /// position — a silently wrong value that `canEmit` had already reported `.missing` for. Absent
     /// is the loud failure; present-but-lying is the quiet one.
+    ///
+    /// This reaches **every** body kind, not just `.custom`: `EmitContext.sys` is what
+    /// `Emitter.substitute` resolves `{sys.…}` against for `.template` and `.variants` bodies too,
+    /// and a name that is absent there substitutes to `/* ?sys.name */` — a marker the generator's
+    /// own tests already treat as a defect. So this is the backstop for the whole legality
+    /// predicate: if `canEmit` and emission ever disagree about a name, the generated source says
+    /// so out loud instead of quietly computing with a neutral literal.
     public var readableSys: [String: String] {
         sys.compactMapValues { $0.readable ? $0.spelling : nil }
     }

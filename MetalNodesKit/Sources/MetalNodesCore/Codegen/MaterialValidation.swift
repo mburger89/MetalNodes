@@ -106,6 +106,12 @@ public enum MaterialValidation {
     /// Illegal means illegal in *every* one of them. Under `.realityKit` there are two, and a node
     /// legal in only one is not a target error but a stage error — rule 2's question, with its own
     /// message about which stage the wire reached.
+    ///
+    /// The message names the problem *and* the fix. The two retired strings each named only the
+    /// fix ("needs the RealityKit Material target"), which is the half a user acts on: the palette
+    /// does no target filtering, so dropping World Position into a Color Effect document is a
+    /// two-click mistake. The predicate can now derive that half instead of hardcoding it — ask it
+    /// which *other* targets would accept this body — so the unified rule keeps both halves.
     private static func targetDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry,
                                           target: OutputTarget, reachable: [GroupDefinition]) -> [Diagnostic] {
         let environments = EmitEnvironment.environments(for: target)
@@ -120,10 +126,33 @@ public enum MaterialValidation {
                 }
             }
             guard let missing else { return nil }
-            return Diagnostic(.error,
-                "\(title(inst, doc, registry)) reads \(missing), which the \(target.title) target does not provide",
-                node: inst.id)
+            let problem = "\(title(inst, doc, registry)) reads \(missing), which the \(target.title) target does not provide"
+            guard let fix = alternativeTargets(for: def.body, chosen: chosen, excluding: target) else {
+                return Diagnostic(.error, problem, node: inst.id)
+            }
+            return Diagnostic(.error, problem + " — this node needs the \(fix) target", node: inst.id)
         }
+    }
+
+    /// How a diagnostic names the targets that *would* accept this body, derived by asking the same
+    /// predicate of every other target rather than from a second hand-kept list.
+    ///
+    /// The three SwiftUI kinds share one `sys` vocabulary, so a body legal under one is legal under
+    /// all three and naming each would be noise; they collapse to "SwiftUI" — which is what the
+    /// retired hand-written string said as well. `nil` when no other target can emit the body
+    /// either: then the message names the problem and stops rather than inventing a fix. No builtin
+    /// is in that position today, but a library node reading two vocabularies at once would be.
+    private static func alternativeTargets(for body: NodeBody, chosen: String?,
+                                           excluding target: OutputTarget) -> String? {
+        var labels: [String] = []
+        for other in OutputTarget.all where other != target {
+            guard EmitEnvironment.environments(for: other).contains(where: { $0.canEmit(body, chosen: chosen) == .allowed })
+            else { continue }
+            let label = other.stitchableKind == nil ? other.title : "SwiftUI"
+            if !labels.contains(label) { labels.append(label) }
+        }
+        guard let last = labels.last else { return nil }
+        return labels.count == 1 ? last : labels.dropLast().joined(separator: ", ") + " or " + last
     }
 
     /// The *inverse* of rule 3, and the same predicate asked of a different environment: under
