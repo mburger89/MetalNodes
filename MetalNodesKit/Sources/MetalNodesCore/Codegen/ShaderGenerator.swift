@@ -62,7 +62,9 @@ public enum ShaderGenerator {
         if let v = viewer, !GraphValidator.isValidViewer(v, in: doc, registry: registry) {
             throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: v.node, socket: v.socket)])
         }
-        let terminal = GraphValidator.terminal(in: doc.root)!
+        // Validation above guarantees the target's terminal exists; a RealityKit document has no
+        // Fragment Output and vice versa, so the lookup must know which one to find (spec §23.2).
+        let terminal = GraphValidator.terminal(in: doc.root, target: target)!
 
         // One function per reachable definition, inner-most first, so each is already built
         // when the definitions and the program that call it are emitted (spec §20.4). A

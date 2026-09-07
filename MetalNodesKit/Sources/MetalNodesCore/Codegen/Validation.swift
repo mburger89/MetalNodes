@@ -2,21 +2,36 @@ import Foundation
 
 public enum GraphValidator {
     public static let fragmentTerminalID = "output.fragment"
+    public static let materialTerminalID = "output.material"
     static let textureSampleID = "texture.sample"
 
-    public static func terminal(in graph: Graph) -> NodeID? {
-        graph.nodes.values
-            .filter { $0.kind == .builtin(fragmentTerminalID) }
+    /// Which terminal a target's program terminates at (spec §23.2). The three 2D targets share
+    /// the Fragment Output; RealityKit has its own.
+    public static func terminalID(for target: OutputTarget) -> String {
+        switch target {
+        case .fragment, .stitchable: fragmentTerminalID
+        case .realityKit: materialTerminalID
+        }
+    }
+
+    /// The lowest-id instance of the target's terminal, so a duplicate set always yields the same one.
+    public static func terminal(in graph: Graph, target: OutputTarget) -> NodeID? {
+        let id = terminalID(for: target)
+        return graph.nodes.values
+            .filter { $0.kind == .builtin(id) }
             .map(\.id)
             .sorted { $0.raw.uuidString < $1.raw.uuidString }
             .first
     }
 
+    /// Fragment convenience, kept so existing callers compile unchanged.
+    public static func terminal(in graph: Graph) -> NodeID? { terminal(in: graph, target: .fragment) }
+
     /// The whole document: the root and every definition (spec §20.2, §20.4).
     public static func validate(document doc: ShaderDocument, registry: NodeRegistry, target: OutputTarget) -> [Diagnostic] {
-        var out = validate(graph: doc.root, path: .root, document: doc, registry: registry)
+        var out = validate(graph: doc.root, path: .root, document: doc, registry: registry, target: target)
         for d in doc.definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
-            out += validate(graph: d.graph, path: .definition(d.id), document: doc, registry: registry)
+            out += validate(graph: d.graph, path: .definition(d.id), document: doc, registry: registry, target: target)
             if GroupDependencies.transitive(d.id, in: doc).contains(d.id) || GroupDependencies.direct(d).contains(d.id) {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
@@ -64,7 +79,8 @@ public enum GraphValidator {
             .sorted { $0.raw.uuidString < $1.raw.uuidString }
     }
 
-    public static func validate(graph: Graph, path: GraphPath, document doc: ShaderDocument, registry: NodeRegistry) -> [Diagnostic] {
+    public static func validate(graph: Graph, path: GraphPath, document doc: ShaderDocument,
+                                registry: NodeRegistry, target: OutputTarget = .fragment) -> [Diagnostic] {
         var out: [Diagnostic] = []
         var shapes: [NodeID: NodeShape] = [:]
         let sorted = graph.nodes.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
@@ -86,13 +102,22 @@ public enum GraphValidator {
         // Terminals.
         switch path {
         case .root:
-            let terminals = sorted.filter { $0.kind == .builtin(fragmentTerminalID) }
-            if terminals.isEmpty { out.append(Diagnostic(.error, "Graph has no Fragment Output node")) }
-            for extra in terminals.dropFirst() { out.append(Diagnostic(.error, "A graph may have only one Fragment Output", node: extra.id)) }
+            let id = terminalID(for: target)
+            let label = target == .realityKit ? "Material Output" : "Fragment Output"
+            let terminals = sorted.filter { $0.kind == .builtin(id) }
+            if terminals.isEmpty {
+                out.append(Diagnostic(.error, target == .realityKit
+                    ? "A RealityKit material needs a Material Output node"
+                    : "Graph has no Fragment Output node"))
+            }
+            for extra in terminals.dropFirst() {
+                out.append(Diagnostic(.error, "A graph may have only one \(label)", node: extra.id))
+            }
         case .definition(let gid):
             let name = doc.definitions[gid]?.name ?? "?"
-            for n in sorted where n.kind == .builtin(fragmentTerminalID) {
-                out.append(Diagnostic(.error, "Fragment Output is only valid in the root graph", node: n.id))
+            for n in sorted where n.kind == .builtin(fragmentTerminalID) || n.kind == .builtin(materialTerminalID) {
+                let label = n.kind == .builtin(materialTerminalID) ? "Material Output" : "Fragment Output"
+                out.append(Diagnostic(.error, "\(label) is only valid in the root graph", node: n.id))
             }
             let ins = sorted.filter { $0.kind == .groupInput }, outs = sorted.filter { $0.kind == .groupOutput }
             if ins.isEmpty { out.append(Diagnostic(.error, "Definition “\(name)” has no Group Input")) }
