@@ -61,11 +61,12 @@ struct DocumentHostView: View {
         undoManager?.disableUndoRegistration()
         let written = bridge.mirror(into: &file.package)
         undoManager?.enableUndoRegistration()
-        // A document or texture change has already marked the document through the model's own
-        // undo step. View state on its own has no step (spec §18.3), and a registration made for
-        // it would wipe the redo stack — so the platform document is told directly, or the
-        // camera, the selection and the panels of a document nobody edited again are never saved.
-        if !written.isEmpty, written.isDisjoint(with: [.document, .textures]) {
+        // Every write marks the platform document changed, directly. Registration is off above,
+        // so nothing else does: view state has no undo step (spec §18.3), a same-image relink
+        // changes the bytes but not the document, and an undo step the model did register only
+        // reaches the document while the window's manager was adopted. A second mark for an edit
+        // that already carries a step costs nothing; a missed one loses the write on close.
+        if !written.isEmpty {
             PlatformDocument.markChanged(at: fileURL)
         }
     }

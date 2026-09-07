@@ -32,6 +32,32 @@ import MetalNodesCore
         #expect(file.viewState == m.viewState)
     }
 
+    /// Relinking a missing texture with the very image that went missing changes the bytes and
+    /// nothing else: no manifest change, so no undo step — and the mirror still has to carry the
+    /// bytes, and the host still has to mark the document (final review C1).
+    @Test func aSameImageRelinkReachesTheMirrorWithoutAnUndoStep() throws {
+        let m = model()
+        let bridge = DocumentBridge(model: m)
+        let id = try #require(m.importImage(data: EditorAssetsTests.png2x2, name: "Leaf.png"))
+        var file = bridge.package
+        #expect(bridge.mirror(into: &file).isEmpty)
+
+        m.textures[id] = nil                          // the package arrived without the bytes
+        m.missingTextures = [id]
+        _ = bridge.mirror(into: &file)
+        let stackBefore = m.undoStackVersion
+        let documentBefore = m.document
+
+        #expect(m.replaceAssetBytes(id, data: EditorAssetsTests.png2x2))
+
+        #expect(m.document == documentBefore)
+        #expect(m.undoStackVersion == stackBefore)
+        let written = bridge.mirror(into: &file)
+        #expect(written.contains(.textures))
+        #expect(!written.contains(.document))
+        #expect(file.textures[id] == EditorAssetsTests.png2x2)
+    }
+
     @Test func applyIsANoOpForThePackageTheModelAlreadyHolds() {
         let m = model()
         let bridge = DocumentBridge(model: m)
