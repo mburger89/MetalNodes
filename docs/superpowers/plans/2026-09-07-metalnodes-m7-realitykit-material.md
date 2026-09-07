@@ -1327,7 +1327,7 @@ Append to `MetalNodesKit/Tests/MetalNodesCoreTests/EmitEnvironmentTests.swift`:
 }
 ```
 
-Append to `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialCodegenTests.swift`:
+Append to `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialCodegenTests.swift`. Note the trait on the second suite: it exercises `ShaderGenerator`, which Task 9 wires, so it is **disabled here and enabled by Task 9 Step 1**. Every task must end on a green suite.
 
 ```swift
 @Suite struct MaterialSetterTests {
@@ -1358,7 +1358,8 @@ Append to `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialCodegenTests.swift`:
     }
 }
 
-@Suite struct MaterialExportSourceTests {
+@Suite(.disabled("enabled by Task 9, which wires the .realityKit branch into ShaderGenerator"))
+struct MaterialExportSourceTests {
     /// One node wired to Base Color, one to Position Offset, one parameter to bake.
     private func document() -> ShaderDocument {
         var doc = ShaderDocument()
@@ -1455,7 +1456,7 @@ Append to `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialCodegenTests.swift`:
 
 Run: `swift test --package-path MetalNodesKit --filter RealityKitEnvironmentTests`
 Run: `swift test --package-path MetalNodesKit --filter MaterialSetterTests`
-Expected: FAIL — the environments and `setterStatement` do not exist. `MaterialExportSourceTests` fails at `ShaderGenerator.generate` too; it goes green in Task 9, and it is written now so Task 9 has a gate to satisfy. Note that in the ledger.
+Expected: FAIL — the environments and `setterStatement` do not exist. `MaterialExportSourceTests` reports as skipped, not failed: it carries `.disabled(…)` because it exercises `ShaderGenerator`, which Task 9 wires. It is written now so Task 9 has a gate to satisfy.
 
 - [ ] **Step 3: Add the two environments**
 
@@ -1663,12 +1664,12 @@ public extension MaterialCodegen {
 
 Run: `swift test --package-path MetalNodesKit --filter RealityKitEnvironmentTests`
 Run: `swift test --package-path MetalNodesKit --filter MaterialSetterTests`
-Expected: PASS. `MaterialExportSourceTests` still fails — it goes through `ShaderGenerator`, which Task 9 wires.
+Expected: PASS. `MaterialExportSourceTests` reports skipped.
 
 - [ ] **Step 7: Run the whole suite**
 
 Run: `swift test --package-path MetalNodesKit`
-Expected: everything passes except the eight `MaterialExportSourceTests` cases, which are Task 9's gate. Record that in the ledger so the next reviewer does not read them as a regression.
+Expected: PASS, with `MaterialExportSourceTests` reported as skipped. A *failing* case here is a real defect, not the expected gate.
 
 - [ ] **Step 8: Commit**
 
@@ -2053,7 +2054,8 @@ Create `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialPreviewCodegenTests.swif
 import Testing
 @testable import MetalNodesCore
 
-@Suite struct MaterialPreviewCodegenTests {
+@Suite(.disabled("enabled by Task 9, which wires the .realityKit branch into ShaderGenerator"))
+struct MaterialPreviewCodegenTests {
     private func document(lighting: MaterialLightingModel = .lit, offset: Bool = true) -> ShaderDocument {
         var doc = ShaderDocument()
         doc.settings.target = .realityKit
@@ -2145,7 +2147,7 @@ import Testing
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `swift test --package-path MetalNodesKit --filter MaterialPreviewCodegenTests`
-Expected: FAIL — `MaterialPreviewCodegen` does not exist and `ShaderGenerator` has no `.realityKit` branch (Task 9).
+Expected: FAIL to compile — `MaterialPreviewCodegen` does not exist. Once Step 3 defines it the suite compiles and reports **skipped**, because it carries `.disabled(…)`: it exercises `ShaderGenerator`, which Task 9 wires.
 
 - [ ] **Step 3: Write the shared struct text**
 
@@ -2418,7 +2420,10 @@ Add `surfaceShim` to `program(...)`'s preamble, immediately after `interpolantsS
 - [ ] **Step 6: Run the tests**
 
 Run: `swift test --package-path MetalNodesKit --filter MaterialPreviewCodegenTests`
-Expected: still FAIL at `ShaderGenerator.generate` — Task 9 wires it. Everything these tests assert about the *text* is what Task 9 will produce; treat them as Task 9's acceptance gate and note that in the ledger.
+Expected: the suite compiles and reports **skipped**. Everything it asserts about the generated text is Task 9's acceptance gate.
+
+Run: `swift test --package-path MetalNodesKit`
+Expected: PASS — no failures, two suites skipped.
 
 - [ ] **Step 7: Verify the module builds warning-free**
 
@@ -2451,11 +2456,25 @@ Claude-Session: https://claude.ai/code/session_01RPcmDZb2TAGiC8ZmdZtCEF"
 
 This is the task that turns eighteen already-written tests green.
 
-- [ ] **Step 1: Confirm the gates are red for the right reason**
+- [ ] **Step 1: Enable the two gate suites**
+
+Tasks 6 and 8 wrote their acceptance suites with a `.disabled(…)` trait so those tasks could end on a green suite. Remove both traits now — they are this task's gate.
+
+In `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialCodegenTests.swift`:
+
+```swift
+@Suite struct MaterialExportSourceTests {
+```
+
+In `MetalNodesKit/Tests/MetalNodesCoreTests/MaterialPreviewCodegenTests.swift`:
+
+```swift
+@Suite struct MaterialPreviewCodegenTests {
+```
 
 Run: `swift test --package-path MetalNodesKit --filter MaterialExportSourceTests`
 Run: `swift test --package-path MetalNodesKit --filter MaterialPreviewCodegenTests`
-Expected: FAIL, every case, at `ShaderGenerator.generate(doc, target: .realityKit)` — a `switch` that does not handle `.realityKit` will not even compile until Step 3, which is the point.
+Expected: FAIL, every case, at `ShaderGenerator.generate(doc, target: .realityKit)`. That is what the rest of this task fixes.
 
 - [ ] **Step 2: Extend `GeneratedShader`**
 
