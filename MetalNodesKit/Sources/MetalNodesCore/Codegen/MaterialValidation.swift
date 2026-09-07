@@ -7,10 +7,12 @@ public enum MaterialValidation {
     /// Rules 2–5. Rule 1 (the terminal) is `GraphValidator`'s, because every target has one.
     public static func diagnostics(document doc: ShaderDocument, registry: NodeRegistry,
                                    target: OutputTarget, reachable: [GroupDefinition]) -> [Diagnostic] {
-        guard target == .realityKit else { return foreignNodeDiagnostics(doc, registry: registry, reachable: reachable) }
+        guard target == .realityKit else {
+            return targetDiagnostics(doc, registry: registry, target: target, reachable: reachable)
+        }
         guard let terminal = GraphValidator.terminal(in: doc.root, target: .realityKit) else { return [] }
         return stageDiagnostics(doc, registry: registry, terminal: terminal, reachable: reachable)
-            + targetDiagnostics(doc, registry: registry, reachable: reachable)
+            + targetDiagnostics(doc, registry: registry, target: target, reachable: reachable)
             + definitionNodeDiagnostics(doc, registry: registry, reachable: reachable)
             + textureDiagnostics(doc, reachable: reachable)
             + lightingDiagnostics(doc, terminal: terminal)
@@ -72,7 +74,13 @@ public enum MaterialValidation {
             let (inst, _) = toVisit[i]; i += 1
             switch inst.kind {
             case .builtin(let id):
-                guard let def = registry[id], !def.stages.contains(stage) else { continue }
+                // A node legal in *no* stage is not a stage error: "Mouse is not available in the
+                // surface stage" invites the reader to move it to the geometry stage, where it is
+                // just as unavailable. Rule 3 names those nodes, once, with the reason that is
+                // actually true of them. Deriving `stages` is what made this case appear at all —
+                // Mouse and Resolution *declared* both stages while rule 3 refused them from a
+                // separate list, so rule 2 never saw them.
+                guard let def = registry[id], !def.stages.isEmpty, !def.stages.contains(stage) else { continue }
                 out.append(Diagnostic(.error, message(title(inst, doc, registry)), node: inst.id))
             case .group(let gid):
                 guard visitedDefinitions.insert(gid).inserted, let d = doc.definitions[gid],
@@ -89,34 +97,37 @@ public enum MaterialValidation {
 
     // MARK: Rule 3 — target legality
 
-    /// Nodes that read a system value this target cannot supply.
-    private static let twoDimensionalOnly: Set<String> = ["input.mouse", "input.resolution"]
-
+    /// A node that reads a system value this target cannot supply — and, in the same breath, its
+    /// former mirror: a node only *another* target can supply, reachable under this one. They were
+    /// two hand-maintained sets (`twoDimensionalOnly`, and `material3D` minus the terminal) whose
+    /// job was to restate, by node id, what the emit environments already say by vocabulary. Spec
+    /// §24.5: one predicate, asked of the environments the target actually emits in.
+    ///
+    /// Illegal means illegal in *every* one of them. Under `.realityKit` there are two, and a node
+    /// legal in only one is not a target error but a stage error — rule 2's question, with its own
+    /// message about which stage the wire reached.
     private static func targetDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry,
-                                          reachable: [GroupDefinition]) -> [Diagnostic] {
-        allNodes(doc, reachable: reachable).compactMap { inst, _ in
-            guard case .builtin(let id) = inst.kind, twoDimensionalOnly.contains(id) else { return nil }
-            return Diagnostic(.error, "\(title(inst, doc, registry)) needs the Fragment or SwiftUI target", node: inst.id)
+                                          target: OutputTarget, reachable: [GroupDefinition]) -> [Diagnostic] {
+        let environments = EmitEnvironment.environments(for: target)
+        return allNodes(doc, reachable: reachable).compactMap { inst, _ in
+            guard case .builtin(let id) = inst.kind, let def = registry[id] else { return nil }
+            let chosen = def.variantCase(for: inst)
+            var missing: String?
+            for env in environments {
+                switch env.canEmit(def.body, chosen: chosen) {
+                case .allowed: return nil
+                case .missing(let name): missing = missing ?? name
+                }
+            }
+            guard let missing else { return nil }
+            return Diagnostic(.error,
+                "\(title(inst, doc, registry)) reads \(missing), which the \(target.title) target does not provide",
+                node: inst.id)
         }
     }
 
-    /// The nodes only the RealityKit target can emit — the 3D inputs, not the terminal, which is
-    /// what makes the document a material in the first place.
-    private static let threeDimensionalOnly: Set<String> =
-        Set(BuiltinNodes.material3D.map(\.id)).subtracting(["output.material"])
-
-    /// The mirror rule: a node that only RealityKit can emit, reachable under another target.
-    /// Applies to every target *but* `.realityKit`, which is why it sits outside the guard above.
-    private static func foreignNodeDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry,
-                                               reachable: [GroupDefinition]) -> [Diagnostic] {
-        allNodes(doc, reachable: reachable).compactMap { inst, _ in
-            guard case .builtin(let id) = inst.kind, threeDimensionalOnly.contains(id) else { return nil }
-            return Diagnostic(.error, "\(title(inst, doc, registry)) needs the RealityKit Material target", node: inst.id)
-        }
-    }
-
-    /// The *inverse* of `foreignNodeDiagnostics`, and the same walk: under `.realityKit` a 3D input
-    /// is legal in the root and illegal inside a group definition.
+    /// The *inverse* of rule 3, and the same predicate asked of a different environment: under
+    /// `.realityKit` a 3D input is legal in the root and illegal inside a group definition.
     ///
     /// A group function is target-agnostic by design — `EmitEnvironment.groupFunction`'s `sys`
     /// carries `uv`/`time`/`resolution`/`mouse` and nothing else, because one emitted function
@@ -124,8 +135,13 @@ public enum MaterialValidation {
     /// `params.geometry().world_position()`, and without this rule a World Position inside a
     /// definition emitted `v0 = /* ?sys.worldPosition */;` into *both* the preview program (a raw
     /// MSL error the user cannot act on) and `exportSource` (a `.metal` file that will not
-    /// compile). Rule 2 does not catch it — these nodes carry both stages — and rule 3 refuses only
-    /// Mouse and Resolution, which have no counterpart in *any* material stage.
+    /// compile). Rule 2 does not catch it — these nodes carry both stages — and rule 3 asks the
+    /// *material* environments, which spell every one of these names perfectly well.
+    ///
+    /// So the question is not "is this node one of the 3D inputs" — that was a third hand-listed
+    /// set restating the vocabulary — but "can the environment this node's statement is emitted in
+    /// spell what it reads", which for a node inside a definition is always `groupFunction`
+    /// (spec §24.5).
     ///
     /// Reachable definitions only, and inside each one only what is wire-reachable from its own
     /// Group Output — the breadth rule 2 uses and `GroupCodegen` actually emits. A 3D input left
@@ -137,7 +153,9 @@ public enum MaterialValidation {
             guard let output = d.outputNode else { return [] }
             return TopoSort.order(d.graph, from: output).compactMap { nodeID -> Diagnostic? in
                 guard let inst = d.graph.nodes[nodeID], case .builtin(let id) = inst.kind,
-                      threeDimensionalOnly.contains(id) else { return nil }
+                      let def = registry[id],
+                      EmitEnvironment.groupFunction.canEmit(def.body, chosen: def.variantCase(for: inst)) != .allowed
+                else { return nil }
                 return Diagnostic(.error,
                     "A RealityKit material reads \(title(inst, doc, registry)) in the root graph — move this node out of the group",
                     node: inst.id)

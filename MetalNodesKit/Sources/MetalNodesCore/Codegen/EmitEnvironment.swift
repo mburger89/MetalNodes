@@ -201,6 +201,44 @@ public struct EmitEnvironment: Sendable {
         textureName: { $0.fragmentName },
         knownAccessors: [materialTextureAccessor, materialGeometryAccessor])
 
+    /// The environment a RealityKit material emits `stage`'s own root-graph statements in. The one
+    /// place a stage is turned into a vocabulary, so `NodeDef.stages` and `MaterialValidation`
+    /// cannot answer the same question from two different tables (spec §24.5).
+    public static func materialEnvironment(for stage: MaterialStage) -> EmitEnvironment {
+        switch stage {
+        case .surface: realityKitSurface
+        case .geometry: realityKitGeometry
+        }
+    }
+
+    /// Every environment `target`'s program emits a *root-graph* node in — two under `.realityKit`,
+    /// one everywhere else. A node is illegal under the target when no environment in this list can
+    /// spell what it reads; which of two stages can is rule 2's separate question.
+    ///
+    /// A node inside a group *definition* is not judged by this list: one emitted function serves
+    /// every target and every caller, so its environment is `groupFunction`, whatever the document's
+    /// target (spec §23.4).
+    public static func environments(for target: OutputTarget) -> [EmitEnvironment] {
+        switch target {
+        case .fragment: [fragment]
+        case .stitchable(.layerEffect): [layerExport]
+        case .stitchable: [stitchableFunction]
+        case .realityKit: MaterialStage.allCases.map(materialEnvironment(for:))
+        }
+    }
+
+    /// The `sys` dictionary a `.custom` body is handed (`Emitter`): spellings only, with every
+    /// fill-only entry dropped rather than flattened away.
+    ///
+    /// `SysValue.readable` is the whole point of `sys` being a struct: under RealityKit `mouse`
+    /// spells `float2(0.0, 0.0)` so a group call's argument list still type-checks, and a `.custom`
+    /// body handed that string would read a plausible-looking constant as if it were the pointer
+    /// position — a silently wrong value that `canEmit` had already reported `.missing` for. Absent
+    /// is the loud failure; present-but-lying is the quiet one.
+    public var readableSys: [String: String] {
+        sys.compactMapValues { $0.readable ? $0.spelling : nil }
+    }
+
     /// Uniform reads spelled as the value the document holds right now (spec §23.6). Snapshotted
     /// against `layout` up front so the returned closure captures only strings and stays `Sendable`.
     public static func bakedUniforms(layout: UniformLayout, document: ShaderDocument,

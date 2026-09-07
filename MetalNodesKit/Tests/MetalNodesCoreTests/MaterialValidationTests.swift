@@ -123,10 +123,18 @@ enum MaterialFixture {
 
     // Rule 3 — target legality.
 
+    /// Task 11 replaced the two hand-written strings with the one the predicate produces: it names
+    /// the value the node reads and the target that cannot supply it, which covers both directions
+    /// of the rule instead of one each.
     @Test func mouseAndResolutionAreRefusedUnderRealityKit() {
-        for id in ["input.mouse", "input.resolution"] {
+        for (id, name) in [("input.mouse", "mouse"), ("input.resolution", "resolution")] {
             let doc = MaterialFixture.document { g in MaterialFixture.wire(id, into: "baseColor", &g) }
-            #expect(errors(doc).contains { $0.message.contains("Fragment or SwiftUI target") }, "\(id)")
+            #expect(errors(doc).contains {
+                $0.message.contains("reads \(name), which the RealityKit Material target does not provide")
+            }, "\(id)")
+            // Exactly one refusal, not one per stage as well: a node legal in no stage is a target
+            // error, and rule 2 stands down for it.
+            #expect(errors(doc).count == 1, "\(id)")
         }
     }
 
@@ -139,7 +147,9 @@ enum MaterialFixture {
         g.nodes[terminal.id] = terminal
         g.nodes[normal.id] = normal
         doc.root = g
-        #expect(errors(doc).contains { $0.message.contains("RealityKit Material target") })
+        #expect(errors(doc).contains {
+            $0.message.contains("reads normal3d, which the Fragment (preview) target does not provide")
+        })
     }
 
     @Test func aThreeDimensionalNodeIsFineUnderRealityKit() {

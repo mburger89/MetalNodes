@@ -1,8 +1,8 @@
 import Foundation
 
-/// What user-written code is refused before it ever reaches the Metal compiler (spec §24.4).
-/// Only the scope breakers refuse: loops are hardened by codegen (Task 8) and accessor legality
-/// is the environment's question (Task 11), so this file stays small on purpose.
+/// What user-written code is refused before it ever reaches the Metal compiler (spec §24.4): the
+/// scope breakers, and the accessors a Custom MSL body cannot reach from where it is emitted.
+/// Loops are hardened by codegen (Task 8) rather than refused, so this file stays small on purpose.
 public enum CustomCodeValidation {
     public static func diagnostics(document doc: ShaderDocument, registry: NodeRegistry) -> [Diagnostic] {
         var out: [Diagnostic] = []
@@ -21,6 +21,16 @@ public enum CustomCodeValidation {
             guard case .msl(let text) = def.body else { continue }
             out += MSLScanner.scopeBreakers(in: text).map {
                 Diagnostic(.error, "\(def.name): \(message(for: $0))")
+            }
+            // The third guard family (spec §24.5): an accessor the body's own environment cannot
+            // reach. A `.msl` body is emitted as the *group function*'s body (`GroupCodegen`), and
+            // that function's parameter list is `(float2 uv, float time, float2 size, float2 mouse,
+            // …)` — one function serves every target and every caller, so `params` and `geo` are
+            // not in scope there under *any* document target. Asking the target's own environment
+            // instead would call `params.geometry().normal()` legal in a RealityKit document and
+            // then emit a function that cannot compile; see this task's report.
+            if case .missing(let accessor) = EmitEnvironment.groupFunction.canEmit(mslText: text) {
+                out.append(Diagnostic(.error, "\(def.name): \(accessor) is not available inside a group definition — read it in the root graph and pass the value in"))
             }
         }
         return out

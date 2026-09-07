@@ -96,25 +96,58 @@ public struct NodeDef: Sendable, Identifiable {
     public var params: [ParamDecl]
     public var generics: [String: [SocketType]]
     public var requires: [String]
-    /// Which RealityKit shader stages this node may appear in (spec §23.3). Both for every node
-    /// that is pure arithmetic; narrowed only by nodes that read a stage-specific builtin.
-    /// Consulted only under `OutputTarget.realityKit`.
-    public var stages: Set<MaterialStage> = MaterialStage.all
     public var body: NodeBody
     public var style: NodeStyle
+
+    /// Which RealityKit stages this node may appear in (spec §23.3, §24.5). Derived from the emit
+    /// environments rather than declared: a node is legal in a stage exactly when every `{sys.…}`
+    /// name it reads has a *readable* spelling there. Declaring it separately is what let two M7
+    /// defects live in the seam between the declaration and the vocabulary it was meant to mirror.
+    ///
+    /// A `.variants` body is judged on `defaultVariantCase` — the case a node emits absent an
+    /// instance — because this is a property of the node *type*. What one instance emits is
+    /// `variantCase(for:)`, which `MaterialValidation` asks with the instance in hand.
+    public var stages: Set<MaterialStage> {
+        Set(MaterialStage.allCases.filter { stage in
+            EmitEnvironment.materialEnvironment(for: stage).canEmit(body, chosen: defaultVariantCase) == .allowed
+        })
+    }
 
     public init(id: String, title: String, category: NodeCategory,
                 inputs: [SocketDecl] = [], outputs: [SocketDecl] = [], params: [ParamDecl] = [],
                 generics: [String: [SocketType]] = [:], requires: [String] = [],
-                stages: Set<MaterialStage> = MaterialStage.all, body: NodeBody,
-                style: NodeStyle = .standard) {
+                body: NodeBody, style: NodeStyle = .standard) {
         self.id = id; self.title = title; self.category = category
         self.inputs = inputs; self.outputs = outputs; self.params = params
-        self.generics = generics; self.requires = requires; self.stages = stages
+        self.generics = generics; self.requires = requires
         self.body = body; self.style = style
     }
 
     public func input(named n: String) -> SocketDecl? { inputs.first { $0.name == n } }
     public func output(named n: String) -> SocketDecl? { outputs.first { $0.name == n } }
     public func param(named n: String) -> ParamDecl? { params.first { $0.name == n } }
+
+    /// The case of a `.variants` body this node emits when nothing else says otherwise — its enum
+    /// parameter's declared default. `nil` for every other body.
+    ///
+    /// A legality question asked about a `.variants` body without a case fails closed and checks
+    /// *every* case (`EmitEnvironment.canEmit`), so a type-level question like `stages` must supply
+    /// this: UV's `aspect` variant reads `{sys.resolution}`, which no material stage lets a node
+    /// read, and asking without a case would refuse the UV node under RealityKit entirely.
+    public var defaultVariantCase: String? {
+        guard case .variants(let paramName, _) = body,
+              let decl = param(named: paramName),
+              case .enumCase(let c) = decl.defaultValue else { return nil }
+        return c
+    }
+
+    /// The case of a `.variants` body *this instance* emits: its own enum parameter when the table
+    /// has that case, and the declared default otherwise — a saved case can be stale, hand-edited
+    /// or renamed away. `Emitter` resolves the case it substitutes exactly this way, so asking here
+    /// judges the text that will really be generated (spec §24.5).
+    public func variantCase(for inst: NodeInstance) -> String? {
+        guard case .variants(let paramName, let table) = body else { return nil }
+        if case .enumCase(let c)? = inst.params[paramName], table[c] != nil { return c }
+        return defaultVariantCase
+    }
 }

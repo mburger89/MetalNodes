@@ -207,7 +207,7 @@ enum Emitter {
                 let texture = textureSlotOfNode[id]
                     .map { env.textureSample($0, inputs["uv"] ?? env.sys["uv"]?.spelling ?? "in.uv") } ?? ""
                 let ctx = EmitContext(inputs: inputs, outputs: outputs, params: params, enums: enums,
-                                      types: r.generics, sys: env.sys.mapValues(\.spelling), texture: texture)
+                                      types: r.generics, sys: env.readableSys, texture: texture)
 
                 let lines: [String]
                 if isExpression {
@@ -218,12 +218,12 @@ enum Emitter {
                 } else {
                     switch def.body {
                     case .template(let t): lines = substitute(t, ctx)
-                    case .variants(let param, let table):
+                    case .variants(_, let table):
                         // The instance-provided case may be stale/invalid (hand-edited or renamed
-                        // since save); never force-unwrap it. Fall back to the def's default case.
-                        let defaultCase: String? = { if case .enumCase(let c) = def.param(named: param)!.defaultValue { return c } else { return nil } }()
-                        let chosen = enums[param].flatMap { table[$0] != nil ? $0 : nil } ?? defaultCase
-                        lines = substitute(chosen.flatMap { table[$0] } ?? "", ctx)
+                        // since save); never force-unwrap it. `NodeDef.variantCase(for:)` falls
+                        // back to the def's default case — and is the same resolution the legality
+                        // predicate asks with, so the validator judges the text emitted here.
+                        lines = substitute(def.variantCase(for: inst).flatMap { table[$0] } ?? "", ctx)
                     case .custom(let f): lines = f(ctx)
                     }
                 }
