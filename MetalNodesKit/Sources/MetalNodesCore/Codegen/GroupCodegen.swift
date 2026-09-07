@@ -138,6 +138,15 @@ public enum GroupCodegen {
         case .msl(let text):
             // A `.msl` definition has no nodes, so nothing requests a uniform or texture slot: its
             // function is built with empty uniform/texture parameter lists and no required stdlib.
+            // `view` is a `.graph`-only concept — viewing a socket means diving into a node inside
+            // the definition, and a `.msl` body has no nodes to dive into, so `view` is unused
+            // here. Unreachable today: `viewerInsideDefinition` only ever builds a `view` for a
+            // definition that actually contains the viewed node's path
+            // (`ShaderGenerator+Viewer.swift`), which a `.msl` definition, having no graph, never
+            // does. Harmless if it ever were reached anyway — this returns a normal function with
+            // `viewedType: nil`, and the caller already refuses that (`guard let type =
+            // outer.viewedType else { throw ... }` in `viewerInsideDefinition`), so the failure
+            // still surfaces as a diagnostic rather than a wrong render.
             let fnName = functionName(def) + (layer ? "_layer" : "")
             let outStruct = structName(def.id)
             let outputs = def.outputs
@@ -162,11 +171,15 @@ public enum GroupCodegen {
             // may already declare a local of that name (an output literally called `out` is the
             // idiomatic case — spec §24.3's own examples use it), which would collide with a
             // fixed `out` inside the same scope. `outStruct` already carries the definition's
-            // unique hex id, so suffixing it keeps this name out of the user's reach in the
-            // ordinary case; full collision-proofing against an adversarial identifier is Task
-            // 7/8's job, not this one's. (Not derived from `fnName`: that string is a prefix of
-            // it, and a test counts `fnName`'s occurrences as a proxy for call-site sharing.)
-            writeEpilogue(&b, outStruct: outStruct, outputs: outputs, resultVar: "\(outStruct)_result") { $0.name }
+            // unique hex id, so starting from it keeps this name out of the user's reach in the
+            // ordinary case — but an output can still be named exactly `<outStruct>_result`, so
+            // `uniqueResultVar` below lengthens it until it provably isn't any declared output's
+            // name, rather than merely being unlikely to collide with one. (Not derived from
+            // `fnName`: that string is a prefix of it, and a test counts `fnName`'s occurrences as
+            // a proxy for call-site sharing — deriving from it would inflate that count.) An input
+            // can never collide here: it is always spelled `in_<name>` in the body, never bare.
+            let resultVar = uniqueResultVar(base: "\(outStruct)_result", outputs: outputs)
+            writeEpilogue(&b, outStruct: outStruct, outputs: outputs, resultVar: resultVar) { $0.name }
             return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
                                  uniformParams: [], textureParams: [], requiredStdlib: [],
                                  source: b.text, lineMap: b.map, viewedType: nil, resolved: [:],
@@ -181,6 +194,16 @@ public enum GroupCodegen {
         var params = ["float2 uv", "float time", "float2 size", "float2 mouse"]
         params += def.inputs.map { "\(concrete($0.type).mslName) in_\($0.name)" }
         return params
+    }
+
+    /// `base`, lengthened until it cannot equal any declared output's name — total, not merely
+    /// unlikely: each iteration strictly lengthens the candidate, and `outputs` is finite, so this
+    /// always terminates with a name no output can be spelled as.
+    private static func uniqueResultVar(base: String, outputs: [SocketDecl]) -> String {
+        let names = Set(outputs.map(\.name))
+        var candidate = base
+        while names.contains(candidate) { candidate += "_" }
+        return candidate
     }
 
     private static func writeResultStruct(_ b: inout SourceBuilder, outStruct: String, outputs: [SocketDecl]) {

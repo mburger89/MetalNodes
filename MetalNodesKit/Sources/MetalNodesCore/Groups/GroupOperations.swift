@@ -38,6 +38,31 @@ public enum GroupOperations {
         return "\(b)\(n)"
     }
 
+    /// The four system parameters every `.msl` function signature carries verbatim (`GroupCodegen
+    /// .systemParams`). An input is always spelled `in_<name>` in the body, but an *output* is
+    /// declared, zero-initialised, under its own bare name, in the same block scope as these — so
+    /// one that matches is a Metal redeclaration, not shadowing (verified against the toolchain in
+    /// fix round 1 of Task 6). The user's own text is never rewritten (Global Constraints), so the
+    /// only place to prevent this is where the name is chosen, not codegen.
+    private static let mslSystemParamNames: Set<String> = ["uv", "time", "size", "mouse"]
+
+    /// Whether `candidate`, as a `.msl` definition's new `kind` socket name, would collide with an
+    /// identifier already in scope inside the generated function body. Only `.msl` bodies spell a
+    /// socket's own name as a raw identifier — a `.graph` definition's emitted statements always
+    /// use the emitter's own synthesized variable names, never a socket's declared name, so this
+    /// never applies to one (confirmed against existing library content: `NodeShapeTests` and
+    /// `GroupOperationsTests` both already have a `.graph` definition socket named `uv` or `time`).
+    private static func mslNameCollides(_ candidate: String, kind: SocketKind, def: GroupDefinition) -> Bool {
+        guard case .msl = def.body else { return false }
+        switch kind {
+        case .output:
+            if mslSystemParamNames.contains(candidate) { return true }
+            return def.inputs.contains { "in_\($0.name)" == candidate }
+        case .input:
+            return def.outputs.contains { $0.name == "in_\(candidate)" }
+        }
+    }
+
     public static func group(_ ids: Set<NodeID>, in path: GraphPath, of doc: ShaderDocument, registry: NodeRegistry,
                              name: String?) -> (document: ShaderDocument, definition: GroupID, instance: NodeID)? {
         let g = doc[path]
@@ -202,10 +227,19 @@ public enum GroupOperations {
 
     public static func addSocket(_ id: GroupID, kind: SocketKind, decl: SocketDecl, in doc: ShaderDocument) -> ShaderDocument? {
         guard var def = doc.definitions[id] else { return nil }
+        // Neither body kind can express a texture-typed output: the result struct would declare
+        // a `texture2d<float>` field, and both codegen paths fall back to a plain-float zero
+        // literal for an output nothing assigns, which is not a valid initializer for it (verified
+        // against the toolchain). Refused here, at the only point either body kind gains one,
+        // rather than left for codegen to emit and the compiler to reject.
+        if kind == .output, decl.type == .concrete(.texture) { return nil }
         var d = decl
         // Inputs and outputs are separate namespaces (spec §20.6, ruling R11) — codegen keeps them apart.
         let existing = (kind == .input ? def.inputs : def.outputs).map(\.name)
         d.name = uniqueSocketName(decl.name, among: existing)
+        // A `.msl` body's own scaffolding — refuse rather than mangle, since mangling here would
+        // silently give the user a different name than the one their own (unrewritable) text uses.
+        guard !mslNameCollides(d.name, kind: kind, def: def) else { return nil }
         // Group socket labels are always derived from the (uniqued) name — users cannot edit
         // them independently in M4 — so a clash-avoiding rename ("out" -> "out2") also updates
         // what draws on the pseudo-nodes, instance nodes and inspector.
@@ -228,6 +262,8 @@ public enum GroupOperations {
         let new = StitchableCodegen.sanitizedName(newName)
         guard new != old else { return doc }
         guard !names.contains(new) else { return nil }
+        // A `.msl` body's own scaffolding — refuse rather than mangle (see `addSocket`).
+        guard !mslNameCollides(new, kind: kind, def: def) else { return nil }
         switch kind {
         case .input:
             guard let i = def.inputs.firstIndex(where: { $0.name == old }) else { return nil }
