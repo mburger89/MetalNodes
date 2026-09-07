@@ -392,3 +392,53 @@ section 1 in chat and have the full file in their editor.
 - T11: the node chooser popover is pushed off-screen by the software keyboard when opened near the bottom edge (6, 11); the canvas menu popover is clipped at the bottom edge (`arrowEdge: .top` fixed; let the system pick); the first document opened after a cold launch sometimes shows the split view's column bars under the document bar (intermittent; hiding the sidebar bar did not remove it — a plain trailing column instead of `NavigationSplitView` would); the one-finger pan drops the recognition slop and the first move event; Recents in the document browser lists documents a test run deleted until they are tapped; the unused `constexpr sampler mn_sampler` warning in the Layer Effect export (M5 deferred).
 
 **Recommendations for M7:** adopt the iOS 27 / macOS 27 `Document` protocol once Xcode Cloud runs Xcode 27 — it brings `DocumentCreationSource`, which is the supported way to give the iPad a real "Open Sample Shader" door, and `URLDocumentConfiguration` retires the `NSFileCoordinator.filePresenters` lookup in `PlatformDocument`; replace `NavigationSplitView` on iPad with a plain three-column layout (the first-open bar glitch and the `.inspector` overlay both go away); a generation token in `PickerPresenter`; a 6 pt custom pan threshold via a `UIGestureRecognizer` subclass and indirect-pointer support on the overlay; keyboard-avoiding placement for the chooser and canvas-menu popovers; a `GenerationError` for the missing layer variant and retire `isLayerVariant`; labelled socket accessibility elements; export the `nodedef` UTType and retry the macOS palette-drag XCUITest.
+
+## 14. M7 execution record — RealityKit material target (2026-09-07)
+
+Branch `m7-realitykit` off `main` @ 7cf595f. 34 commits. 659 package tests (Core 334 / Render 69 / UI 256) in 50 suites, warning-free, four builds green (macOS on Xcode 27.0 and on Xcode 26.6 — the Xcode Cloud toolchain — plus the iPad Pro 13-inch simulator). Spec §23; amendments in §23.10. Fifteen tasks, subagent-driven, with worktrees for the disjoint ones.
+
+**What shipped.** A fifth output target: a RealityKit `CustomMaterial` emitted as two `[[visible]]` functions from one graph — a per-fragment surface shader and a per-vertex geometry modifier behind a single Material Output node — plus a 3D preview that runs the same emitted statements on a lit procedural mesh, and a `.metal` + `.swift` export. Ten new 3D input nodes, a stage model on `NodeDef`, seven validation rules, four procedural meshes, an orbit camera, and a GGX approximation of RealityKit's `.lit` model.
+
+### 14.1 Rulings taken during execution
+
+- **R1** — Tasks 6 and 8 ship their acceptance suites with `.disabled(…)`, enabled by Task 9. Every task must end on a green suite; a knowingly-red one makes each later full-suite step ambiguous.
+- **R2** — Tasks 4 and 10 ran in parallel worktrees against the Task 1→2→3 chain, on provably disjoint file sets.
+- **R3** — `MeshVertex` is 80 bytes, not the plan's 64. Both `SIMD3<Float>` and `float3` cost a full 16.
+- **R4** — Two `MaterialPreviewCodegenTests` assertions could not fail as written (they matched text emitted unconditionally); Task 9 tightened them when it enabled the suite.
+- **R5** — Task 14's in-app visual check moved to Task 15's checklist: the machine's screen was locked and an agent may not unlock it.
+- **R6, corrected** — the preview's `unused variable` warnings are *not* safely deferrable. The first reading was that `EditorModel` discards compiler diagnostics; that holds only for the `.success` branch. The `.failure` branch maps every line including node-less warnings into `diagnostics`, and `EditorView` renders them unfiltered, so a genuine compile error arrives with the noise beside it. Fixed by gating all three shim declarations.
+- **R7** — the depth attachment is unconditional on every pipeline rather than gated on the view, because the view outlives programs and a dived viewer under `.realityKit` yields a `.fragment` program.
+- **R8** — viewing a geometry-only node is refused rather than widening the geometry order, because §23.5 makes a viewed value fragment-stage colour on the mesh.
+- **R9** — the warning at `MetalNodesApp.swift:33` stays for M8: identical on `main`, inherited M6 debt.
+
+### 14.2 Defects review caught that tests did not
+
+Worth recording, because each was invisible to a green suite:
+
+- `ParamValues.mslLiteral`'s int branch trapped on NaN/infinity/out-of-range where the byte writer guarded, and the two rounded differently — one stored `2.7` would write byte `3` and export literal `2`. Both paths now share one coercion.
+- The **sphere's triangle winding was inverted** relative to its own normals — 0 of 2208 triangles consistent, while cube/plane/torus were 100%. `gridIndices` is shared, but the sphere's φ ran the opposite way. Under back-face culling it rendered inside-out.
+- The exported Swift snippet always emitted `variable 'material' was never mutated` — a warning in every user's project, because every mutating line was commented out.
+- The generated vertex function referenced an undeclared `params`: the geometry environment spells `time` as `params.uniforms().time()`, correct for the exported modifier, but the preview's vertex function has no `params`. **The starter document was the first graph in the milestone to read Time in the geometry stage.**
+- **`PreviewView` attached a depth buffer for every target while only 3D pipelines declared one**, so under Metal API validation — on by default for Xcode's Debug Run — *any* 2D document aborted on the first frame. This came from the plan, so no per-task reviewer had standing to question it, and it would have stopped the in-app checklist at step 1.
+- A 3D input node inside a group definition was accepted and emitted `/* ?sys.worldPosition */` into a real exported `.metal`.
+- `OrbitCamera.dolly` had no caller: the spec's scroll/pinch dolly never existed, and a unit test on the method in isolation made it look done.
+
+Two tests were caught passing for the wrong reason: a compile test that wired only the last of six nodes (the other five dead-code-eliminated before codegen), and a validation fixture whose node was never wired to the group output — masking the very bug it named.
+
+### 14.3 Owed to a human
+
+- **The in-app checklist has never been run.** The screen was locked for the whole session. Nobody has yet looked at the 3D preview: a sphere appearing, lit, orbiting under drag, changing colour from a wired Base Color, flattening under Unlit, deforming under a wired Position Offset, and the viewer flag showing flat colour. The 22-item list is in the plan's Task 15, Step 3, plus the macOS and iPad regression subsets.
+- Everything M6 owed (handoff §13): macOS Finder→canvas drop, palette drag-in, iPad hardware-keyboard check 14, two-finger pan/pinch, Slide Over compact width.
+
+### 14.4 What M8 starts from
+
+1. **Tie the shims to `materialSys`.** Three shim structs and two emit environments encode the same RealityKit vocabulary independently; a key added to one and missed in the other yields a comment marker in generated MSL. That is the shared cause of both new §23.7 rules. A single table, or a test asserting every `materialSys` key has a matching shim accessor, retires the class.
+2. **Stage/target legality lives in four places** — `NodeDef.stages`, `MaterialValidation.twoDimensionalOnly`, the derived `material3D` set, and each environment's implicit `sys` vocabulary. One predicate — "can node N be emitted in environment E" — asked at every emission site would have caught both late findings.
+3. The M6 debt list, deliberately excluded from M7.
+4. **Live material parameters**: map up to four exposed floats onto `params.uniforms().custom_parameter()` so an exported material animates from Swift without re-export.
+5. **Clearcoat**, with its three sockets and lighting model.
+6. `set_custom_attribute` as the one channel from the geometry stage to the surface stage.
+7. Re-orthonormalise the TBN basis (Gram-Schmidt) whenever a non-identity model transform lands; the tangent and normal transform by different matrices.
+8. Consider `MTL_DEBUG_LAYER=1` on CI's test step — the suite passes under it today, and it would make the "every pass carries depth" invariant self-enforcing.
+9. Migrate the dolly's source-text test to the `MetalNodesAppUITests` target, which can drive real scroll and pinch.
+10. Then the two milestones already sequenced with the user: custom code / expression nodes, and a cross-document node library.

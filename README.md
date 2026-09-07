@@ -12,7 +12,7 @@ Swift 6 · SwiftUI · Metal · macOS 26 · iPadOS 27
 - **43 builtin nodes in 9 categories** — input, math, vector, SDF, noise, color, texture, utility, output — covering every socket type (`float`…`float4`, `color`, `int`, `bool`) with implicit conversions and generic nodes.
 - **Node groups.** Group a selection (⌘G), dive in, edit the definition and every instance updates. Expose sockets by wiring into `+`, rename or remove them from the inspector, make an instance unique, ungroup. Each definition compiles to one real MSL function called once per instance. Nesting is allowed; recursion is refused.
 - **Viewer flag.** Preview any socket, including one inside a group definition, without rewiring the output.
-- **Two output targets.** A fullscreen fragment shader (uv, time, resolution, mouse → color) and SwiftUI `colorEffect` / `distortionEffect` / `layerEffect` stitchable functions, with a `.metal` + Swift snippet export.
+- **Three output targets.** A fullscreen fragment shader (uv, time, resolution, mouse → color); SwiftUI `colorEffect` / `distortionEffect` / `layerEffect` stitchable functions; and a **RealityKit `CustomMaterial`** — one graph emitting both a surface shader and a geometry modifier, previewed on a lit 3D mesh you can orbit, exported as a `.metal` plus a Swift snippet that builds the material.
 - **Editor essentials.** Palette with search and drag-in, ⇧A search popover, marquee and modifier selection, re-drag wiring, copy/paste that carries group definitions, snapshot undo with named steps, inspector, breadcrumb navigation, error outlines mapped from compiler diagnostics.
 - **Documents and textures.** `.mnshader` packages (JSON + texture files) via the standard document workflow. Texture Sample, Gradient and Checker nodes; images drop onto the canvas or the inspector and bind as `texture2d` slots (or `layer.sample` in a Layer Effect export). Missing textures show a placeholder and a warning.
 - **Comments.** Sticky notes (⌘⇧N) and frames (⌘⇧C) that carry their nodes when dragged, with accent colours; undoable like everything else.
@@ -87,7 +87,8 @@ docs/superpowers/plans/   One implementation plan per milestone
 | M4 Node groups | done |
 | M5 Package persistence with textures, comment frames and stickies, generated-code panel, minimap, `.metal` export, cross-document paste | done |
 | M6 iPadOS UI layer — touch canvas, iPad layout, Photos/Files import, Files/Share export, hardware keyboard, XCUITests | done |
-| M7 RealityKit material target — surface shader + geometry modifier, 3D lit preview, `.metal` + Swift export | planned |
+| M7 RealityKit material target — surface shader + geometry modifier, 3D lit preview, `.metal` + Swift export | done |
+| M8 — to be brainstormed | planned |
 
 ## Development notes
 
