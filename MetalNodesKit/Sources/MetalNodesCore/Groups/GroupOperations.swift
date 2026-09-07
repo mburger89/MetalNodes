@@ -38,13 +38,15 @@ public enum GroupOperations {
         return "\(b)\(n)"
     }
 
-    /// The four system parameters every `.msl` function signature carries verbatim (`GroupCodegen
-    /// .systemParams`). An input is always spelled `in_<name>` in the body, but an *output* is
-    /// declared, zero-initialised, under its own bare name, in the same block scope as these — so
-    /// one that matches is a Metal redeclaration, not shadowing (verified against the toolchain in
-    /// fix round 1 of Task 6). The user's own text is never rewritten (Global Constraints), so the
-    /// only place to prevent this is where the name is chosen, not codegen.
-    private static let mslSystemParamNames: Set<String> = ["uv", "time", "size", "mouse"]
+    /// The system parameters every `.msl` function signature carries, derived from
+    /// `GroupCodegen.systemParamNames` rather than repeated here — the two lists must never
+    /// disagree, since a parameter added to one without the other would compile right up until a
+    /// user names an output after it. An input is always spelled `in_<name>` in the body, but an
+    /// *output* is declared, zero-initialised, under its own bare name, in the same block scope
+    /// as these — so one that matches is a Metal redeclaration, not shadowing (verified against
+    /// the toolchain in fix round 1 of Task 6). The user's own text is never rewritten (Global
+    /// Constraints), so the only place to prevent this is where the name is chosen, not codegen.
+    private static let mslSystemParamNames: Set<String> = Set(GroupCodegen.systemParamNames.map(\.name))
 
     /// Whether `candidate`, as a `.msl` definition's new `kind` socket name, would collide with an
     /// identifier already in scope inside the generated function body. Only `.msl` bodies spell a

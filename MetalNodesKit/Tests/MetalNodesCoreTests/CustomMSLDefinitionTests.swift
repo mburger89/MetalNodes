@@ -317,6 +317,17 @@ import Foundation
             decl: SocketDecl(name: "in_a", type: .concrete(.float)), in: doc) == nil)
     }
 
+    /// The other direction of the same collision: an input named `x` becomes the parameter
+    /// `in_x`, which is refused if an *output* is already bare-named `in_x` — the only branch of
+    /// `mslNameCollides` the earlier round left untested.
+    @Test func addingAnInputThatCollidesWithAnExistingOutputsPrefixedNameIsRefused() throws {
+        let (doc, id, _) = document()   // has output "out"
+        let withOutput = try #require(GroupOperations.addSocket(id, kind: .output,
+            decl: SocketDecl(name: "in_x", type: .concrete(.float)), in: doc))
+        #expect(GroupOperations.addSocket(id, kind: .input,
+            decl: SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(0))), in: withOutput) == nil)
+    }
+
     /// Inputs are always spelled `in_<name>` in the body, so a bare `uv`/`time`/`size`/`mouse`
     /// input name never collides with the system parameters themselves.
     @Test func addingAnInputNamedForASystemParameterIsAllowed() throws {

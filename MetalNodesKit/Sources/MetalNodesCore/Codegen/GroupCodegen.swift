@@ -187,11 +187,20 @@ public enum GroupCodegen {
         }
     }
 
+    /// The function's four leading system parameters, name and MSL type. The single source of
+    /// truth for both their declaration here and the reserved-name set `GroupOperations` refuses
+    /// on a `.msl` definition's own socket names — the two must never disagree, since a fifth
+    /// parameter added here without updating that reservation would emit a definition that
+    /// compiles right up until a user names an output after it (spec §24.3).
+    static let systemParamNames: [(name: String, mslType: String)] = [
+        ("uv", "float2"), ("time", "float"), ("size", "float2"), ("mouse", "float2"),
+    ]
+
     /// `float2 uv, float time, float2 size, float2 mouse` plus the definition's declared inputs,
     /// spelled `in_<name>` — shared by both body kinds so a `.msl` function is indistinguishable
     /// to its caller from a `.graph` one (spec §24.3).
     private static func systemParams(_ def: GroupDefinition) -> [String] {
-        var params = ["float2 uv", "float time", "float2 size", "float2 mouse"]
+        var params = systemParamNames.map { "\($0.mslType) \($0.name)" }
         params += def.inputs.map { "\(concrete($0.type).mslName) in_\($0.name)" }
         return params
     }
