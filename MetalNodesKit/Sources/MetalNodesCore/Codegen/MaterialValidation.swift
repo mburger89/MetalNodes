@@ -45,31 +45,43 @@ public enum MaterialValidation {
     /// because one function body serves both callers.
     private static func stageDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry, terminal: NodeID,
                                          reachable: [GroupDefinition]) -> [Diagnostic] {
-        var out: [Diagnostic] = []
-        for stage in MaterialStage.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
-            let order = MaterialCodegen.stageOrder(graph: doc.root, terminal: terminal, stage: stage)
-            var toVisit: [(NodeInstance, Graph)] = order.compactMap { id in
-                doc.root.nodes[id].map { ($0, doc.root) }
+        MaterialStage.allCases.sorted { $0.rawValue < $1.rawValue }.flatMap { stage in
+            stageViolations(order: MaterialCodegen.stageOrder(graph: doc.root, terminal: terminal, stage: stage),
+                            in: doc, registry: registry, stage: stage) { title in
+                "\(title) is not available in the \(stage.title) stage"
             }
-            var visitedDefinitions = Set<GroupID>()
-            var i = 0
-            while i < toVisit.count {
-                let (inst, _) = toVisit[i]; i += 1
-                switch inst.kind {
-                case .builtin(let id):
-                    guard let def = registry[id], !def.stages.contains(stage) else { continue }
-                    out.append(Diagnostic(.error,
-                        "\(title(inst, doc, registry)) is not available in the \(stage.title) stage",
-                        node: inst.id))
-                case .group(let gid):
-                    guard visitedDefinitions.insert(gid).inserted, let d = doc.definitions[gid],
-                          let output = d.outputNode else { continue }
-                    toVisit += TopoSort.order(d.graph, from: output).compactMap { id in
-                        d.graph.nodes[id].map { ($0, d.graph) }
-                    }
-                case .groupInput, .groupOutput:
-                    continue
+        }
+    }
+
+    /// The walk rule 2 is built from, over an arbitrary root order rather than a stage's own roots.
+    ///
+    /// `ShaderGenerator`'s viewer widening needs exactly this: it prepends the viewed node's
+    /// upstream cone to the **surface** order, and those nodes were never among `stageOrder`'s
+    /// roots, so rule 2 above never looked at them. The caller supplies the message because the
+    /// reason differs — rule 2 is about a wire, the viewer is about what a viewed value can be.
+    public static func stageViolations(order: [NodeID], in doc: ShaderDocument, registry: NodeRegistry,
+                                       stage: MaterialStage,
+                                       message: (String) -> String) -> [Diagnostic] {
+        var out: [Diagnostic] = []
+        var toVisit: [(NodeInstance, Graph)] = order.compactMap { id in
+            doc.root.nodes[id].map { ($0, doc.root) }
+        }
+        var visitedDefinitions = Set<GroupID>()
+        var i = 0
+        while i < toVisit.count {
+            let (inst, _) = toVisit[i]; i += 1
+            switch inst.kind {
+            case .builtin(let id):
+                guard let def = registry[id], !def.stages.contains(stage) else { continue }
+                out.append(Diagnostic(.error, message(title(inst, doc, registry)), node: inst.id))
+            case .group(let gid):
+                guard visitedDefinitions.insert(gid).inserted, let d = doc.definitions[gid],
+                      let output = d.outputNode else { continue }
+                toVisit += TopoSort.order(d.graph, from: output).compactMap { id in
+                    d.graph.nodes[id].map { ($0, d.graph) }
                 }
+            case .groupInput, .groupOutput:
+                continue
             }
         }
         return out

@@ -167,4 +167,100 @@ import Testing
         #expect(emissive.contains("u.viewerMin") && emissive.contains("u.viewerMax"))
         #expect(shader.source.contains("return float4(emissive.rgb, opacity);"))
     }
+
+    // Final review — Finding 3 (Important): viewer widening bypassed stage legality.
+
+    /// The widening in `assembleRealityKit` prepends the viewed node's cone to the **surface**
+    /// order only, and rule 2 validates `stageOrder`'s roots, which never include the viewer's
+    /// node. So viewing a geometry-only node emitted `v0 = /* ?sys.vertexID */;` into the fragment
+    /// stage — while the vertex stage correctly emitted `v0 = int(geo.vertex_id());` — with no
+    /// diagnostic at all.
+    ///
+    /// Refused rather than widened into the geometry order: spec §23.5 fixes the viewer under this
+    /// target as the viewed value drawn as unlit *colour on the mesh*, which is the fragment
+    /// stage's product.
+    private func geometryOnlyDocument() -> (ShaderDocument, SocketRef) {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        let vid = NodeInstance(id: NodeID(), kind: .builtin("input.vertexID"), position: .zero)
+        g.nodes[terminal.id] = terminal
+        g.nodes[vid.id] = vid
+        // Legal where it belongs: wired into the geometry socket, so nothing but the viewer is wrong.
+        g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(vid.id, "id")
+        doc.root = g
+        return (doc, SocketRef(vid.id, "id"))
+    }
+
+    @Test func viewingAGeometryOnlyNodeIsRefused() throws {
+        let (doc, ref) = geometryOnlyDocument()
+        // Without the viewer the same document is perfectly legal — the refusal is the viewer's.
+        let plain = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(plain.source.contains("int(geo.vertex_id())"))
+        #expect(!plain.source.contains("?sys."))
+
+        #expect(throws: GenerationError.self) {
+            let shader = try ShaderGenerator.generate(doc, target: .realityKit, viewer: ref)
+            // What the bug produced, asserted so a silent regression cannot pass here either.
+            #expect(!shader.source.contains("?sys.vertexID"))
+        }
+        do {
+            _ = try ShaderGenerator.generate(doc, target: .realityKit, viewer: ref)
+            Issue.record("expected a refusal")
+        } catch {
+            guard case .invalid(let diags) = error else { return }
+            #expect(diags.contains { $0.severity == .error && $0.message.contains("Vertex ID")
+                                     && $0.message.contains("cannot be viewed") })
+            // Anchored on the node, so the canvas can point at it.
+            #expect(diags.first?.node == ref.node)
+        }
+    }
+
+    /// A geometry-only node reached *through a group instance* is refused too — the widening walks
+    /// into definitions exactly as rule 2 does.
+    @Test func viewingAGroupThatHidesAGeometryOnlyNodeIsRefused() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var def = GroupDefinition(id: GroupID(), name: "Hidden",
+                                  outputs: [SocketDecl(name: "out", type: .concrete(.int))])
+        var inner = Graph()
+        let gin = NodeInstance(id: NodeID(), kind: .groupInput, position: .zero)
+        let gout = NodeInstance(id: NodeID(), kind: .groupOutput, position: .zero)
+        let vid = NodeInstance(id: NodeID(), kind: .builtin("input.vertexID"), position: .zero)
+        for n in [gin, gout, vid] { inner.nodes[n.id] = n }
+        inner.inputs[SocketRef(gout.id, "out")] = SocketRef(vid.id, "id")
+        def.graph = inner
+        doc.definitions[def.id] = def
+
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        let instance = NodeInstance(id: NodeID(), kind: .group(def.id), position: .zero)
+        g.nodes[terminal.id] = terminal
+        g.nodes[instance.id] = instance
+        g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(instance.id, "out")
+        doc.root = g
+
+        #expect(throws: GenerationError.self) {
+            _ = try ShaderGenerator.generate(doc, target: .realityKit, viewer: SocketRef(instance.id, "out"))
+        }
+    }
+
+    /// The negative: a stage-agnostic node, and a surface-legal 3D input, still view fine.
+    @Test func viewingASurfaceLegalNodeStillWorks() throws {
+        for id in ["noise.value", "input.worldPosition", "input.viewDirection"] {
+            var doc = ShaderDocument()
+            doc.settings.target = .realityKit
+            var g = Graph()
+            let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+            let n = NodeInstance(id: NodeID(), kind: .builtin(id), position: .zero)
+            g.nodes[terminal.id] = terminal
+            g.nodes[n.id] = n
+            doc.root = g
+            let out = NodeRegistry.builtin[id]!.outputs.first!.name
+            let shader = try ShaderGenerator.generate(doc, target: .realityKit, viewer: SocketRef(n.id, out))
+            #expect(shader.viewer != nil, "\(id)")
+            #expect(!shader.source.contains("?sys."), "\(id)")
+        }
+    }
 }

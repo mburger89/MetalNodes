@@ -159,6 +159,23 @@ public enum ShaderGenerator {
             // Emitting the export from unwidened orders would mean a fourth and fifth pass and a
             // second layout, which is a worse trade than a comment.
             var surface = TopoSort.order(doc.root, from: v.node)
+            // …but the surface stage is still the surface stage. Rule 2 validates the roots
+            // `stageOrder` produces, which never include the viewer's node, so without this a
+            // geometry-only node like Vertex ID viewed here reached `materialSys(for: .surface)`,
+            // which has no key for it, and emitted `v0 = /* ?sys.vertexID */;` with no diagnostic.
+            //
+            // Refused rather than widened into the *geometry* order, because spec §23.5 fixes what
+            // a viewer means under this target: the viewed value is drawn as unlit colour on the
+            // mesh, and colour is what the fragment stage — the surface pass — produces. Computing
+            // it per-vertex instead would need a new interpolant on `VertexOut` to carry it across,
+            // and the value would arrive smeared by interpolation: a viewed `vertex_id` would read
+            // as a gradient between corners rather than as the integer it is. A geometry-only node
+            // has no viewable value here, and saying so is better than inventing one.
+            let illegal = MaterialValidation.stageViolations(order: surface, in: doc, registry: registry,
+                                                             stage: .surface) { title in
+                "\(title) cannot be viewed in a RealityKit material — a viewed value is drawn as colour on the mesh, which only the surface stage produces"
+            }
+            if !illegal.isEmpty { throw .invalid(illegal) }
             let existing = Set(surface)
             surface += orders[.surface]!.filter { !existing.contains($0) }
             orders[.surface] = surface
