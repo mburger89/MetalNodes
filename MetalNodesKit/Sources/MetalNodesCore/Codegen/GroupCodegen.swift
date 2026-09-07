@@ -83,61 +83,122 @@ public enum GroupCodegen {
     static func function(for def: GroupDefinition, document doc: ShaderDocument, registry: NodeRegistry,
                          functions: [GroupID: GroupFunction], view: ViewOutput? = nil,
                          layer: Bool = false, layerFunctions: [GroupID: GroupFunction] = [:]) throws(GenerationError) -> GroupFunction {
-        let path = GraphPath.definition(def.id)
-        let terminal: NodeID
-        if let view {
-            terminal = view.socket.node
-        } else {
-            guard let outNode = def.outputNode else { throw .invalid([Diagnostic(.error, "Definition “\(def.name)” has no Group Output")]) }
-            terminal = outNode
-        }
-        let order = TopoSort.order(def.graph, from: terminal)
-        let (resolved, diags) = TypeResolver.resolve(def.graph, path: path, document: doc, registry: registry, order: order)
-        if !diags.isEmpty { throw .invalid(diags) }
-        let emitted = Emitter.emit(order: order, graph: def.graph, path: path, document: doc, registry: registry,
-                                   resolved: resolved, env: layer ? .groupFunctionLayer : .groupFunction,
-                                   reserved: [], functions: functions,
-                                   viewInstance: view.flatMap { v in v.innerVariant.map { (id: v.socket.node, function: $0) } },
-                                   layerFunctions: layerFunctions)
-
-        // A view variant returns one field, `value`; a normal function one per declared output.
-        var viewed: (type: SocketType, variable: String)?
-        if let view {
-            let type = view.innerVariant?.viewedType ?? resolved[view.socket.node]?.outputTypes[view.socket.socket]
-            guard let type, let variable = emitted.outputVars[view.socket] else {
-                throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: view.socket.node, socket: view.socket.socket)])
+        switch def.body {
+        case .graph(let graph):
+            let path = GraphPath.definition(def.id)
+            let terminal: NodeID
+            if let view {
+                terminal = view.socket.node
+            } else {
+                guard let outNode = def.outputNode else { throw .invalid([Diagnostic(.error, "Definition “\(def.name)” has no Group Output")]) }
+                terminal = outNode
             }
-            viewed = (type, variable)
-        }
-        let fnName = functionName(def) + (viewed == nil ? "" : "_view") + (layer ? "_layer" : "")
-        let outStruct = viewed == nil ? structName(def.id) : viewStructName(def.id)
-        let outputs = viewed.map { [SocketDecl(name: "value", type: .concrete($0.type))] } ?? def.outputs
+            let order = TopoSort.order(graph, from: terminal)
+            let (resolved, diags) = TypeResolver.resolve(graph, path: path, document: doc, registry: registry, order: order)
+            if !diags.isEmpty { throw .invalid(diags) }
+            let emitted = Emitter.emit(order: order, graph: graph, path: path, document: doc, registry: registry,
+                                       resolved: resolved, env: layer ? .groupFunctionLayer : .groupFunction,
+                                       reserved: [], functions: functions,
+                                       viewInstance: view.flatMap { v in v.innerVariant.map { (id: v.socket.node, function: $0) } },
+                                       layerFunctions: layerFunctions)
 
-        var b = SourceBuilder()
+            // A view variant returns one field, `value`; a normal function one per declared output.
+            var viewed: (type: SocketType, variable: String)?
+            if let view {
+                let type = view.innerVariant?.viewedType ?? resolved[view.socket.node]?.outputTypes[view.socket.socket]
+                guard let type, let variable = emitted.outputVars[view.socket] else {
+                    throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: view.socket.node, socket: view.socket.socket)])
+                }
+                viewed = (type, variable)
+            }
+            let fnName = functionName(def) + (viewed == nil ? "" : "_view") + (layer ? "_layer" : "")
+            let outStruct = viewed == nil ? structName(def.id) : viewStructName(def.id)
+            let outputs = viewed.map { [SocketDecl(name: "value", type: .concrete($0.type))] } ?? def.outputs
+
+            var b = SourceBuilder()
+            writeResultStruct(&b, outStruct: outStruct, outputs: outputs)
+            var params = systemParams(def)
+            params += emitted.uniformRequests.map { "\($0.type.mslName) \(parameterName(for: $0.path))" }
+            params += layer ? ["SwiftUI::Layer layer", "float2 position"]
+                            : emitted.textureRequests.map { "texture2d<float> \($0.parameterName)" }
+            b.add("\(outStruct) \(fnName)(\(params.joined(separator: ", "))) {")
+            for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
+            if let viewed {
+                writeEpilogue(&b, outStruct: outStruct, outputs: outputs, resultVar: "out") { _ in viewed.variable }
+            } else {
+                let exprs = emitted.inputExpressions[terminal] ?? [:]
+                writeEpilogue(&b, outStruct: outStruct, outputs: outputs, resultVar: "out") { exprs[$0.name] ?? zeroLiteral(concrete($0.type)) }
+            }
+            return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
+                                 uniformParams: emitted.uniformRequests, textureParams: emitted.textureRequests,
+                                 requiredStdlib: emitted.requiredStdlib,
+                                 source: b.text, lineMap: b.map, viewedType: viewed?.type, resolved: resolved,
+                                 isLayerVariant: layer)
+
+        case .msl(let text):
+            // A `.msl` definition has no nodes, so nothing requests a uniform or texture slot: its
+            // function is built with empty uniform/texture parameter lists and no required stdlib.
+            let fnName = functionName(def) + (layer ? "_layer" : "")
+            let outStruct = structName(def.id)
+            let outputs = def.outputs
+
+            var b = SourceBuilder()
+            writeResultStruct(&b, outStruct: outStruct, outputs: outputs)
+            var params = systemParams(def)
+            params += layer ? ["SwiftUI::Layer layer", "float2 position"] : []
+            b.add("\(outStruct) \(fnName)(\(params.joined(separator: ", "))) {")
+            // Declared zero-initialised before the user's text lands, so a body that forgets to
+            // assign an output still compiles and renders black rather than failing on scaffolding
+            // the user cannot see. Inputs are already in scope as `in_<name>`; the user assigns the
+            // outputs by their declared names, which the shared epilogue below packs into the result
+            // struct (spec §24.3).
+            for decl in outputs {
+                b.add("    \(concrete(decl.type).mslName) \(decl.name) = \(zeroLiteral(concrete(decl.type)));")
+            }
+            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+                b.add("    " + line)
+            }
+            // The result-struct local cannot be named `out` unconditionally: the user's own text
+            // may already declare a local of that name (an output literally called `out` is the
+            // idiomatic case — spec §24.3's own examples use it), which would collide with a
+            // fixed `out` inside the same scope. `outStruct` already carries the definition's
+            // unique hex id, so suffixing it keeps this name out of the user's reach in the
+            // ordinary case; full collision-proofing against an adversarial identifier is Task
+            // 7/8's job, not this one's. (Not derived from `fnName`: that string is a prefix of
+            // it, and a test counts `fnName`'s occurrences as a proxy for call-site sharing.)
+            writeEpilogue(&b, outStruct: outStruct, outputs: outputs, resultVar: "\(outStruct)_result") { $0.name }
+            return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
+                                 uniformParams: [], textureParams: [], requiredStdlib: [],
+                                 source: b.text, lineMap: b.map, viewedType: nil, resolved: [:],
+                                 isLayerVariant: layer)
+        }
+    }
+
+    /// `float2 uv, float time, float2 size, float2 mouse` plus the definition's declared inputs,
+    /// spelled `in_<name>` — shared by both body kinds so a `.msl` function is indistinguishable
+    /// to its caller from a `.graph` one (spec §24.3).
+    private static func systemParams(_ def: GroupDefinition) -> [String] {
+        var params = ["float2 uv", "float time", "float2 size", "float2 mouse"]
+        params += def.inputs.map { "\(concrete($0.type).mslName) in_\($0.name)" }
+        return params
+    }
+
+    private static func writeResultStruct(_ b: inout SourceBuilder, outStruct: String, outputs: [SocketDecl]) {
         b.add("struct \(outStruct) {")
         for o in outputs { b.add("    \(concrete(o.type).mslName) \(o.name);") }
         b.add("};\n")
-        var params = ["float2 uv", "float time", "float2 size", "float2 mouse"]
-        params += def.inputs.map { "\(concrete($0.type).mslName) in_\($0.name)" }
-        params += emitted.uniformRequests.map { "\($0.type.mslName) \(parameterName(for: $0.path))" }
-        params += layer ? ["SwiftUI::Layer layer", "float2 position"]
-                        : emitted.textureRequests.map { "texture2d<float> \($0.parameterName)" }
-        b.add("\(outStruct) \(fnName)(\(params.joined(separator: ", "))) {")
-        for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
-        b.add("    \(outStruct) out;")
-        if let viewed {
-            b.add("    out.value = \(viewed.variable);")
-        } else {
-            let exprs = emitted.inputExpressions[terminal] ?? [:]
-            for o in def.outputs { b.add("    out.\(o.name) = \(exprs[o.name] ?? zeroLiteral(concrete(o.type)));") }
-        }
-        b.add("    return out;")
+    }
+
+    /// Packs each output into the result struct and closes the function. Shared by both body
+    /// kinds — the epilogue that makes a `.msl` function indistinguishable to its caller must not
+    /// be duplicated (spec §24.3). `resultVar` names the local struct instance; callers pick one
+    /// that cannot collide with an identifier already in scope.
+    private static func writeEpilogue(_ b: inout SourceBuilder, outStruct: String, outputs: [SocketDecl],
+                                       resultVar: String, expression: (SocketDecl) -> String) {
+        b.add("    \(outStruct) \(resultVar);")
+        for o in outputs { b.add("    \(resultVar).\(o.name) = \(expression(o));") }
+        b.add("    return \(resultVar);")
         b.add("}")
-        return GroupFunction(id: def.id, name: fnName, structName: outStruct, inputs: def.inputs, outputs: outputs,
-                             uniformParams: emitted.uniformRequests, textureParams: emitted.textureRequests,
-                             requiredStdlib: emitted.requiredStdlib,
-                             source: b.text, lineMap: b.map, viewedType: viewed?.type, resolved: resolved,
-                             isLayerVariant: layer)
     }
 
     /// Definitions carry no generics (spec §20.2), so an unresolved socket type is a `float`.

@@ -296,3 +296,56 @@ import Foundation
         #expect(errors.isEmpty, "\(errors.map(\.message))")
     }
 }
+
+@Suite struct CustomMSLEmissionTests {
+    /// A document with one `.msl` definition instantiated twice, both feeding the terminal.
+    private func document(_ body: String = "out = in_a * 2.0;") -> ShaderDocument {
+        var doc = ShaderDocument()
+        var def = GroupDefinition(name: "Wobble")
+        def.inputs = [SocketDecl(name: "a", type: .concrete(.float), default: .value(.float(1)))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.body = .msl(body)
+        doc.definitions[def.id] = def
+
+        var g = Graph()
+        let terminal = NodeInstance(kind: .builtin("output.fragment"), position: .zero)
+        let one = NodeInstance(kind: .group(def.id), position: .zero)
+        let two = NodeInstance(kind: .group(def.id), position: .zero)
+        let mix = NodeInstance(kind: .builtin("math.mix"), position: .zero)
+        for n in [terminal, one, two, mix] { g.nodes[n.id] = n }
+        g.inputs[SocketRef(mix.id, "a")] = SocketRef(one.id, "out")
+        g.inputs[SocketRef(mix.id, "b")] = SocketRef(two.id, "out")
+        g.inputs[SocketRef(terminal.id, "color")] = SocketRef(mix.id, "out")
+        doc.root = g
+        return doc
+    }
+
+    @Test func theUserStatementsLandInTheFunctionBody() throws {
+        let s = try ShaderGenerator.generate(document()).source
+        #expect(s.contains("in_a * 2.0"))
+        #expect(s.contains("mn_g_Wobble_"))
+    }
+
+    /// The property that distinguishes a definition from an Expression node: one function, two
+    /// call sites (spec §24.3).
+    @Test func twoInstancesShareOneFunction() throws {
+        let s = try ShaderGenerator.generate(document()).source
+        let decls = s.components(separatedBy: "mn_g_Wobble_").count - 1
+        // One declaration plus two call sites = three occurrences of the function name.
+        #expect(decls == 3)
+    }
+
+    @Test func aMultiLineBodyIsEmittedInOrder() throws {
+        let s = try ShaderGenerator.generate(document("float d = in_a * 3.0;\nout = d + 1.0;")).source
+        let d = try #require(s.range(of: "float d = in_a * 3.0;"))
+        let o = try #require(s.range(of: "out = d + 1.0;"))
+        #expect(d.lowerBound < o.lowerBound)
+    }
+
+    @Test func generationIsDeterministic() throws {
+        let doc = document()
+        let first = try ShaderGenerator.generate(doc).source
+        let second = try ShaderGenerator.generate(doc).source
+        #expect(first == second)
+    }
+}
