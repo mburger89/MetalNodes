@@ -122,7 +122,7 @@ public struct EmitEnvironment: Sendable {
     /// them — Resolution and Mouse are refused under this target — and a unit aspect ratio makes
     /// `aspect` degenerate to centred UV rather than to nonsense.
     public static func materialSys(for stage: MaterialStage) -> [String: SysValue] {
-        let geo = stage == .surface ? "params.geometry()" : "geo"
+        let geo = stage == .surface ? materialGeometryAccessor : "geo"
         var s: [String: SysValue] = [
             "time": SysValue("params.uniforms().time()"),
             "resolution": SysValue("float2(1.0, 1.0)", readable: false),
@@ -157,27 +157,49 @@ public struct EmitEnvironment: Sendable {
     /// question must be one place, not two that happen to agree.
     static let materialTextureAccessor = "params.textures().custom()"
 
+    /// `realitykit::surface_parameters`'s own surface handle — `MaterialCodegen` hoists it into
+    /// `auto surface = …;` at the top of the exported surface function. Named once, here, for the
+    /// same reason as `materialTextureAccessor` above: the generator and `knownAccessors` must read
+    /// one spelling, not two that happen to agree.
+    static let materialSurfaceAccessor = "params.surface()"
+
+    /// `realitykit::{surface,geometry}_parameters`'s geometry handle. The surface stage reads it
+    /// inline through every `{sys.…}` accessor (`materialSys(for:)` above); the geometry stage
+    /// additionally hoists it into `auto geo = …;` (`MaterialCodegen.swift:149`) because every
+    /// accessor there goes through that local. One spelling for both uses, for the same reason as
+    /// the two constants above.
+    static let materialGeometryAccessor = "params.geometry()"
+
     static func materialSample(_ slot: TextureSlot, _ uv: String) -> String {
         "float4(\(slot.fragmentName).sample(mn_sampler, float2((\(uv)).x, 1.0 - (\(uv)).y)))"
     }
 
     /// The surface shader: `params` is `realitykit::surface_parameters`, uniforms read `u`.
     /// `MaterialCodegen` swaps `uniform` for a literal speller when it emits the export.
+    ///
+    /// `knownAccessors` lists every accessor chain `MaterialCodegen` hoists into a local at the
+    /// top of the surface function, beyond what `sys` itself already covers through
+    /// `materialGeometryAccessor` — see `everyAccessorTheGeneratorEmitsIsAllowedUnderItsOwnStage`
+    /// (`LegalityPredicateTests.swift`) for the correspondence test that catches this list falling
+    /// behind what the generator actually emits.
     public static let realityKitSurface = EmitEnvironment(
         uniform: fragment.uniform,
         sys: materialSys(for: .surface),
         textureSample: materialSample,
         textureName: { $0.fragmentName },
-        knownAccessors: [materialTextureAccessor])
+        knownAccessors: [materialTextureAccessor, materialSurfaceAccessor])
 
     /// The geometry modifier: `geo` is `params.geometry()`, hoisted into a local by the assembler
     /// because every accessor goes through it and RealityKit's own examples do the same.
+    ///
+    /// `knownAccessors` mirrors `realityKitSurface`'s above, for the geometry function's own
+    /// hoisted locals.
     public static let realityKitGeometry = EmitEnvironment(
         uniform: fragment.uniform,
         sys: materialSys(for: .geometry),
         textureSample: materialSample,
         textureName: { $0.fragmentName },
-        knownAccessors: [materialTextureAccessor])
+        knownAccessors: [materialTextureAccessor, materialGeometryAccessor])
 
     /// Uniform reads spelled as the value the document holds right now (spec §23.6). Snapshotted
     /// against `layout` up front so the returned closure captures only strings and stays `Sendable`.
@@ -227,9 +249,14 @@ public struct EmitEnvironment: Sendable {
         case .template(let t):
             return canEmitTemplate(t)
         case .variants(_, let table):
-            let cases = chosen.flatMap { table[$0] != nil ? [$0] : nil } ?? Array(table.keys)
-            for c in cases.sorted() {
-                let result = canEmitTemplate(table[c]!)
+            let texts: [String]
+            if let chosen, let t = table[chosen] {
+                texts = [t]
+            } else {
+                texts = table.sorted { $0.key < $1.key }.map(\.value)
+            }
+            for t in texts {
+                let result = canEmitTemplate(t)
                 if result != .allowed { return result }
             }
             return .allowed

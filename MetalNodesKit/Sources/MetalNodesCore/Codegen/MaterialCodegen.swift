@@ -127,7 +127,7 @@ extension MaterialCodegen {
         for slot in textures where stageReferences(surface, slot: slot) {
             b.add("    texture2d<half> \(slot.fragmentName) = \(EmitEnvironment.materialTextureAccessor);")
         }
-        b.add("    auto surface = params.surface();")
+        b.add("    auto surface = \(EmitEnvironment.materialSurfaceAccessor);")
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
             b.add("    " + line, owner: surface.lineOwners[i])
         }
@@ -146,7 +146,7 @@ extension MaterialCodegen {
             for slot in textures where stageReferences(geometry, slot: slot) {
                 b.add("    texture2d<half> \(slot.fragmentName) = \(EmitEnvironment.materialTextureAccessor);")
             }
-            b.add("    auto geo = params.geometry();")
+            b.add("    auto geo = \(EmitEnvironment.materialGeometryAccessor);")
             for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
                 b.add("    " + line, owner: geometry.lineOwners[i])
             }

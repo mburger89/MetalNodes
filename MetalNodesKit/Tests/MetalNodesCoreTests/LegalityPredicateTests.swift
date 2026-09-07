@@ -108,4 +108,75 @@ import Testing
         #expect(EmitEnvironment.fragment.sys.values.allSatisfy { MSLScanner.accessorCalls(in: $0.spelling).isEmpty })
         #expect(EmitEnvironment.fragment.canEmit(mslText: "out = geo.uv0();") == .missing("geo.uv0()"))
     }
+
+    /// The correspondence invariant a hand-maintained `knownAccessors` list cannot itself
+    /// guarantee: every accessor chain `MaterialCodegen` actually emits into a stage's function
+    /// body must be `.allowed` under that stage's own `EmitEnvironment`. Derived from real
+    /// generated output — not a fixed list of strings someone remembered to update — so a fourth
+    /// accessor the generator starts emitting fails here immediately. Same shape as the
+    /// `materialSys`/shim correspondence test (`MaterialCompileTests.swift`,
+    /// `everyMaterialSysSpellingResolvesAgainstItsShim`).
+    ///
+    /// The graph below reaches all three accessors the generator currently emits per stage
+    /// (`params.textures().custom()`, `params.surface()`, `params.geometry()`), by wiring a real
+    /// Texture Sample node into each stage. Both samples name the *same* asset — a RealityKit
+    /// material has one texture slot (`MaterialValidation`'s Rule 4), and two nodes reading the
+    /// same image both resolve to that one slot and export cleanly.
+    @Test func everyAccessorTheGeneratorEmitsIsAllowedUnderItsOwnStage() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        let asset = AssetID()
+        var surfaceSample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        surfaceSample.params["asset"] = .asset(asset)
+        var geometrySample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        geometrySample.params["asset"] = .asset(asset)
+        for n in [terminal, surfaceSample, geometrySample] { g.nodes[n.id] = n }
+        g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(surfaceSample.id, "color")
+        g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(geometrySample.id, "color")
+        doc.root = g
+
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        let export = try #require(shader.exportSource)
+        let names = MaterialCodegen.functionNames(exportName: doc.settings.exportName)
+
+        let surfaceBody = try #require(Self.functionBody(named: names.surface, in: export))
+        let geometryBody = try #require(Self.functionBody(named: names.geometry, in: export))
+
+        let surfaceChains = MSLScanner.accessorCalls(in: surfaceBody)
+        let geometryChains = MSLScanner.accessorCalls(in: geometryBody)
+        // Guard the guard: if the graph above stops reaching real generated accessors at all, an
+        // empty chain list would make the loops below pass vacuously.
+        #expect(surfaceChains.contains("params.textures().custom()"))
+        #expect(geometryChains.contains("params.textures().custom()"))
+
+        for chain in surfaceChains {
+            #expect(EmitEnvironment.realityKitSurface.canEmit(mslText: chain) == .allowed,
+                    "surface emitted \(chain), which its own environment refuses")
+        }
+        for chain in geometryChains {
+            #expect(EmitEnvironment.realityKitGeometry.canEmit(mslText: chain) == .allowed,
+                    "geometry emitted \(chain), which its own environment refuses")
+        }
+    }
+
+    /// The text of one `[[visible]] void <name>(...) { ... }` function, braces included, found by
+    /// matching braces from the function's declared name — good enough for this generator's own
+    /// output, which never nests a same-named function.
+    private static func functionBody(named name: String, in source: String) -> String? {
+        guard let sigRange = source.range(of: "void \(name)(") else { return nil }
+        guard let openBrace = source[sigRange.upperBound...].firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var i = openBrace
+        while i < source.endIndex {
+            if source[i] == "{" { depth += 1 }
+            if source[i] == "}" {
+                depth -= 1
+                if depth == 0 { return String(source[openBrace...i]) }
+            }
+            i = source.index(after: i)
+        }
+        return nil
+    }
 }
