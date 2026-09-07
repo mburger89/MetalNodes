@@ -66,8 +66,10 @@ extension DocumentSettings: Codable {
         // A document written by a newer build may name a target this build has no case for.
         // `decodeIfPresent` *throws* on an unknown case, which would fail the whole settings
         // object and so the whole document; `try?` degrades to Fragment instead (spec §23.2).
-        target = (try? c.decodeIfPresent(OutputTarget.self, forKey: .target))?.flatMap { $0 } ?? .fragment
-        lightingModel = (try? c.decodeIfPresent(MaterialLightingModel.self, forKey: .lightingModel))?.flatMap { $0 } ?? .lit
+        // Since SE-0230, `try?` on an already-Optional-returning expression flattens the result
+        // itself, so no further `.flatMap { $0 }` is needed.
+        target = (try? c.decodeIfPresent(OutputTarget.self, forKey: .target)) ?? .fragment
+        lightingModel = (try? c.decodeIfPresent(MaterialLightingModel.self, forKey: .lightingModel)) ?? .lit
         exportName = try c.decodeIfPresent(String.self, forKey: .exportName) ?? "metalNodesShader"
         let entries = try c.decodeIfPresent([AssetEntry].self, forKey: .assets) ?? []
         assets = Dictionary(entries.map { ($0.id, $0.info) }, uniquingKeysWith: { $1 })
