@@ -71,7 +71,7 @@ public enum ParamValues {
         case .float4(let s): [s.x, s.y, s.z, s.w]
         case .int(let i): [Float(i)]
         case .bool(let b): [b ? 1 : 0]
-        case .enumCase, .asset: []
+        case .enumCase, .asset, .text: []
         }
     }
 

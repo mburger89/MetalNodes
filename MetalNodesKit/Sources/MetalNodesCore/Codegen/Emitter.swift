@@ -186,7 +186,7 @@ enum Emitter {
                     case .enumeration:
                         if case .enumCase(let c)? = inst.params[p.name] { enums[p.name] = c }
                         else if case .enumCase(let c) = p.defaultValue { enums[p.name] = c }
-                    case .asset: break
+                    case .asset, .text: break
                     }
                 }
                 let texture = textureSlotOfNode[id]

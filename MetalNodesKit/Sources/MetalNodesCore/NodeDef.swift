@@ -22,6 +22,8 @@ public enum ParamKind: Sendable, Hashable {
     case value(SocketType, range: ClosedRange<Float>?)
     case enumeration([String])
     case asset
+    /// Free text, rendered as a field. `multiline` picks a one-line field or an editor.
+    case text(multiline: Bool)
 }
 
 public struct ParamDecl: Sendable, Hashable {

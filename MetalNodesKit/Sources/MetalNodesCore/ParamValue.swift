@@ -11,6 +11,8 @@ public enum ParamValue: Codable, Sendable, Hashable {
     case bool(Bool)
     case enumCase(String)
     case asset(AssetID?)
+    /// A formula or a body of MSL (spec §24.2). Never a uniform — `socketType` is `nil`.
+    case text(String)
 
     /// The socket type this value can feed. `nil` for values that never become uniforms.
     public var socketType: SocketType? {
@@ -21,7 +23,7 @@ public enum ParamValue: Codable, Sendable, Hashable {
         case .float4: .float4
         case .int: .int
         case .bool: .bool
-        case .enumCase, .asset: nil
+        case .enumCase, .asset, .text: nil
         }
     }
 
@@ -41,6 +43,7 @@ public enum ParamValue: Codable, Sendable, Hashable {
         case .bool(let b): return b ? "true" : "false"
         case .enumCase(let c): return c
         case .asset: return "/* asset */"
+        case .text: return "/* formula */"
         }
     }
 }
