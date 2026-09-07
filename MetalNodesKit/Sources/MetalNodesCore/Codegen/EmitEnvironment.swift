@@ -25,6 +25,14 @@ public struct EmitEnvironment: Sendable {
     public var textureName: @Sendable (TextureSlot) -> String
     /// True in the two environments that sample a SwiftUI `Layer` instead of a bound texture.
     public var usesLayer: Bool
+    /// Accessor chains this environment's own generated program reads, beyond what `sys` can
+    /// carry (spec §24.5) — currently just `params.textures().custom()`, which `MaterialCodegen`
+    /// hoists into a per-slot local wherever a RealityKit material samples a texture (spec §23.6).
+    /// `sys` has no key for it: the accessor is the same text for every texture slot, not one
+    /// system value. Kept on the environment — the vocabulary's single authority — rather than
+    /// left a magic string only `MaterialCodegen` knows, so `canEmit(mslText:)` recognises the
+    /// generator's own output as legal.
+    public var knownAccessors: Set<String>
 
     /// Registry-validation vocabulary only — not every environment's `sys` dictionary supplies every
     /// name (the RealityKit builtins are wired by Task 5). Keeps typos in a node body's `{sys.…}`
@@ -43,12 +51,13 @@ public struct EmitEnvironment: Sendable {
                 textureSample: @escaping @Sendable (TextureSlot, String) -> String
                     = { slot, uv in EmitEnvironment.flippedSample(slot.fragmentName, uv) },
                 textureName: @escaping @Sendable (TextureSlot) -> String = { $0.fragmentName },
-                usesLayer: Bool = false) {
+                usesLayer: Bool = false, knownAccessors: Set<String> = []) {
         self.uniform = uniform
         self.sys = sys
         self.textureSample = textureSample
         self.textureName = textureName
         self.usesLayer = usesLayer
+        self.knownAccessors = knownAccessors
     }
 
     /// The fragment program (and every viewer program): a `constant Uniforms &u` buffer.
@@ -140,6 +149,14 @@ public struct EmitEnvironment: Sendable {
     /// `params.textures().custom()` is the only general-purpose sampler a `CustomMaterial` has
     /// (spec §23.6). It yields `half4`; the graph works in `float4`. The y flip matches the
     /// bottom-left UV convention the rest of the app uses and Apple's own USD examples.
+    ///
+    /// `MaterialCodegen` hoists this same literal into a per-slot local, e.g.
+    /// `texture2d<half> tex0 = params.textures().custom();`, rather than reading it through
+    /// `EmitEnvironment` — that duplication predates this task and is left alone here — but the
+    /// literal itself is named once, here, so `knownAccessors` below can never drift from what the
+    /// generator actually emits.
+    static let materialTextureAccessor = "params.textures().custom()"
+
     static func materialSample(_ slot: TextureSlot, _ uv: String) -> String {
         "float4(\(slot.fragmentName).sample(mn_sampler, float2((\(uv)).x, 1.0 - (\(uv)).y)))"
     }
@@ -150,7 +167,8 @@ public struct EmitEnvironment: Sendable {
         uniform: fragment.uniform,
         sys: materialSys(for: .surface),
         textureSample: materialSample,
-        textureName: { $0.fragmentName })
+        textureName: { $0.fragmentName },
+        knownAccessors: [materialTextureAccessor])
 
     /// The geometry modifier: `geo` is `params.geometry()`, hoisted into a local by the assembler
     /// because every accessor goes through it and RealityKit's own examples do the same.
@@ -158,7 +176,8 @@ public struct EmitEnvironment: Sendable {
         uniform: fragment.uniform,
         sys: materialSys(for: .geometry),
         textureSample: materialSample,
-        textureName: { $0.fragmentName })
+        textureName: { $0.fragmentName },
+        knownAccessors: [materialTextureAccessor])
 
     /// Uniform reads spelled as the value the document holds right now (spec §23.6). Snapshotted
     /// against `layout` up front so the returned closure captures only strings and stays `Sendable`.
@@ -183,20 +202,9 @@ public struct EmitEnvironment: Sendable {
         case missing(String)
     }
 
-    /// Whether a node with this body can be emitted here: every `{sys.…}` name it *reads* must
-    /// have a readable spelling in this environment (spec §24.5). `chosen` selects which case of a
-    /// `.variants` body is actually reached; the cases not chosen are not asked about at all.
-    ///
-    /// `.custom` bodies are a library escape hatch whose text is a Swift closure, not scannable
-    /// MSL — see the doc comment on `NodeBody.custom` and this task's report for why `.allowed` is
-    /// the right default rather than a token-level guess.
-    public func canEmit(_ body: NodeBody, chosen: String?) -> Legality {
-        let text: String
-        switch body {
-        case .template(let t): text = t
-        case .variants(_, let table): text = chosen.flatMap { table[$0] } ?? ""
-        case .custom: return .allowed
-        }
+    /// Whether one template's placeholders are legal here: every `{sys.…}` name it *reads* must
+    /// have a readable spelling in this environment (spec §24.5).
+    private func canEmitTemplate(_ text: String) -> Legality {
         for m in text.matches(of: NodeRegistry.placeholderPattern) where m.1 == "sys" {
             let name = String(m.2)
             guard let v = sys[name], v.readable else { return .missing(name) }
@@ -204,13 +212,81 @@ public struct EmitEnvironment: Sendable {
         return .allowed
     }
 
-    /// The same question for hand-written MSL, which names accessors textually rather than
-    /// through a `{sys.…}` placeholder (spec §24.5). The accessor set this checks against is
-    /// derived from this environment's own readable spellings, so the two can never disagree.
+    /// Whether a node with this body can be emitted here (spec §24.5). `chosen` selects which
+    /// case of a `.variants` body is actually reached — but when `chosen` is `nil` or names a case
+    /// the table doesn't have (the predicate asked before the enum param resolved, or with a stale
+    /// case name), there is no single case to trust, so *every* case is checked and the body is
+    /// refused if any one of them is illegal. A refusal predicate that defaults to "legal" when it
+    /// doesn't know which case will run is the wrong way to fail.
+    ///
+    /// `.custom` bodies are a library escape hatch whose text is a Swift closure, not scannable
+    /// MSL — see the doc comment on `NodeBody.custom` and this task's report for why `.allowed` is
+    /// the right default rather than a token-level guess.
+    public func canEmit(_ body: NodeBody, chosen: String?) -> Legality {
+        switch body {
+        case .template(let t):
+            return canEmitTemplate(t)
+        case .variants(_, let table):
+            let cases = chosen.flatMap { table[$0] != nil ? [$0] : nil } ?? Array(table.keys)
+            for c in cases.sorted() {
+                let result = canEmitTemplate(table[c]!)
+                if result != .allowed { return result }
+            }
+            return .allowed
+        case .custom:
+            return .allowed
+        }
+    }
+
+    /// The identifier roots that name a RealityKit environment accessor at all, textually —
+    /// `params.` and `geo.`, derived rather than hardcoded so a third stage or root stays
+    /// self-maintaining. Deliberately the union of both stage vocabularies, never derived from
+    /// `self.sys` alone: `fragment`'s own spellings (`in.uv`, `u.time`, …) contain no dotted call
+    /// chain at all, so a per-environment derivation would yield an empty root set under
+    /// `fragment` and silently stop checking any accessor there.
+    private static let accessorRoots: Set<String> = {
+        let spellings = Array(materialSys(for: .surface).values) + Array(materialSys(for: .geometry).values)
+        let chains = spellings.flatMap { MSLScanner.accessorCalls(in: $0.spelling) }
+        return Set(chains.compactMap { chain -> String? in
+            guard let dot = chain.firstIndex(of: ".") else { return nil }
+            return String(chain[chain.startIndex...dot])
+        })
+    }()
+
+    /// Every accessor chain a spelling's own text passes through, prefixes included:
+    /// `params.geometry().normal()` contributes `params.geometry()` as well as the full chain, and
+    /// `int(geo.vertex_id())` contributes `geo.vertex_id()` (the cast wrapping it is not part of
+    /// the chain). That is what lets hand-written code hoist a mid-chain accessor into a local
+    /// (`auto g = params.geometry();`) or read a value this environment itself only reaches
+    /// through a cast, and still check out (spec §24.5).
+    private static func accessorPrefixes(of chain: String) -> [String] {
+        var prefixes: [String] = []
+        var searchStart = chain.startIndex
+        while let closeRange = chain.range(of: "()", range: searchStart..<chain.endIndex) {
+            prefixes.append(String(chain[chain.startIndex..<closeRange.upperBound]))
+            searchStart = closeRange.upperBound
+        }
+        return prefixes
+    }
+
+    /// The same question as `canEmit(_:chosen:)` for hand-written MSL, which names accessors
+    /// textually rather than through a `{sys.…}` placeholder (spec §24.5). `known` is derived from
+    /// this environment's own vocabulary — every accessor chain (and every prefix of it) a
+    /// readable `sys` spelling or a `knownAccessors` entry passes through — so an accessor this
+    /// environment's own vocabulary reaches, however it is mid-chain hoisted into a local or
+    /// nested inside a cast, always checks out. Whether an *unmatched* chain is refused at all is
+    /// a separate gate: only a chain whose root is a RealityKit accessor namespace
+    /// (`accessorRoots`) counts as a mistaken read; anything else — a user's own helper-struct
+    /// calls, ordinary MSL like `foo.bar().baz()` — is left to the Metal compiler. A missed
+    /// diagnostic on code that's already broken is far cheaper than refusing valid code the
+    /// predicate can't actually judge.
     public func canEmit(mslText: String) -> Legality {
-        let known = Set(sys.values.filter(\.readable).map(\.spelling))
+        let sysChains = sys.values.filter(\.readable).flatMap { MSLScanner.accessorCalls(in: $0.spelling) }
+        let known = Set((sysChains + Array(knownAccessors)).flatMap(EmitEnvironment.accessorPrefixes))
         for accessor in MSLScanner.accessorCalls(in: mslText) where !known.contains(accessor) {
-            if accessor.hasPrefix("params.") || accessor.hasPrefix("geo.") { return .missing(accessor) }
+            if EmitEnvironment.accessorRoots.contains(where: { accessor.hasPrefix($0) }) {
+                return .missing(accessor)
+            }
         }
         return .allowed
     }
