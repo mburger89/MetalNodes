@@ -120,3 +120,124 @@ import Testing
         #expect(again.textureRequests.first?.index == 0)
     }
 }
+
+@Suite struct MaterialSetterTests {
+    @Test func everySurfaceSocketMapsToItsSetterWithTheRightPrecision() {
+        #expect(MaterialCodegen.setterStatement(socket: "baseColor", expression: "v0") == "surface.set_base_color(half3(v0.rgb));")
+        #expect(MaterialCodegen.setterStatement(socket: "emissive", expression: "v1") == "surface.set_emissive_color(half3(v1.rgb));")
+        #expect(MaterialCodegen.setterStatement(socket: "roughness", expression: "v2") == "surface.set_roughness(half(v2));")
+        #expect(MaterialCodegen.setterStatement(socket: "metallic", expression: "v3") == "surface.set_metallic(half(v3));")
+        #expect(MaterialCodegen.setterStatement(socket: "opacity", expression: "v4") == "surface.set_opacity(half(v4));")
+        #expect(MaterialCodegen.setterStatement(socket: "occlusion", expression: "v5") == "surface.set_ambient_occlusion(half(v5));")
+        #expect(MaterialCodegen.setterStatement(socket: "specular", expression: "v6") == "surface.set_specular(half(v6));")
+        // The one float3 setter — tangent space, normalized by RealityKit before storing.
+        #expect(MaterialCodegen.setterStatement(socket: "normal", expression: "v7") == "surface.set_normal(v7);")
+        #expect(MaterialCodegen.setterStatement(socket: "positionOffset", expression: "v8") == "geo.set_model_position_offset(v8);")
+        #expect(MaterialCodegen.setterStatement(socket: "nonsense", expression: "v9") == nil)
+    }
+
+    @Test func everyTerminalSocketHasASetter() {
+        for decl in NodeRegistry.builtin["output.material"]!.inputs {
+            #expect(MaterialCodegen.setterStatement(socket: decl.name, expression: "x") != nil, "\(decl.name)")
+        }
+    }
+
+    @Test func functionNamesSuffixTheExportName() {
+        let n = MaterialCodegen.functionNames(exportName: "myMaterial")
+        #expect(n.surface == "myMaterial_surface")
+        #expect(n.geometry == "myMaterial_geometry")
+    }
+}
+
+@Suite(.disabled("enabled by Task 9, which wires the .realityKit branch into ShaderGenerator"))
+struct MaterialExportSourceTests {
+    /// One node wired to Base Color, one to Position Offset, one parameter to bake.
+    private func document() -> ShaderDocument {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        doc.settings.exportName = "testMaterial"
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        var color = NodeInstance(id: NodeID(), kind: .builtin("input.color"), position: .zero)
+        color.params["value"] = .float4(.init(1, 0, 0, 1))
+        var offset = NodeInstance(id: NodeID(), kind: .builtin("input.float3"), position: .zero)
+        offset.params["value"] = .float3(.init(0, 0.25, 0))
+        for n in [terminal, color, offset] { g.nodes[n.id] = n }
+        g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(color.id, "out")
+        g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(offset.id, "out")
+        doc.root = g
+        return doc
+    }
+
+    private func source(_ doc: ShaderDocument) throws -> String {
+        try ShaderGenerator.generate(doc, target: .realityKit).exportSource ?? ""
+    }
+
+    @Test func bothFunctionsAreEmittedWithTheRealityKitHeader() throws {
+        let src = try source(document())
+        #expect(src.contains("#include <RealityKit/RealityKit.h>"))
+        #expect(src.contains("[[visible]]\nvoid testMaterial_surface(realitykit::surface_parameters params)"))
+        #expect(src.contains("[[visible]]\nvoid testMaterial_geometry(realitykit::geometry_parameters params)"))
+    }
+
+    @Test func theSurfaceFunctionSetsAllEightProperties() throws {
+        let src = try source(document())
+        for setter in ["set_base_color", "set_normal", "set_roughness", "set_metallic",
+                       "set_emissive_color", "set_opacity", "set_ambient_occlusion", "set_specular"] {
+            #expect(src.contains(setter), "\(setter)")
+        }
+    }
+
+    @Test func parametersAreBakedAsLiteralsAndNoUniformBufferIsRead() throws {
+        let src = try source(document())
+        #expect(src.contains("float4(1.0, 0.0, 0.0, 1.0)"))
+        #expect(src.contains("float3(0.0, 0.25, 0.0)"))
+        #expect(!src.contains("struct Uniforms"))
+        #expect(!src.contains("u."))
+    }
+
+    /// Time is the one live value: it maps natively and must not be baked.
+    @Test func timeStaysLive() throws {
+        var doc = document()
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        let time = NodeInstance(id: NodeID(), kind: .builtin("input.time"), position: .zero)
+        doc.root.nodes[time.id] = time
+        doc.root.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(time.id, "time")
+        #expect(try source(doc).contains("params.uniforms().time()"))
+    }
+
+    @Test func anUnwiredGeometryStageEmitsNoGeometryFunction() throws {
+        var doc = document()
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        doc.root.inputs[SocketRef(terminal.id, "positionOffset")] = nil
+        let src = try source(doc)
+        #expect(src.contains("_surface"))
+        #expect(!src.contains("_geometry"))
+    }
+
+    @Test func unlitEmitsOnlyTheEmissiveSetter() throws {
+        var doc = document()
+        doc.settings.lightingModel = .unlit
+        let src = try source(doc)
+        #expect(src.contains("set_emissive_color"))
+        #expect(!src.contains("set_base_color"))
+        #expect(!src.contains("set_roughness"))
+    }
+
+    @Test func aTextureSampleReadsTheCustomSlot() throws {
+        var doc = document()
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        let sample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        doc.root.nodes[sample.id] = sample
+        doc.root.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(sample.id, "color")
+        let src = try source(doc)
+        #expect(src.contains("params.textures().custom()"))
+        #expect(src.contains("constexpr sampler"))
+    }
+
+    /// The generated source must be stable: same document, same bytes, every time.
+    @Test func generationIsDeterministic() throws {
+        let doc = document()
+        #expect(try source(doc) == (try source(doc)))
+    }
+}

@@ -88,4 +88,74 @@ public struct EmitEnvironment: Sendable {
         textureSample: { _, _ in "float4(layer.sample(position))" },
         textureName: { _ in "layer" },
         usesLayer: true)
+
+    /// How each system value is spelled inside a RealityKit function (spec §23.3).
+    ///
+    /// `resolution` and `mouse` resolve to neutral literals: every group function's signature
+    /// starts `(float2 uv, float time, float2 size, float2 mouse, …)` and the UV node's `aspect`
+    /// variant reads `{sys.resolution}`, so the keys must produce *something*. No node can observe
+    /// them — Resolution and Mouse are refused under this target — and a unit aspect ratio makes
+    /// `aspect` degenerate to centred UV rather than to nonsense.
+    public static func materialSys(for stage: MaterialStage) -> [String: String] {
+        let geo = stage == .surface ? "params.geometry()" : "geo"
+        var s: [String: String] = [
+            "time": "params.uniforms().time()",
+            "resolution": "float2(1.0, 1.0)",
+            "mouse": "float2(0.0, 0.0)",
+            "uv": "\(geo).uv0()",
+            "uv1": "\(geo).uv1()",
+            "worldPosition": "\(geo).world_position()",
+            "modelPosition": "\(geo).model_position()",
+            "normal3d": "\(geo).normal()",
+            "bitangent": "\(geo).bitangent()",
+            "vertexColor": "\(geo).color()",
+        ]
+        switch stage {
+        case .surface:
+            s["tangent"] = "\(geo).tangent()"
+            s["viewDirection"] = "\(geo).view_direction()"
+            s["screenPosition"] = "\(geo).screen_position()"
+        case .geometry:
+            s["vertexID"] = "int(\(geo).vertex_id())"
+        }
+        return s
+    }
+
+    /// `params.textures().custom()` is the only general-purpose sampler a `CustomMaterial` has
+    /// (spec §23.6). It yields `half4`; the graph works in `float4`. The y flip matches the
+    /// bottom-left UV convention the rest of the app uses and Apple's own USD examples.
+    static func materialSample(_ slot: TextureSlot, _ uv: String) -> String {
+        "float4(\(slot.fragmentName).sample(mn_sampler, float2((\(uv)).x, 1.0 - (\(uv)).y)))"
+    }
+
+    /// The surface shader: `params` is `realitykit::surface_parameters`, uniforms read `u`.
+    /// `MaterialCodegen` swaps `uniform` for a literal speller when it emits the export.
+    public static let realityKitSurface = EmitEnvironment(
+        uniform: fragment.uniform,
+        sys: materialSys(for: .surface),
+        textureSample: materialSample,
+        textureName: { $0.fragmentName })
+
+    /// The geometry modifier: `geo` is `params.geometry()`, hoisted into a local by the assembler
+    /// because every accessor goes through it and RealityKit's own examples do the same.
+    public static let realityKitGeometry = EmitEnvironment(
+        uniform: fragment.uniform,
+        sys: materialSys(for: .geometry),
+        textureSample: materialSample,
+        textureName: { $0.fragmentName })
+
+    /// Uniform reads spelled as the value the document holds right now (spec §23.6). Snapshotted
+    /// against `layout` up front so the returned closure captures only strings and stays `Sendable`.
+    public static func bakedUniforms(layout: UniformLayout, document: ShaderDocument,
+                                     registry: NodeRegistry) -> @Sendable (UniformField) -> String {
+        var mutableLiterals: [String: String] = [:]
+        for f in layout.fields {
+            guard let path = f.path else { continue }
+            let value = ParamValues.value(for: path, in: document, registry: registry)
+            mutableLiterals[f.name] = value.map { ParamValues.mslLiteral($0, as: f.type) }
+                ?? ParamValues.mslLiteral(.float(0), as: f.type)
+        }
+        let literals = mutableLiterals
+        return { field in literals[field.name] ?? ParamValues.mslLiteral(.float(0), as: field.type) }
+    }
 }

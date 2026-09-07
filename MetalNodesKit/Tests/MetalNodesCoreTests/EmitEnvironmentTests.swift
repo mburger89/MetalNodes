@@ -56,3 +56,41 @@ import Testing
         #expect(s.map.node(forLine: 5) == b)
     }
 }
+
+@Suite struct RealityKitEnvironmentTests {
+    @Test func surfaceAndGeometrySpellTheirAccessors() {
+        let s = EmitEnvironment.realityKitSurface.sys
+        #expect(s["uv"] == "params.geometry().uv0()")
+        #expect(s["time"] == "params.uniforms().time()")
+        #expect(s["worldPosition"] == "params.geometry().world_position()")
+        #expect(s["normal3d"] == "params.geometry().normal()")
+        #expect(s["tangent"] == "params.geometry().tangent()")
+        #expect(s["viewDirection"] == "params.geometry().view_direction()")
+        #expect(s["screenPosition"] == "params.geometry().screen_position()")
+
+        let g = EmitEnvironment.realityKitGeometry.sys
+        #expect(g["uv"] == "geo.uv0()")
+        #expect(g["time"] == "params.uniforms().time()")
+        #expect(g["vertexID"] == "int(geo.vertex_id())")
+        #expect(g["normal3d"] == "geo.normal()")
+    }
+
+    /// Group functions take `(float2 uv, float time, float2 size, float2 mouse, …)`, and the UV
+    /// node's `aspect` variant reads `{sys.resolution}` — both keys must resolve to something
+    /// even though no node can observe them as data (spec §23.4).
+    @Test func resolutionAndMouseAreNeutralLiterals() {
+        for env in [EmitEnvironment.realityKitSurface, EmitEnvironment.realityKitGeometry] {
+            #expect(env.sys["resolution"] == "float2(1.0, 1.0)")
+            #expect(env.sys["mouse"] == "float2(0.0, 0.0)")
+        }
+    }
+
+    @Test func textureSamplesGoThroughTheCustomSlotAndFlipY() {
+        let slot = TextureSlot(index: 0, asset: nil)
+        let expr = EmitEnvironment.realityKitSurface.textureSample(slot, "uvExpr")
+        #expect(expr.contains("tex0"))
+        #expect(expr.contains("1.0 - "))
+        // `texture2d<half>.sample` yields half4; the graph works in float4.
+        #expect(expr.hasPrefix("float4("))
+    }
+}
