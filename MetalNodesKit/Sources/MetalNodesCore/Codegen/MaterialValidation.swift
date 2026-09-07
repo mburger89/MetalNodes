@@ -36,8 +36,12 @@ public enum MaterialValidation {
     // MARK: Rule 2 — stage legality
 
     /// A node whose `stages` omits the stage that reaches it. Reachability inside a definition is
-    /// coarse on purpose: a definition is attributed to every stage that instantiates it, because
-    /// one function body serves both callers.
+    /// wire-based, the same as the root: once the walk reaches a `.group` instance, it continues
+    /// from that definition's own Group Output (`TopoSort.order`, matching what `GroupCodegen`
+    /// actually emits) rather than over every node the definition's canvas happens to hold — a
+    /// node orphaned in a definition, never wired to its output, is in no emitted program and must
+    /// not be flagged. A definition is still attributed to every stage that instantiates it,
+    /// because one function body serves both callers.
     private static func stageDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry, terminal: NodeID,
                                          reachable: [GroupDefinition]) -> [Diagnostic] {
         var out: [Diagnostic] = []
@@ -57,10 +61,11 @@ public enum MaterialValidation {
                         "\(title(inst, doc, registry)) is not available in the \(stage.title) stage",
                         node: inst.id))
                 case .group(let gid):
-                    guard visitedDefinitions.insert(gid).inserted, let d = doc.definitions[gid] else { continue }
-                    toVisit += d.graph.nodes.values
-                        .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
-                        .map { ($0, d.graph) }
+                    guard visitedDefinitions.insert(gid).inserted, let d = doc.definitions[gid],
+                          let output = d.outputNode else { continue }
+                    toVisit += TopoSort.order(d.graph, from: output).compactMap { id in
+                        d.graph.nodes[id].map { ($0, d.graph) }
+                    }
                 case .groupInput, .groupOutput:
                     continue
                 }
@@ -127,8 +132,13 @@ public enum MaterialValidation {
 
     private static func lightingDiagnostics(_ doc: ShaderDocument, terminal: NodeID) -> [Diagnostic] {
         guard doc.settings.lightingModel == .unlit else { return [] }
-        let wired = BuiltinNodes.materialStages.keys
-            .filter { $0 != "emissive" && doc.root.inputs[SocketRef(terminal, $0)] != nil }
+        // Only a *surface* socket other than Emissive matters here — a geometry socket like
+        // Position Offset moves vertices regardless of the lighting model, so wiring it under
+        // `.unlit` is correct and must not warn.
+        let wired = BuiltinNodes.materialStages
+            .filter { $0.value == .surface && $0.key != "emissive" }
+            .keys
+            .filter { doc.root.inputs[SocketRef(terminal, $0)] != nil }
         guard !wired.isEmpty else { return [] }
         return [Diagnostic(.warning, "Unlit materials render only Emissive", node: terminal)]
     }

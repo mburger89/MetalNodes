@@ -215,6 +215,9 @@ enum MaterialFixture {
         let gout = NodeInstance(id: NodeID(), kind: .groupOutput, position: .zero)
         let vid = NodeInstance(id: NodeID(), kind: .builtin("input.vertexID"), position: .zero)
         for n in [gin, gout, vid] { inner.nodes[n.id] = n }
+        // Wired into the Group Output, not merely present on the canvas — the walk into a
+        // definition is wire-reachable from its own output, same as `GroupCodegen` emits.
+        inner.inputs[SocketRef(gout.id, "out")] = SocketRef(vid.id, "id")
         def.graph = inner
         doc.definitions[def.id] = def
         let instance = NodeInstance(id: NodeID(), kind: .group(def.id), position: .zero)
@@ -225,5 +228,48 @@ enum MaterialFixture {
             doc.root.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(instance.id, out.name)
         }
         #expect(errors(doc).contains { $0.message.contains("Vertex ID") })
+    }
+
+    // Fix round 1 — false positives the review caught.
+
+    /// Finding 1 (Critical): Position Offset is the geometry stage, not the surface stage — vertex
+    /// displacement happens regardless of the lighting model, so an unlit material that only wires
+    /// Position Offset is entirely correct and must not warn. Neither `unlitWarnsWhenA…` test above
+    /// exercises a geometry socket; both only wire `baseColor`/`emissive` (surface sockets).
+    @Test func unlitDoesNotWarnAboutPositionOffset() {
+        let doc = MaterialFixture.document(lighting: .unlit) { g in
+            MaterialFixture.wire("input.worldPosition", into: "positionOffset", &g)
+        }
+        #expect(warnings(doc).isEmpty)
+    }
+
+    /// Finding 2 (Important): a stage-illegal node left orphaned inside a group — on the canvas,
+    /// but never wired to that definition's own Group Output — is in no program `GroupCodegen`
+    /// emits, so it must not be flagged. The same node wired into the output still is.
+    @Test func anOrphanedStageIllegalGroupNodeIsNotFlaggedButAWiredOneIs() throws {
+        func makeDoc(wireVertexID: Bool) -> ShaderDocument {
+            var doc = MaterialFixture.document()
+            var def = GroupDefinition(id: GroupID(), name: "Inner", outputs: [SocketDecl(name: "out", type: .concrete(.float))])
+            var inner = Graph()
+            let gin = NodeInstance(id: NodeID(), kind: .groupInput, position: .zero)
+            let gout = NodeInstance(id: NodeID(), kind: .groupOutput, position: .zero)
+            // Stage-agnostic, so it is always a legal source for the Group Output's wire.
+            let agnostic = NodeInstance(id: NodeID(), kind: .builtin("input.float"), position: .zero)
+            // Geometry-only — illegal from the surface stage the instance below is wired into.
+            let vid = NodeInstance(id: NodeID(), kind: .builtin("input.vertexID"), position: .zero)
+            for n in [gin, gout, agnostic, vid] { inner.nodes[n.id] = n }
+            let source = wireVertexID ? SocketRef(vid.id, "id") : SocketRef(agnostic.id, "out")
+            inner.inputs[SocketRef(gout.id, "out")] = source
+            def.graph = inner
+            doc.definitions[def.id] = def
+            let instance = NodeInstance(id: NodeID(), kind: .group(def.id), position: .zero)
+            doc.root.nodes[instance.id] = instance
+            let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+            doc.root.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(instance.id, "out")
+            return doc
+        }
+
+        #expect(errors(makeDoc(wireVertexID: false)).isEmpty)
+        #expect(errors(makeDoc(wireVertexID: true)).contains { $0.message.contains("Vertex ID") })
     }
 }
