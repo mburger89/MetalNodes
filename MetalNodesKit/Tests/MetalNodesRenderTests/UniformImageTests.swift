@@ -56,6 +56,21 @@ import MetalNodesCore
         #expect(readInt(img, layout.field(for: path("i"))!.offset) == Int32.max)
     }
 
+    /// The int byte `UniformImage` writes and the MSL literal `ParamValues.mslLiteral` spells for
+    /// the same input must be the same number — that agreement is the whole point of Task 4's
+    /// extraction, and `Int32.min`/`.nan`/`.infinity`/a mid-range rounding case are exactly where
+    /// a truncating or non-clamping literal path would previously have disagreed with the byte.
+    @Test func intByteAndIntLiteralAgreeOnEveryEdgeCase() {
+        let layout = UniformLayoutBuilder.build([(path("i"), .int)])
+        for x: Float in [2.7, -2.7, 2.4, .nan, .infinity, -.infinity, 1e20, -1e20, 0] {
+            var img = UniformImage(layout: layout)
+            img.set(.float(x), for: path("i"))
+            let byte = readInt(img, layout.field(for: path("i"))!.offset)
+            let literal = ParamValues.mslLiteral(.float(x), as: .int)
+            #expect("\(byte)" == literal)
+        }
+    }
+
     @Test func unknownPathReturnsFalse() {
         var img = UniformImage(layout: UniformLayoutBuilder.build([]))
         let ok = img.set(.float(1), for: path("nope"))

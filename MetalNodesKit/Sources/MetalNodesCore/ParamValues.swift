@@ -27,7 +27,7 @@ public enum ParamValues {
             return components(value).first.map { $0 != 0 ? "true" : "false" } ?? "false"
         case .int:
             if case .int(let i) = value { return "\(i)" }
-            return "\(Int(components(value).first ?? 0))"
+            return "\(int32(from: components(value).first ?? 0))"
         case .float:
             return f(components(value).first ?? 0)
         case .float2:
@@ -50,6 +50,19 @@ public enum ParamValues {
         return s.contains(".") || s.contains("e") || s.contains("n") ? s : s + ".0"
     }
 
+    /// The one rule for coercing a float into the `Int32` an int slot holds: NaN clamps to 0,
+    /// everything else rounds to nearest and then clamps into the `Int32` range. `UniformImage`'s
+    /// byte writer must use exactly this rule too — a literal and its byte must never disagree on
+    /// what an int slot is worth. Rounding and clamping happen in `Double`, which represents every
+    /// `Int32` exactly (unlike `Float`, where `Float(Int32.max)` itself rounds to 2^31 and would
+    /// still trap on conversion back to `Int32`), so `Int32(clamped)` below can never trap.
+    public static func int32(from x: Float) -> Int32 {
+        let d = Double(x)
+        let r = d.isNaN ? 0 : d.rounded()
+        let clamped = min(max(r, Double(Int32.min)), Double(Int32.max))
+        return Int32(clamped)
+    }
+
     private static func components(_ v: ParamValue) -> [Float] {
         switch v {
         case .float(let x): [x]
@@ -63,7 +76,15 @@ public enum ParamValues {
     }
 
     /// One component splats; a short list fills with 0 (or 1 in alpha); a long one truncates.
+    ///
+    /// An *empty* list (an `.enumCase`/`.asset` value under a vector slot — hand-edited or
+    /// migrated) is the one case a literal cannot handle the way `UniformImage.write` does: the
+    /// byte writer just no-ops and leaves the field at its zero-initialized bytes, but a literal
+    /// has no "leave it alone" — it must spell *something*. We match the byte writer's result
+    /// exactly (all-zero) rather than invent a different answer such as alpha-1: same input, same
+    /// value, deliberately, not by accident.
     private static func fit(_ c: [Float], _ n: Int, fillAlpha: Bool) -> [Float] {
+        if c.isEmpty { return Array(repeating: 0, count: n) }
         if c.count == 1 { return Array(repeating: c[0], count: n) }
         if c.count >= n { return Array(c.prefix(n)) }
         var out = c

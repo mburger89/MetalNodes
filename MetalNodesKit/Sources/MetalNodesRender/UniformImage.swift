@@ -63,13 +63,9 @@ public struct UniformImage: Sendable, Equatable {
         guard !src.isEmpty else { return }
         switch f.type {
         case .int:
-            // Round and clamp in Double: Float(Int32.max) rounds to 2^31 (not exactly
-            // representable in Float), which would still trap on conversion back to
-            // Int32. Double represents every Int32 exactly, so the clamp is safe there.
-            let d = Double(src[0])
-            let r = d.isNaN ? 0 : d.rounded()
-            let clamped = min(max(r, Double(Int32.min)), Double(Int32.max))
-            put(Int32(clamped), at: f.offset)
+            // Shared with the MSL literal path (`ParamValues.int32(from:)`, spec §9.2/§23.6) so a
+            // literal and the byte it exports agree on every input.
+            put(ParamValues.int32(from: src[0]), at: f.offset)
         case .bool:
             put(Int32(src[0] != 0 ? 1 : 0), at: f.offset)
         case .float:
