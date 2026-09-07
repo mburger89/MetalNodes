@@ -235,6 +235,38 @@ struct MaterialExportSourceTests {
         #expect(src.contains("constexpr sampler"))
     }
 
+    /// A texture reaching only Base Color must not cost the geometry function an unused local:
+    /// `xcrun metal -c` warns on `texture2d<half> tex0 = …` that nothing in that function reads.
+    @Test func aTextureReachingOnlyTheSurfaceStageDeclaresItsLocalOnlyThere() throws {
+        var doc = document()
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        let sample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        doc.root.nodes[sample.id] = sample
+        doc.root.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(sample.id, "color")
+        // positionOffset stays wired to `document()`'s float3 node — a real geometry function,
+        // but one with nothing texture-driven inside it.
+        let src = try source(doc)
+        let geometryStart = try #require(src.range(of: "void testMaterial_geometry")).lowerBound
+        #expect(src[..<geometryStart].contains("texture2d<half> tex0"))
+        #expect(!src[geometryStart...].contains("texture2d<half> tex0"))
+    }
+
+    /// The inverse: a texture reaching only Position Offset must not cost the surface function an
+    /// unused local either.
+    @Test func aTextureReachingOnlyTheGeometryStageDeclaresItsLocalOnlyThere() throws {
+        var doc = document()
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        let sample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        doc.root.nodes[sample.id] = sample
+        // `color` (float4) narrows to the float3 Position Offset wants; `baseColor` stays wired
+        // to `document()`'s plain color node, which samples nothing.
+        doc.root.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(sample.id, "color")
+        let src = try source(doc)
+        let geometryStart = try #require(src.range(of: "void testMaterial_geometry")).lowerBound
+        #expect(!src[..<geometryStart].contains("texture2d<half> tex0"))
+        #expect(src[geometryStart...].contains("texture2d<half> tex0"))
+    }
+
     /// The generated source must be stable: same document, same bytes, every time.
     @Test func generationIsDeterministic() throws {
         let doc = document()

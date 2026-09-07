@@ -120,7 +120,13 @@ extension MaterialCodegen {
         // `mn_sampler` is a program-scope `constexpr sampler` supplied by the stdlib (the Texture
         // Sample node `requires` it), already emitted above — declaring another here would be a
         // redefinition.
-        for slot in textures { b.add("    texture2d<half> \(slot.fragmentName) = params.textures().custom();") }
+        //
+        // A slot's local is declared only in the stage that actually samples it: a texture feeding
+        // Base Color but not Position Offset has nothing for the geometry function to read, and an
+        // unused `texture2d<half>` local is a warning in every user's Xcode build (spec §23.6).
+        for slot in textures where stageReferences(surface, slot: slot) {
+            b.add("    texture2d<half> \(slot.fragmentName) = params.textures().custom();")
+        }
         b.add("    auto surface = params.surface();")
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
             b.add("    " + line, owner: surface.lineOwners[i])
@@ -137,7 +143,9 @@ extension MaterialCodegen {
             b.add("")
             b.add("[[visible]]")
             b.add("void \(names.geometry)(realitykit::geometry_parameters params) {")
-            for slot in textures { b.add("    texture2d<half> \(slot.fragmentName) = params.textures().custom();") }
+            for slot in textures where stageReferences(geometry, slot: slot) {
+                b.add("    texture2d<half> \(slot.fragmentName) = params.textures().custom();")
+            }
             b.add("    auto geo = params.geometry();")
             for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
                 b.add("    " + line, owner: geometry.lineOwners[i])
@@ -156,5 +164,13 @@ extension MaterialCodegen {
     /// that adds a constant zero would cost the caller a `boundsMargin` conversation for nothing.
     static func hasGeometryWork(_ geometry: Emitter.Output, terminal: NodeID) -> Bool {
         geometry.lineOwners.contains { $0 != nil && $0 != terminal }
+    }
+
+    /// True when some statement this stage actually emits names `slot` (`tex0`, `tex1`, …) — the
+    /// only place a Texture Sample body can spell it. `\b` keeps `tex1` from matching inside
+    /// `tex10`; without it a stage with ten-plus textures could declare an extra unused local.
+    static func stageReferences(_ output: Emitter.Output, slot: TextureSlot) -> Bool {
+        let pattern = "\\b\(slot.fragmentName)\\b"
+        return output.bodyLines.contains { $0.range(of: pattern, options: .regularExpression) != nil }
     }
 }
