@@ -17,6 +17,10 @@ import Testing
             "color.ramp", "color.hsv2rgb", "color.rgb2hsv", "color.invert", "color.mixcolor",
             "utility.reroute", "utility.compare", "utility.switch",
             "texture.sample", "texture.gradient", "texture.checker",
+            "output.material",
+            "input.worldPosition", "input.modelPosition", "input.normal3d", "input.tangent",
+            "input.bitangent", "input.viewDirection", "input.uv1", "input.vertexColor",
+            "input.vertexID", "input.screenPosition",
         ]
         #expect(ids == expected)
     }

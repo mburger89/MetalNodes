@@ -13,7 +13,13 @@ public struct EmitEnvironment: Sendable {
     /// True in the two environments that sample a SwiftUI `Layer` instead of a bound texture.
     public var usesLayer: Bool
 
-    public static let sysNames: Set<String> = ["uv", "time", "resolution", "mouse"]
+    /// Registry-validation vocabulary only — not every environment's `sys` dictionary supplies every
+    /// name (the RealityKit builtins are wired by Task 5). Keeps typos in a node body's `{sys.…}`
+    /// placeholder from silently producing a comment marker instead of a diagnostic.
+    public static let sysNames: Set<String> = ["uv", "time", "resolution", "mouse", "worldPosition",
+                                                "modelPosition", "normal3d", "tangent", "bitangent",
+                                                "viewDirection", "uv1", "vertexColor", "vertexID",
+                                                "screenPosition"]
 
     /// A slot sampled by name, y-flipped: the shape every target but the Layer Effect export uses.
     public static func flippedSample(_ name: String, _ uv: String) -> String {

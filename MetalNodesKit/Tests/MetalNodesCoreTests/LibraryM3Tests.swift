@@ -6,8 +6,11 @@ import Foundation
     let reg = NodeRegistry.builtin
 
     /// Every node as a one-node graph (first output → Fragment Output) generates without diagnostics.
+    /// The RealityKit-only material nodes are exempt: their `{sys.…}` builtins only resolve under
+    /// `.realityKit`, which this smoke test — like the rest of the `.fragment` pipeline — does not target.
     @Test func everyNodeGeneratesAsAOneNodeGraph() throws {
-        for def in reg.all where def.id != "output.fragment" {
+        let material3DIDs = Set(BuiltinNodes.material3D.map(\.id))
+        for def in reg.all where def.id != "output.fragment" && !material3DIDs.contains(def.id) {
             var doc = ShaderDocument()
             let n = NodeInstance(kind: .builtin(def.id)), out = NodeInstance(kind: .builtin("output.fragment"))
             doc.root.nodes[n.id] = n; doc.root.nodes[out.id] = out
@@ -76,7 +79,7 @@ import Foundation
     }
 
     @Test func registryHasTheFullV1Set() {
-        #expect(reg.all.count == 43)
+        #expect(reg.all.count == 54)
         // .group has no builtin defs — it's only ever a group instance's category, never a NodeDef's.
         for c in NodeCategory.allCases where c != .group { #expect(reg.all.contains { $0.category == c }, "\(c)") }
     }

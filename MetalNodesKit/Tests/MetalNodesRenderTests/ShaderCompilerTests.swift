@@ -25,7 +25,11 @@ import MetalNodesCore
 
     @Test func everyBuiltinNodeCompilesAsAOneNodeGraph() async throws {
         let c = try compiler()
-        for def in NodeRegistry.builtin.all where def.id != "output.fragment" {
+        // The RealityKit-only material nodes are exempt: their `{sys.…}` builtins only resolve
+        // under `.realityKit`, which this test — like the rest of the `.fragment` pipeline — does
+        // not target.
+        let material3DIDs = Set(BuiltinNodes.material3D.map(\.id))
+        for def in NodeRegistry.builtin.all where def.id != "output.fragment" && !material3DIDs.contains(def.id) {
             var doc = ShaderDocument()
             let n = NodeInstance(kind: .builtin(def.id))
             let out = NodeInstance(kind: .builtin("output.fragment"))
