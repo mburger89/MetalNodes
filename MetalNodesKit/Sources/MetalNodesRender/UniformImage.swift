@@ -33,21 +33,13 @@ public struct UniformImage: Sendable, Equatable {
     }
 
     /// Fresh image from the document: every field takes the instance's stored
-    /// value, else the definition's default. Called on every pipeline publish.
+    /// value, else the definition's default (`ParamValues`, spec §9.2).
     public static func rebuild(layout: UniformLayout, document: ShaderDocument, registry: NodeRegistry) -> UniformImage {
         var img = UniformImage(layout: layout)
         for f in layout.fields {
-            // A slot's node lives in the root or inside any definition (spec §20.4).
-            guard let path = f.path, let nodeID = path.instancePath.first,
-                  let (inst, gpath) = document.node(nodeID),
-                  let shape = document.shape(of: inst, in: gpath, registry: registry) else { continue }
-            if let v = inst.params[path.param] {
-                img.write(v, into: f)
-            } else if let decl = shape.input(named: path.param), case .value(let v) = decl.default {
-                img.write(v, into: f)
-            } else if let p = shape.param(named: path.param) {
-                img.write(p.defaultValue, into: f)
-            }
+            guard let path = f.path,
+                  let v = ParamValues.value(for: path, in: document, registry: registry) else { continue }
+            img.write(v, into: f)
         }
         return img
     }
