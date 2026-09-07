@@ -11,6 +11,8 @@ public struct EditorView: View {
     /// A chooser is on screen; a second request must not stack another one behind it.
     @State private var exporting = false
     @State private var lastOrbitTranslation: CGSize = .zero
+    /// The previous `MagnifyGesture` factor, so a pinch dollies by its step rather than its total.
+    @State private var lastMagnification: CGFloat?
 
     public init(model: EditorModel, device: MTLDevice, services: EditorServices = .platform) {
         self.model = model
@@ -98,21 +100,40 @@ public struct EditorView: View {
                 .aspectRatio(1, contentMode: .fit)
                 .overlay {
                     GeometryReader { geo in
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                guard model.document.settings.target != .realityKit else { return }
-                                if case .active(let p) = phase { setMouse(p, in: geo.size) }
-                            }
-                            .gesture(DragGesture(minimumDistance: 0)
-                                .onChanged { g in
-                                    if model.document.settings.target == .realityKit {
-                                        orbit(g)
-                                    } else {
-                                        setMouse(g.location, in: geo.size)
-                                    }
+                        ZStack {
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    guard model.document.settings.target != .realityKit else { return }
+                                    if case .active(let p) = phase { setMouse(p, in: geo.size) }
                                 }
-                                .onEnded { _ in lastOrbitTranslation = .zero })
+                                .gesture(DragGesture(minimumDistance: 0)
+                                    .onChanged { g in
+                                        if model.document.settings.target == .realityKit {
+                                            orbit(g)
+                                        } else {
+                                            setMouse(g.location, in: geo.size)
+                                        }
+                                    }
+                                    .onEnded { _ in lastOrbitTranslation = .zero })
+                                // Pinch dollies the camera (spec §23.5), gated on the target the way
+                                // the orbit drag is, and simultaneous so the drag still gets its
+                                // events — the shape the canvas's own zoom uses.
+                                .simultaneousGesture(dollyGesture)
+                            #if os(macOS)
+                            // The scroll wheel's half. `ScrollWheelCatcher` hit-tests to `nil`, so
+                            // it takes no clicks from the drag gesture underneath it; it is the same
+                            // catcher the canvas pans and zooms with (spec §18.6).
+                            if model.document.settings.target == .realityKit {
+                                ScrollWheelCatcher { delta, _, _, precise in
+                                    // A wheel notch reports a handful of points and a trackpad
+                                    // hundreds of fine ones — the 10× split the canvas's zoom makes.
+                                    model.dollyPreview(by: Float(delta.height) * (precise ? 1 : 10))
+                                }
+                                .frame(width: geo.size.width, height: geo.size.height)
+                            }
+                            #endif
+                        }
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -166,6 +187,20 @@ public struct EditorView: View {
         var camera = model.viewState.orbit
         camera.orbit(dx: dx, dy: dy)
         model.setOrbit(camera)
+    }
+
+    /// Pinch-to-dolly (spec §23.5). `MagnifyGesture` reports a *cumulative* factor, so the step is
+    /// the ratio against the last event — the same "delta since last" shape `orbit(_:)` uses for the
+    /// drag's cumulative translation. Gated on the target inside `model.magnifyPreview`.
+    private var dollyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { g in
+                let previous = lastMagnification ?? 1
+                lastMagnification = g.magnification
+                guard previous > 0 else { return }
+                model.magnifyPreview(by: Float(g.magnification / previous))
+            }
+            .onEnded { _ in lastMagnification = nil }
     }
 
     private func rangeBinding(lower: Bool) -> Binding<Float> {

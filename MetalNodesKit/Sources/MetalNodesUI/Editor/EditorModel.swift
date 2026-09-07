@@ -145,6 +145,28 @@ public final class EditorModel {
         preview.orbit = orbit
     }
 
+    /// Scroll or pinch dollies the 3D preview's camera (spec §23.5). Gated on the target the way
+    /// the orbit drag is — under the 2D targets a scroll over the preview means nothing — and
+    /// routed through `setOrbit`, so it is view state like the orbit: persisted, never undone.
+    ///
+    /// A positive `delta` pulls the camera in, matching the canvas, where a positive scroll delta
+    /// zooms in. `OrbitCamera.dolly` owns the scale and the bounds.
+    public func dollyPreview(by delta: Float) {
+        guard document.settings.target == .realityKit, delta.isFinite else { return }
+        var camera = viewState.orbit
+        camera.dolly(delta)
+        setOrbit(camera)
+    }
+
+    /// The pinch form. A magnification gesture reports a cumulative *factor*, so callers pass the
+    /// step since the last event — `> 1` pulls in — and this converts it to the linear delta
+    /// `dolly` takes, exactly: the distance ends up divided by `ratio`, still clamped by `dolly`.
+    public func magnifyPreview(by ratio: Float) {
+        guard ratio > 0, ratio.isFinite else { return }
+        let d = viewState.orbit.distance
+        dollyPreview(by: (d - d / ratio) / OrbitCamera.dollyScale)
+    }
+
     /// Replaces everything the package owns because the file changed underneath the editor —
     /// File ▸ Revert To Saved, or any other reseed by the document host (spec §21.1).
     ///

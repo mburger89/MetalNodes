@@ -35,8 +35,13 @@ public struct OrbitCamera: Codable, Sendable, Hashable {
         elevation = min(max(elevation + dy * 0.01, -.pi / 2 + 0.01), .pi / 2 - 0.01)
     }
 
+    /// Points of scroll per unit of distance, inverted. Public so a caller converting some other
+    /// gesture into a `dolly` delta — a pinch reports a factor, not points — can invert it exactly
+    /// instead of restating the number.
+    public static let dollyScale: Float = 0.01
+
     /// Scroll or pinch. Bounded so the model can neither be lost nor turned inside out.
     public mutating func dolly(_ delta: Float) {
-        distance = min(max(distance - delta * 0.01, 0.5), 20)
+        distance = min(max(distance - delta * OrbitCamera.dollyScale, 0.5), 20)
     }
 }
