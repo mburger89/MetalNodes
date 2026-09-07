@@ -30,8 +30,10 @@ struct ParamControl: View {
             .font(.caption)
         case .asset:
             imageWell
-        case .text(let multiline):
-            textControl(multiline)
+        case .text:
+            // Task 15 (spec §24.2) builds the real formula field. This arm exists so the switch
+            // stays exhaustive; no `.text` param is placed on a node until then.
+            EmptyView()
         }
     }
 
@@ -77,27 +79,6 @@ struct ParamControl: View {
             Image(decorative: image, scale: 1).resizable().scaledToFill()
         } else {
             Image(systemName: "photo").foregroundStyle(DraculaToken.muted.color)
-        }
-    }
-
-    @ViewBuilder
-    private func textControl(_ multiline: Bool) -> some View {
-        let text: String = { if case .text(let t) = value { return t } else { return "" } }()
-        if multiline {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(label).font(.caption)
-                TextEditor(text: Binding(get: { text }, set: { onChange(.text($0)) }))
-                    .font(.caption)
-                    .frame(height: 100)
-                    .border(DraculaToken.muted.color, width: 1)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(label).font(.caption)
-                TextField("", text: Binding(get: { text }, set: { onChange(.text($0)) }))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-            }
         }
     }
 
