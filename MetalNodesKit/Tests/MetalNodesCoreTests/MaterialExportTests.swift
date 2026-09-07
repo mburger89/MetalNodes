@@ -143,3 +143,90 @@ import Testing
         #expect(metal.terminationStatus == 0, "\(log)")
     }
 }
+
+/// The RealityKit snippet has strictly more API surface than the stitchable one — `MTLDevice`,
+/// `CustomMaterial`, its shader-function objects, and (in the texture branch) `TextureResource` —
+/// so it gets the same `swiftc`-against-the-SDK gate as `ShaderExportTests
+/// .generatedSwiftTypechecksWhenSwiftcIsAvailable`, stricter in one respect: that test only checks
+/// `terminationStatus == 0`, which would not catch a *warning* (a `var` the snippet never mutates
+/// typechecks fine — it only warns). This one also fails on any `warning:` line on stderr.
+@Suite struct MaterialExportSwiftTypecheckTests {
+    private func doc(exportName: String, offset: Bool, texture: Bool) -> ShaderDocument {
+        var d = ShaderDocument()
+        d.settings.target = .realityKit
+        d.settings.exportName = exportName
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        g.nodes[terminal.id] = terminal
+        if offset {
+            let v = NodeInstance(id: NodeID(), kind: .builtin("input.float3"), position: .zero)
+            g.nodes[v.id] = v
+            g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(v.id, "out")
+        }
+        if texture {
+            let s = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+            g.nodes[s.id] = s
+            g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(s.id, "color")
+        }
+        d.root = g
+        return d
+    }
+
+    /// Covers all four code paths the geometry/texture flags select, since each takes a different
+    /// route through `swiftSnippet`.
+    @Test func theGeneratedSwiftTypechecksWithNoWarningsForEveryStagePathWhenSwiftcIsAvailable() throws {
+        guard xcrunSucceeds(["swiftc", "--version"]) else { return }
+        let sdk = capture(["--show-sdk-path", "--sdk", "macosx"])?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let sdk, !sdk.isEmpty else { return }
+
+        let variants: [(name: String, offset: Bool, texture: Bool)] = [
+            ("noGeometryNoTexture", false, false),
+            ("geometryOnly", true, false),
+            ("textureOnly", false, true),
+            ("geometryAndTexture", true, true),
+        ]
+        for v in variants {
+            let d = doc(exportName: v.name, offset: v.offset, texture: v.texture)
+            let shader = try ShaderGenerator.generate(d, target: d.settings.target)
+            let snippet = MaterialExport.swiftSnippet(for: shader, document: d, registry: .builtin)
+
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-materialswift-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let url = dir.appendingPathComponent("\(v.name).swift")
+            try snippet.write(to: url, atomically: true, encoding: .utf8)
+
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            p.arguments = ["swiftc", "-typecheck", "-strict-concurrency=complete",
+                           "-sdk", sdk, "-target", "arm64-apple-macos26.0", url.path]
+            let err = Pipe(); p.standardError = err; p.standardOutput = FileHandle.nullDevice
+            try p.run()
+            let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            p.waitUntilExit()
+            #expect(p.terminationStatus == 0, "\(v.name): \(log)")
+            #expect(!log.contains("warning:"), "\(v.name) produced a warning:\n\(log)")
+        }
+    }
+
+    private func xcrunSucceeds(_ args: [String]) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = args
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    private func capture(_ args: [String]) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        p.arguments = args
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
