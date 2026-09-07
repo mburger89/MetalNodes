@@ -109,9 +109,15 @@ enum Emitter {
             switch inst.kind {
             case .builtin(let defID):
                 guard let def = registry[defID] else { continue }
+                // The Expression node's registry def carries no sockets and an empty body — its
+                // real shape is per-instance (spec §24.2) — so `referencedNames` would see nothing
+                // to request. Every socket its own shape declares is, by construction, named in
+                // its formula, so all of them are requested unconditionally.
+                let isExpression = defID == ExpressionNode.id
+                let declInputs = isExpression ? (shape(inst)?.inputs ?? []) : def.inputs
                 let refs = referencedNames(in: def.body, chosen: chosenVariant(def, inst))
                 let custom: Bool = { if case .custom = def.body { return true } else { return false } }()
-                requestUnwiredInputs(id, def.inputs.filter { custom || refs.inputs.contains($0.name) }, r)
+                requestUnwiredInputs(id, declInputs.filter { isExpression || custom || refs.inputs.contains($0.name) }, r)
                 for p in def.params where (custom || refs.params.contains(p.name)) {
                     if case .value(let t, _) = p.kind { request(ParamPath(node: id, param: p.name), t) }
                 }
@@ -176,8 +182,14 @@ enum Emitter {
             case .builtin(let defID):
                 guard let def = registry[defID] else { continue }
                 out.requiredStdlib += def.requires
-                let outputs = declareOutputs(id, def.outputs, r)
-                let inputs = inputExpressions(id, def.inputs, r)
+                // Same reasoning as pass 1: an Expression's declared sockets live on its instance
+                // shape, not the registry def, so `declareOutputs`/`inputExpressions` must read
+                // from there or the emitted `{out.out}`/`{in.x}` placeholders resolve to nothing.
+                let isExpression = defID == ExpressionNode.id
+                let declOutputs = isExpression ? (shape(inst)?.outputs ?? []) : def.outputs
+                let declInputs = isExpression ? (shape(inst)?.inputs ?? []) : def.inputs
+                let outputs = declareOutputs(id, declOutputs, r)
+                let inputs = inputExpressions(id, declInputs, r)
                 out.inputExpressions[id] = inputs
                 var params: [String: String] = [:], enums: [String: String] = [:]
                 for p in def.params {
@@ -195,15 +207,22 @@ enum Emitter {
                                       types: r.generics, sys: env.sys, texture: texture)
 
                 let lines: [String]
-                switch def.body {
-                case .template(let t): lines = substitute(t, ctx)
-                case .variants(let param, let table):
-                    // The instance-provided case may be stale/invalid (hand-edited or renamed
-                    // since save); never force-unwrap it. Fall back to the def's default case.
-                    let defaultCase: String? = { if case .enumCase(let c) = def.param(named: param)!.defaultValue { return c } else { return nil } }()
-                    let chosen = enums[param].flatMap { table[$0] != nil ? $0 : nil } ?? defaultCase
-                    lines = substitute(chosen.flatMap { table[$0] } ?? "", ctx)
-                case .custom(let f): lines = f(ctx)
+                if isExpression {
+                    // The template is the instance's formula with each identifier rewritten to the
+                    // placeholder the substituter already understands, so one substitution path
+                    // serves both library bodies and user formulas (spec §24.2).
+                    lines = substitute(ExpressionNode.template(for: inst), ctx)
+                } else {
+                    switch def.body {
+                    case .template(let t): lines = substitute(t, ctx)
+                    case .variants(let param, let table):
+                        // The instance-provided case may be stale/invalid (hand-edited or renamed
+                        // since save); never force-unwrap it. Fall back to the def's default case.
+                        let defaultCase: String? = { if case .enumCase(let c) = def.param(named: param)!.defaultValue { return c } else { return nil } }()
+                        let chosen = enums[param].flatMap { table[$0] != nil ? $0 : nil } ?? defaultCase
+                        lines = substitute(chosen.flatMap { table[$0] } ?? "", ctx)
+                    case .custom(let f): lines = f(ctx)
+                    }
                 }
                 for l in lines { out.bodyLines.append(l); out.lineOwners.append(id) }
 

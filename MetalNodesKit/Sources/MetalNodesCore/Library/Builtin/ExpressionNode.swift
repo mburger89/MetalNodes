@@ -41,6 +41,23 @@ public enum ExpressionNode {
         return out
     }
 
+    /// The instance's formula as an emitter template: `a * 2.0` becomes `{out.out} = {in.a} * 2.0;`.
+    /// Identifiers are replaced by whole-token match, so `a` inside `saturate` is untouched. The
+    /// pattern is built from an escaped literal, so a name that happens to contain regex
+    /// metacharacters (it never does — `identifiers(in:)` only yields MSL identifier tokens — but
+    /// nothing here should ever `try!`-trap if that changed) cannot make the `Regex` malformed.
+    static func template(for node: NodeInstance) -> String {
+        let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
+        guard !formula.isEmpty else { return "{out.out} = 0.0;" }
+        var out = formula
+        for name in MSLScanner.identifiers(in: formula) {
+            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: name))\\b"
+            guard let re = try? Regex(pattern) else { continue }
+            out = out.replacing(re, with: "{in.\(name)}")
+        }
+        return "{out.out} = \(out);"
+    }
+
     /// The shape of one instance: sockets from its formula, output from its type param.
     public static func shape(for node: NodeInstance) -> NodeShape {
         let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
