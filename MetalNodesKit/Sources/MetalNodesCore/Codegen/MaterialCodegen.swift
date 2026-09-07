@@ -125,7 +125,7 @@ extension MaterialCodegen {
         // Base Color but not Position Offset has nothing for the geometry function to read, and an
         // unused `texture2d<half>` local is a warning in every user's Xcode build (spec §23.6).
         for slot in textures where stageReferences(surface, slot: slot) {
-            b.add("    texture2d<half> \(slot.fragmentName) = params.textures().custom();")
+            b.add("    texture2d<half> \(slot.fragmentName) = \(EmitEnvironment.materialTextureAccessor);")
         }
         b.add("    auto surface = params.surface();")
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
@@ -144,7 +144,7 @@ extension MaterialCodegen {
             b.add("[[visible]]")
             b.add("void \(names.geometry)(realitykit::geometry_parameters params) {")
             for slot in textures where stageReferences(geometry, slot: slot) {
-                b.add("    texture2d<half> \(slot.fragmentName) = params.textures().custom();")
+                b.add("    texture2d<half> \(slot.fragmentName) = \(EmitEnvironment.materialTextureAccessor);")
             }
             b.add("    auto geo = params.geometry();")
             for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {

@@ -150,11 +150,11 @@ public struct EmitEnvironment: Sendable {
     /// (spec §23.6). It yields `half4`; the graph works in `float4`. The y flip matches the
     /// bottom-left UV convention the rest of the app uses and Apple's own USD examples.
     ///
-    /// `MaterialCodegen` hoists this same literal into a per-slot local, e.g.
-    /// `texture2d<half> tex0 = params.textures().custom();`, rather than reading it through
-    /// `EmitEnvironment` — that duplication predates this task and is left alone here — but the
-    /// literal itself is named once, here, so `knownAccessors` below can never drift from what the
-    /// generator actually emits.
+    /// `MaterialCodegen` hoists this into a per-slot local (`texture2d<half> tex0 = …;`) by
+    /// reading this constant rather than spelling the string itself
+    /// (`MaterialCodegen.swift:128,147`), so the generator and `knownAccessors` below can never
+    /// drift apart — spec §24.5's whole reason for existing: two places answering the same
+    /// question must be one place, not two that happen to agree.
     static let materialTextureAccessor = "params.textures().custom()"
 
     static func materialSample(_ slot: TextureSlot, _ uv: String) -> String {
