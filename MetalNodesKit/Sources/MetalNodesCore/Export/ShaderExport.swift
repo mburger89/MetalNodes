@@ -11,6 +11,14 @@ public enum ShaderExport {
     public static func files(for doc: ShaderDocument, registry: NodeRegistry = .builtin) throws(GenerationError) -> [ExportFile] {
         let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
         let shader = try ShaderGenerator.generate(doc, target: doc.settings.target, viewer: nil, registry: registry)
+        if doc.settings.target == .realityKit, let export = shader.exportSource {
+            let header = MaterialExport.header(for: shader, document: doc, registry: registry)
+            return [ExportFile(name: "\(name).metal", contents: header + export),
+                    ExportFile(name: "\(name).swift",
+                               contents: MaterialExport.swiftSnippet(for: shader, document: doc, registry: registry))]
+        }
+        // From here down the function is exactly what it was: the fragment fallback, then the
+        // stitchable pair.
         guard let kind = doc.settings.target.stitchableKind, let export = shader.exportSource else {
             let header = fragmentHeader(for: shader, document: doc, registry: registry)
             return [ExportFile(name: "\(name).metal", contents: header + shader.source)]
