@@ -8,8 +8,10 @@ public struct CompiledPipeline: @unchecked Sendable {
     public let state: MTLRenderPipelineState
     public let shader: GeneratedShader
     public let generation: UInt64
-    /// Depth testing for a 3D program (spec §23.5); `nil` for the fullscreen path, which has no
-    /// depth attachment and must not set one.
+    /// Depth testing for a 3D program (spec §23.5); `nil` for the fullscreen path. Every pipeline
+    /// *declares* the depth attachment (`pipelineDescriptor`), because the view always presents
+    /// one — but a 2D program leaves the state unset, so Metal's default never tests and never
+    /// writes.
     public let depthStencilState: MTLDepthStencilState?
 
     public init(state: MTLRenderPipelineState, shader: GeneratedShader, generation: UInt64,
@@ -48,10 +50,41 @@ public enum ShaderCompilerError: Error { case vertexFunctionMissing, fragmentFun
 /// generations are per-`EditorModel` counters and are only echoed back here. Each client drops its
 /// own stale results (`EditorModel.compileNow` compares the echoed generation against its own).
 public actor ShaderCompiler {
-    private struct CacheKey: Hashable { let source: String; let fastMath: Bool; let depth: Bool }
+    private struct CacheKey: Hashable { let source: String; let fastMath: Bool }
 
     /// The 3D preview's depth attachment (spec §23.5). `MTKView.depthStencilPixelFormat` must match.
     public static let depthPixelFormat: MTLPixelFormat = .depth32Float
+
+    /// The pipeline shape **every** preview program is built with, 2D and 3D alike.
+    ///
+    /// `PreviewView` gives its `MTKView` a `depthStencilPixelFormat` unconditionally, so the render
+    /// pass it hands the renderer always carries a depth attachment. One `MTKView` outlives any
+    /// number of programs and the document's target changes under it — and a *dived* viewer under
+    /// `.realityKit` generates a program whose `target` is `.fragment` (`ShaderGenerator`), so a 2D
+    /// pipeline can be the one drawing while a material document is open. Declaring the attachment
+    /// only on the 3D pipelines therefore means Metal's validation layer — on by default for
+    /// Xcode's Debug Run action — aborting on `setRenderPipelineState` with "the render pipeline's
+    /// pixelFormat (MTLPixelFormatInvalid) does not match the framebuffer's pixelFormat".
+    ///
+    /// Making the *pass shape* the invariant and the pipeline unconditional is the cheaper half of
+    /// that contract: the format costs a 2D program nothing at draw time, because
+    /// `CompiledPipeline.depthStencilState` stays `nil` for them and Metal's default depth state
+    /// never tests and never writes. The alternative — re-deriving the view's format from the live
+    /// document — would have to stay in step with an asynchronous compile, and would still be wrong
+    /// for the frame in between.
+    ///
+    /// It still takes the shader although the result no longer varies with it: that invariance is
+    /// the contract, and a test asserts it holds for a 2D program as well as a 3D one.
+    static func pipelineDescriptor(for shader: GeneratedShader, vertex: MTLFunction?,
+                                   fragment: MTLFunction?,
+                                   pixelFormat: MTLPixelFormat) -> MTLRenderPipelineDescriptor {
+        let desc = MTLRenderPipelineDescriptor()
+        desc.vertexFunction = vertex
+        desc.fragmentFunction = fragment
+        desc.colorAttachments[0].pixelFormat = pixelFormat
+        desc.depthAttachmentPixelFormat = depthPixelFormat
+        return desc
+    }
 
     private let device: MTLDevice
     private let vertexFunction: MTLFunction
@@ -80,11 +113,11 @@ public actor ShaderCompiler {
     public var cacheCount: Int { cache.count }
 
     public func isCached(_ shader: GeneratedShader, fastMath: Bool = true) -> Bool {
-        cache[CacheKey(source: shader.source, fastMath: fastMath, depth: shader.target == .realityKit)] != nil
+        cache[CacheKey(source: shader.source, fastMath: fastMath)] != nil
     }
 
     public func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool = true) async -> CompileResult {
-        let key = CacheKey(source: shader.source, fastMath: fastMath, depth: shader.target == .realityKit)
+        let key = CacheKey(source: shader.source, fastMath: fastMath)
 
         if let hit = cache[key] {
             touch(key)
@@ -110,12 +143,8 @@ public actor ShaderCompiler {
             } else {
                 throw ShaderCompilerError.vertexFunctionMissing
             }
-            let desc = MTLRenderPipelineDescriptor()
-            desc.vertexFunction = vertex
-            desc.fragmentFunction = frag
-            desc.colorAttachments[0].pixelFormat = pixelFormat
-            let needsDepth = shader.target == .realityKit
-            if needsDepth { desc.depthAttachmentPixelFormat = ShaderCompiler.depthPixelFormat }
+            let desc = ShaderCompiler.pipelineDescriptor(for: shader, vertex: vertex, fragment: frag,
+                                                         pixelFormat: pixelFormat)
             let state = try await device.makeRenderPipelineState(descriptor: desc)
             insert(key, state)
             return finish(state, shader, generation)

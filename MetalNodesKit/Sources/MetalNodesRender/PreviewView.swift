@@ -16,6 +16,12 @@ public struct PreviewView {
         let v = MTKView(frame: .zero, device: device)
         v.colorPixelFormat = .bgra8Unorm
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        // Unconditional, and `ShaderCompiler.pipelineDescriptor` declares the matching attachment on
+        // every pipeline it builds: one view outlives many programs, the document's target changes
+        // under it, and a dived viewer under `.realityKit` even produces a `.fragment` program, so
+        // the pass shape is an invariant of the view rather than something to keep in step with the
+        // current program. 2D programs still get no `MTLDepthStencilState`, so nothing is tested or
+        // written.
         v.depthStencilPixelFormat = ShaderCompiler.depthPixelFormat
         v.clearDepth = 1.0
         v.preferredFramesPerSecond = 60

@@ -186,9 +186,9 @@ import Metal
     }
 
     /// The mirror of `pipeline.depthStencilState != nil` above: the *fullscreen* path must not
-    /// grow one just because `.realityKit` did. Nothing else guards this — the depth attachment
-    /// is easy to attach unconditionally by accident, and a 2D pipeline built with one is a
-    /// contract break `MTKView.depthStencilPixelFormat` won't catch until draw time.
+    /// grow one just because `.realityKit` did. Every pipeline declares the same depth
+    /// *attachment* — the view always presents one, see `PreviewDrawTests` — but only a 3D program
+    /// gets an `MTLDepthStencilState`, so a 2D draw neither tests nor writes depth.
     @Test func aTwoDimensionalProgramGetsNoDepthState() async throws {
         guard let device = MTLCreateSystemDefaultDevice() else { return }
         let compiler = try ShaderCompiler(device: device)
