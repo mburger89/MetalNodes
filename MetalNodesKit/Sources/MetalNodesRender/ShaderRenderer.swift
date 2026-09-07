@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import MetalKit
+import MetalNodesCore
 import QuartzCore
 
 /// Draws the current pipeline as a fullscreen triangle. Runs on the main actor —
@@ -14,6 +15,7 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
     private let inflight = DispatchSemaphore(value: 3)
     private let startTime = CACurrentMediaTime()
     private var pausedAt: Float?
+    private lazy var meshes = MeshResources(device: device)
 
     public init(device: MTLDevice, state: PreviewState) {
         self.device = device
@@ -67,7 +69,25 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         for (index, texture) in program.textures {
             enc.setFragmentTexture(texture, index: index)
         }
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+
+        if program.pipeline.shader.target == .realityKit {
+            guard let mesh = meshes.buffers(for: state.mesh) else {
+                enc.endEncoding(); inflight.signal(); return
+            }
+            var camera = state.orbit.uniforms(aspect: Float(view.drawableSize.width / max(view.drawableSize.height, 1)))
+            if let depth = program.pipeline.depthStencilState { enc.setDepthStencilState(depth) }
+            enc.setCullMode(.back)
+            enc.setFrontFacing(.counterClockwise)
+            enc.setVertexBuffer(mesh.vertices, offset: 0, index: 0)
+            enc.setVertexBytes(&camera, length: MemoryLayout<CameraUniforms>.stride, index: 1)
+            enc.setVertexBuffer(buffer, offset: 0, index: 2)
+            enc.setFragmentBytes(&camera, length: MemoryLayout<CameraUniforms>.stride, index: 1)
+            for (index, texture) in program.textures { enc.setVertexTexture(texture, index: index) }
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: mesh.indexCount,
+                                      indexType: .uint16, indexBuffer: mesh.indices, indexBufferOffset: 0)
+        } else {
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
         enc.endEncoding()
         let sem = inflight
         cmd.addCompletedHandler { _ in sem.signal() }

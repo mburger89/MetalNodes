@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import Metal
+import MetalNodesCore
 import Observation
 
 /// The pipeline that is drawing and the textures its slots bind, published as one value so the
@@ -32,6 +33,10 @@ public final class PreviewState {
     public var lastError: String?
     /// The manual low/high used to normalize a viewed float/int socket into 0...1 (spec §19.3).
     public var viewerRange: ClosedRange<Float> = 0...1
+    /// Which mesh the 3D preview draws, and where the camera is (spec §23.5, §23.8). View state:
+    /// the editor mirrors these into `EditorViewState`, which is persisted and never undone.
+    public var mesh: PreviewMesh = .sphere
+    public var orbit: OrbitCamera = .default
 
     public init() {}
 }

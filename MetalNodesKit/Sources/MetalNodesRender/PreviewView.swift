@@ -16,6 +16,8 @@ public struct PreviewView {
         let v = MTKView(frame: .zero, device: device)
         v.colorPixelFormat = .bgra8Unorm
         v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
+        v.depthStencilPixelFormat = ShaderCompiler.depthPixelFormat
+        v.clearDepth = 1.0
         v.preferredFramesPerSecond = 60
         v.isPaused = false
         v.enableSetNeedsDisplay = false

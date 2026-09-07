@@ -19,3 +19,32 @@ import MetalNodesCore
         #expect(state.program?.textures.isEmpty == true)
     }
 }
+
+@Suite @MainActor struct PreviewState3DTests {
+    @Test func meshAndOrbitHaveDefaults() {
+        let s = PreviewState()
+        #expect(s.mesh == .sphere)
+        #expect(s.orbit == OrbitCamera.default)
+    }
+
+    @Test func meshBuffersAreCachedPerMesh() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let resources = MeshResources(device: device)
+        let a = try #require(resources.buffers(for: .sphere))
+        let b = try #require(resources.buffers(for: .sphere))
+        #expect(a.vertices === b.vertices)
+        #expect(a.indexCount == b.indexCount)
+        let c = try #require(resources.buffers(for: .cube))
+        #expect(a.vertices !== c.vertices)
+        #expect(c.indexCount == 36)   // six faces, two triangles each
+    }
+
+    @Test func everyMeshProducesBuffers() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let resources = MeshResources(device: device)
+        for mesh in PreviewMesh.allCases {
+            let b = try #require(resources.buffers(for: mesh), "\(mesh)")
+            #expect(b.indexCount > 0, "\(mesh)")
+        }
+    }
+}
