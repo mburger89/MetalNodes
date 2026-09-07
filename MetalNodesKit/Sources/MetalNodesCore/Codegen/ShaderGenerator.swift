@@ -95,6 +95,14 @@ public enum ShaderGenerator {
 
         // A viewer inside a definition runs through view variants of the definitions on the path
         // (spec §20.5); one in the root is the ordinary program terminating early.
+        //
+        // Known M7 limitation: a *dived* viewer under `.realityKit` takes this branch too and
+        // yields a 2D fullscreen program rather than the unlit-on-mesh preview §23.5 describes. It
+        // is self-consistent — the result carries `target: .fragment` and the default fullscreen
+        // vertex function name, so the renderer runs the 2D path over it — but it is not what the
+        // spec asks for. Restructuring the view-variant machinery for the two-stage target is an
+        // M8 item; a root-level viewer, which is the one the editor offers under this target, does
+        // reach `assembleRealityKit` below.
         if let v = viewer {
             if !viewerPath.isEmpty || viewerDefinition != nil {
                 return try viewerInsideDefinition(doc, viewer: v, path: viewerPath, anchor: viewerDefinition,
@@ -143,6 +151,13 @@ public enum ShaderGenerator {
         ]
         if let v = viewer, doc.root.nodes[v.node] != nil {
             // The viewed node may feed nothing; the surface pass must still compute it.
+            //
+            // This widening reaches all six emissions, the two export ones included, so a viewed
+            // node that feeds nothing would leave dead statements in `exportSource`. Harmless and
+            // unreachable: `ShaderExport.files` always generates with `viewer: nil`, and the
+            // widened statements are pure SSA assignments with no side effect even if it did not.
+            // Emitting the export from unwidened orders would mean a fourth and fifth pass and a
+            // second layout, which is a worse trade than a comment.
             var surface = TopoSort.order(doc.root, from: v.node)
             let existing = Set(surface)
             surface += orders[.surface]!.filter { !existing.contains($0) }

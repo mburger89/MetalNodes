@@ -266,6 +266,45 @@ import Testing
         #expect(src[geometryStart...].contains("texture2d<half> tex0"))
     }
 
+    /// Each setter must receive *its own* baked value.
+    ///
+    /// The three emissions of each stage — probe, preview, export — only agree because the last two
+    /// run against the union layout the probes produced. Break that and every literal is still in
+    /// the file, just attached to the wrong setter: `parametersAreBakedAsLiteralsAndNoUniformBufferIsRead`
+    /// (a literal appears *somewhere*, no `u.` survives) cannot see the difference. These assertions
+    /// pin literal to destination, one per conversion path: a bare `float3`, a narrowed `half`, a
+    /// colour narrowed through `.rgb`, and the geometry setter reading the SSA variable its own
+    /// literal was assigned to.
+    @Test func eachSetterReceivesItsOwnBakedValue() throws {
+        let src = try source(document())
+        let split = try #require(src.range(of: "void testMaterial_geometry")).lowerBound
+        // `v0` exists in both functions and means a different thing in each, so each half is
+        // searched on its own.
+        let surface = String(src[..<split]), geometry = String(src[split...])
+
+        // Wired colour: the Color node's SSA variable, declared and assigned in this function.
+        #expect(surface.contains("float4 v0;"))
+        #expect(surface.contains("v0 = float4(1.0, 0.0, 0.0, 1.0);"))
+        #expect(surface.contains("surface.set_base_color(half3(v0.rgb));"))
+        // Unwired colour: the terminal's own slot, baked inline and narrowed the same way.
+        #expect(surface.contains("surface.set_emissive_color(half3(float4(0.0, 0.0, 0.0, 1.0).rgb));"))
+        // Unwired float3: the one setter that takes its value unconverted.
+        #expect(surface.contains("surface.set_normal(float3(0.0, 0.0, 1.0));"))
+        // Unwired scalars: five `half(…)` destinations carrying three distinct values between them,
+        // so a permuted layout cannot satisfy them all by accident.
+        #expect(surface.contains("surface.set_roughness(half(0.5));"))
+        #expect(surface.contains("surface.set_metallic(half(0.0));"))
+        #expect(surface.contains("surface.set_opacity(half(1.0));"))
+        #expect(surface.contains("surface.set_ambient_occlusion(half(1.0));"))
+        #expect(surface.contains("surface.set_specular(half(0.5));"))
+
+        // Geometry: the offset setter reads the variable this function assigned its literal to,
+        // and that variable is a `float3` — not the surface stage's `float4`.
+        #expect(geometry.contains("float3 v0;"))
+        #expect(geometry.contains("v0 = float3(0.0, 0.25, 0.0);"))
+        #expect(geometry.contains("geo.set_model_position_offset(v0);"))
+    }
+
     /// The generated source must be stable: same document, same bytes, every time.
     @Test func generationIsDeterministic() throws {
         let doc = document()
