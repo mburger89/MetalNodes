@@ -115,8 +115,15 @@ extension MaterialPreviewCodegen {
         add("    o.position = cam.viewToProjection * (cam.worldToView * world);")
         add("    o.worldPosition = world.xyz;")
         add("    o.modelPosition = modelPosition;")
+        // A normal is a *covector* — perpendicular to the surface — so it transforms by the inverse
+        // transpose (`cam.normalToWorld`, which `CameraUniforms` computes for exactly this). A
+        // tangent is an ordinary direction *along* the surface and transforms by the model matrix
+        // itself. Identity today, so the two agree; the moment a non-identity model transform
+        // appears — the case `normalToWorld` exists for — the inverse transpose skews the tangent
+        // out of the surface and takes the normal-mapping basis with it.
+        add("    float3x3 modelRotation = float3x3(cam.modelToWorld[0].xyz, cam.modelToWorld[1].xyz, cam.modelToWorld[2].xyz);")
         add("    o.normal = normalize(cam.normalToWorld * vert.normal);")
-        add("    o.tangent = normalize(cam.normalToWorld * vert.tangent.xyz);")
+        add("    o.tangent = normalize(modelRotation * vert.tangent.xyz);")
         add("    o.bitangent = cross(o.normal, o.tangent) * vert.tangent.w;")
         add("    o.viewDirection = normalize(cam.cameraPosition - world.xyz);")
         add("    o.uv = vert.uv;")

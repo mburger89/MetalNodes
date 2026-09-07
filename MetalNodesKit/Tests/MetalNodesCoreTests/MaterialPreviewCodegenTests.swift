@@ -134,6 +134,26 @@ import Testing
         #expect(src.contains("struct Uniforms {"))
     }
 
+    // Final review — Finding 5 (Minor, latent): the tangent took the inverse transpose.
+
+    /// A normal is perpendicular to the surface and transforms by the inverse transpose
+    /// (`cam.normalToWorld`, which `CameraUniforms` computes for exactly that). A tangent runs
+    /// *along* the surface and transforms by the model matrix itself. The vertex stage used
+    /// `normalToWorld` for both. Both matrices are identity today so nothing is visibly wrong, but
+    /// the moment a non-identity model transform appears — the only case `normalToWorld` exists for
+    /// — the inverse transpose skews the tangent out of the surface and takes the whole
+    /// normal-mapping basis (`float3x3 basis = …(tangent, bitangent, normal)`) with it.
+    @Test func theTangentTakesTheModelMatrixAndTheNormalTheInverseTranspose() throws {
+        let fn = try vertexFunction(of: document())
+        #expect(fn.contains("float3x3 modelRotation = float3x3(cam.modelToWorld[0].xyz, cam.modelToWorld[1].xyz, cam.modelToWorld[2].xyz);"))
+        #expect(fn.contains("o.tangent = normalize(modelRotation * vert.tangent.xyz);"))
+        #expect(!fn.contains("o.tangent = normalize(cam.normalToWorld"))
+        // The normal keeps the inverse transpose — this is not a blanket swap.
+        #expect(fn.contains("o.normal = normalize(cam.normalToWorld * vert.normal);"))
+        // The bitangent is still derived from the transformed pair, so it follows the fix.
+        #expect(fn.contains("o.bitangent = cross(o.normal, o.tangent) * vert.tangent.w;"))
+    }
+
     @Test func generationIsDeterministic() throws {
         let doc = document()
         #expect(try source(doc) == (try source(doc)))
