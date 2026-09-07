@@ -106,6 +106,41 @@ actor SwitchableCompiler: ShaderCompiling {
         #expect(await c.generations.count == before + 1)
     }
 
+    /// The whole `.setSettings` recompile matrix in one place. `EditorModel.perform` decides
+    /// this by hand, field by field, and nothing enforces that the list stays in step with what
+    /// actually reaches codegen — a missing field leaves the old program on screen with no error,
+    /// which is how the lighting model shipped broken. Add a row here whenever a setting starts
+    /// or stops affecting the generated source.
+    @Test func everySettingThatReachesCodegenRecompiles() async {
+        func recompiles(_ document: ShaderDocument, _ mutate: (inout DocumentSettings) -> Void) async -> Bool {
+            let c = RecordingCompiler()
+            let m = EditorModel(document: document, compiler: c)
+            m.debounceInterval = .milliseconds(5)
+            m.start(); await m.awaitIdle()
+            let before = await c.generations.count
+            var s = m.document.settings
+            mutate(&s)
+            m.apply(.setSettings(s))
+            await m.awaitIdle()
+            return await c.generations.count > before
+        }
+
+        var stitchable = ShaderDocument.sample()
+        stitchable.settings.target = .stitchable(.colorEffect)
+
+        // Reaches codegen — must rebuild.
+        #expect(await recompiles(.sample()) { $0.fastMath.toggle() })
+        #expect(await recompiles(.sample()) { $0.target = .stitchable(.colorEffect) })
+        #expect(await recompiles(stitchable) { $0.exportName = "renamed" })
+        #expect(await recompiles(.realityKitMaterial()) { $0.lightingModel = .unlit })
+
+        // Does not reach codegen — must not rebuild.
+        #expect(await recompiles(.sample()) { $0.previewSize = CGSize(width: 256, height: 256) } == false)
+        #expect(await recompiles(.sample()) { $0.timeMode = .fixedRate } == false)
+        // The export name names no function in a fragment program.
+        #expect(await recompiles(.sample()) { $0.exportName = "renamed" } == false)
+    }
+
     @Test func previewSizeOnlyChangeDoesNotRecompile() async {
         let c = RecordingCompiler()
         let m = model(c); m.start(); await m.awaitIdle()
