@@ -61,12 +61,12 @@ struct DocumentHostView: View {
         undoManager?.disableUndoRegistration()
         let written = bridge.mirror(into: &file.package)
         undoManager?.enableUndoRegistration()
-        // Every write marks the platform document changed, directly. Registration is off above,
-        // so nothing else does: view state has no undo step (spec §18.3), a same-image relink
-        // changes the bytes but not the document, and an undo step the model did register only
-        // reaches the document while the window's manager was adopted. A second mark for an edit
-        // that already carries a step costs nothing; a missed one loses the write on close.
-        if !written.isEmpty {
+        // A document write always rides an undo step of the model's — registered on the window's
+        // manager, which is how NSDocument / UIDocument track the change and, on macOS, count it
+        // back down on undo; a manual mark on top would leave the window Edited after undoing
+        // every step. Everything else has no step and is marked here: view state (spec §18.3) and
+        // bytes on their own, the same-image relink that changes nothing in the manifest.
+        if !written.isEmpty, !written.contains(.document) {
             PlatformDocument.markChanged(at: fileURL)
         }
     }

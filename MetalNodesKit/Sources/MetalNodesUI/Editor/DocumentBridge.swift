@@ -18,8 +18,9 @@ public final class DocumentBridge {
         return p
     }
 
-    /// What one `mirror(into:)` wrote. The host tells a view-state-only write apart: the model's
-    /// own undo step has already marked the document changed for anything else.
+    /// What one `mirror(into:)` wrote. The host marks the platform document changed for a write
+    /// that carries no document change — view state, or bytes alone — because only a document
+    /// change rides an undo step of the model's.
     public struct Written: OptionSet, Sendable {
         public let rawValue: UInt8
         public init(rawValue: UInt8) { self.rawValue = rawValue }
