@@ -2477,6 +2477,13 @@ Run: `swift test --package-path MetalNodesKit --filter MaterialExportSourceTests
 Run: `swift test --package-path MetalNodesKit --filter MaterialPreviewCodegenTests`
 Expected: FAIL, every case, at `ShaderGenerator.generate(doc, target: .realityKit)`. That is what the rest of this task fixes.
 
+**Two of those assertions cannot fail as written — tighten them while you are here.** Task 8's review found both, and they are defects in this plan's own test code, not in Task 8's work:
+
+- `theGeometryStageRunsInTheVertexFunction` looks for the substring `"offset"`, but `float3 offset = float3(0.0);` is emitted unconditionally, so it cannot tell a graph that ran a geometry stage from one that did not. Assert instead on something only a *wired* Position Offset produces — the SSA variable the offset assignment reads, or the absence of that assignment in the `offset: false` document.
+- `theNormalSocketIsResolvedThroughTheTangentBasis` looks for `"float3x3("` and `"tangent"`, both of which appear unconditionally in the struct declarations and the basis construction, so it passes even against the unwired fallback. Assert that the wired Normal node's SSA variable actually reaches `tangentNormal`.
+
+Add a wired-Normal document to the fixture if the existing one does not have one.
+
 - [ ] **Step 2: Extend `GeneratedShader`**
 
 In `MetalNodesKit/Sources/MetalNodesCore/Codegen/ShaderGenerator.swift`:
