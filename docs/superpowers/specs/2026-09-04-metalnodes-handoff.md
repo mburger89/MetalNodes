@@ -438,10 +438,14 @@ Run on macOS against the RealityKit Material sample. **Verified working:**
 7. Position Offset genuinely displaces geometry: raising the amplitude to 0.60 visibly deforms the silhouette; at 10.0 the vertices leave the frustum entirely.
 8. Undo/redo across a lighting-model change works and recompiles.
 9. The inspector carries the honest caption about the GGX approximation.
+10. All four meshes render: the Plane is a correctly-lit quad in perspective, front-facing rather than culled.
+11. **Copy Swift snippet** produces the real snippet — `NoMetalDevice` declared locally (no reference to the non-existent `CustomMaterialError` case), `let` rather than `var`, both shader objects built, the picker's lighting model carried through, and the `boundsMargin` helper present because this graph wires Position Offset.
+12. **Export…** names both files in the panel and writes both. The `.metal` carries the baked-parameter header naming each value's node and parameter, and **compiles cleanly against the real RealityKit SDK** (`xcrun -sdk macosx metal -c`, exit 0, no warnings). The geometry function keeps `params.uniforms().time()` live while baking the amplitude to `0.06` — exactly the parameter split §23.6 specifies.
+13. Save, close and reopen restores the mesh, the camera, the target and the lighting model from the file.
 
 **One defect found, fixed, and verified in the same session** — see §14.5.
 
-**Still not checked:** the Plane mesh; export through the UI (both files are gated by automated `xcrun metal -c` and `swiftc -typecheck` tests, so this is presentation only); save/close/reopen persistence of mesh and camera; and the macOS and iPad regression subsets. The full 22-item list is in the plan's Task 15, Step 3.
+**Still not checked:** the macOS and iPad regression subsets from §22.8. The full list is in the plan's Task 15, Step 3.
 
 ### 14.4 Owed to a human
 - Everything M6 owed (handoff §13): macOS Finder→canvas drop, palette drag-in, iPad hardware-keyboard check 14, two-finger pan/pinch, Slide Over compact width.
