@@ -2,7 +2,7 @@
 
 A node-based Metal shader editor for macOS, in the spirit of Blender's shader editor and Houdini's network view. Wire nodes together on a canvas, watch the shader render live, and export it as a SwiftUI `[[stitchable]]` effect.
 
-Swift 6 · SwiftUI · Metal · macOS 26 (iPadOS 27 planned)
+Swift 6 · SwiftUI · Metal · macOS 26 · iPadOS 27
 
 ![MetalNodes editor: node canvas with a group node, live preview and inspector](docs/screenshot.png)
 
@@ -86,7 +86,8 @@ docs/superpowers/plans/   One implementation plan per milestone
 | M3 Full node library, viewer, stitchable target, export | done |
 | M4 Node groups | done |
 | M5 Package persistence with textures, comment frames and stickies, generated-code panel, minimap, `.metal` export, cross-document paste | done |
-| M6 iPadOS UI layer | next |
+| M6 iPadOS UI layer — touch canvas, iPad layout, Photos/Files import, Files/Share export, hardware keyboard, XCUITests | done |
+| M7 — to be brainstormed | planned |
 
 ## Development notes
 
