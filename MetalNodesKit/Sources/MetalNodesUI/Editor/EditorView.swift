@@ -110,7 +110,7 @@ public struct EditorView: View {
                                 .gesture(DragGesture(minimumDistance: 0)
                                     .onChanged { g in
                                         if model.document.settings.target == .realityKit {
-                                            orbit(g)
+                                            applyOrbitDrag(g)
                                         } else {
                                             setMouse(g.location, in: geo.size)
                                         }
@@ -180,7 +180,7 @@ public struct EditorView: View {
 
     /// Orbits the 3D preview. `DragGesture` reports cumulative translation, so the delta is the
     /// difference from the last event — the same shape the canvas's pan uses.
-    private func orbit(_ g: DragGesture.Value) {
+    private func applyOrbitDrag(_ g: DragGesture.Value) {
         let dx = Float(g.translation.width - lastOrbitTranslation.width)
         let dy = Float(g.translation.height - lastOrbitTranslation.height)
         lastOrbitTranslation = g.translation
@@ -190,8 +190,8 @@ public struct EditorView: View {
     }
 
     /// Pinch-to-dolly (spec §23.5). `MagnifyGesture` reports a *cumulative* factor, so the step is
-    /// the ratio against the last event — the same "delta since last" shape `orbit(_:)` uses for the
-    /// drag's cumulative translation. Gated on the target inside `model.magnifyPreview`.
+    /// the ratio against the last event — the same "delta since last" shape `applyOrbitDrag(_:)`
+    /// uses for the drag's cumulative translation. Gated on the target inside `model.magnifyPreview`.
     private var dollyGesture: some Gesture {
         MagnifyGesture()
             .onChanged { g in
