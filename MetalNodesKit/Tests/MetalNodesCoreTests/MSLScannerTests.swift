@@ -62,10 +62,33 @@ import Testing
         #expect(kinds("/* } */ out = a;") == [])
     }
 
+    /// A stray `}` that only exists inside a comment must not appear to close a real, still-open
+    /// brace — the comment's `}` does not count, so the true imbalance is still reported.
+    @Test func anUnbalancedBraceInsideACommentIsNotReportedAsBalanced() {
+        #expect(kinds("if (a) { b = 1; /* } */") == [.unbalancedBrace])
+    }
+
     @Test func violationsCarryTheLine() {
         let v = MSLScanner.scopeBreakers(in: "out = a;\n#include <x>\n")
         #expect(v.count == 1)
         #expect(v[0].line == 1)
+    }
+
+    /// C/C++/MSL strip comments before recognising directives (translation phase 3, before phase
+    /// 4) — so a directive sharing a line with a comment is still a real directive, and a directive
+    /// that only exists inside a comment is not one at all. `scopeBreakers` must agree with the
+    /// compiler on both directions, or a hidden `#include` reaches codegen unrefused.
+    @Test func aPreprocessorDirectiveIsRecognisedAroundComments() {
+        #expect(kinds("/* comment */ #include <metal_stdlib>\na") == [.preprocessor("include")])
+        #expect(kinds("// #include <metal_stdlib>\na") == [])
+        #expect(kinds("/* one\n#include <x>\nthree */\na") == [])
+    }
+
+    /// Blanking a comment must not shift any later line's number.
+    @Test func commentBlankingPreservesLineNumbers() {
+        let v = MSLScanner.scopeBreakers(in: "/* a\nb */\n\n\n#include <z>\n")
+        #expect(v.count == 1)
+        #expect(v[0].line == 4)
     }
 }
 
@@ -84,5 +107,27 @@ import Testing
     @Test func doesNotMistakeAnIdentifierForAKeyword() {
         #expect(MSLScanner.loopSites(in: "float former = 1.0; float doer = 2.0;") == [])
         #expect(MSLScanner.loopSites(in: "// for\nout = a;") == [])
+    }
+
+    /// A `do`'s closing `while` must be paired with its own `do` by brace depth, not by simple
+    /// order — otherwise a nested `do { do { } while(a); } while(b);` reports the outer closing
+    /// `while` as a third, spurious site. Every reported site must genuinely open a loop body: a
+    /// caller hardens each site by inserting a guard as the first statement of that body, and a
+    /// guard inserted at a closing `while` either fails to compile or breaks the wrong loop.
+    @Test func nestedDoWhileReportsExactlyTwoSites() {
+        #expect(MSLScanner.loopSites(in: "do { do { s += 1.0; } while (a); } while (b);") == [0, 0])
+    }
+
+    /// Same nesting, spread across lines so each reported site can be checked against the line it
+    /// names: both reported lines open a `do`, neither is a closing `while` line.
+    @Test func nestedDoWhileSitesAreTheOpeningLinesNotTheClosingWhiles() {
+        let s = """
+        do {
+          do {
+            s += 1.0;
+          } while (a);
+        } while (b);
+        """
+        #expect(MSLScanner.loopSites(in: s) == [0, 1])
     }
 }
