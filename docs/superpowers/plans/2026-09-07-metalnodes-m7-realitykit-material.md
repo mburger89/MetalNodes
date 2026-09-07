@@ -19,6 +19,8 @@
 - **`CustomMaterial` is `@available(visionOS, unavailable)`.** Nothing in this milestone changes the app's deployment targets; no RealityKit framework is imported by the app or the package. The RealityKit surface is *generated text only*.
 - **The preview program never includes a RealityKit header.** Those headers ship with Xcode, not with the OS, and `MTLCompileOptions` has no include-path knob (verified by probe, 2026-09-06).
 - **Every surface setter takes `half`/`half3` except `set_normal`, which takes a tangent-space `float3`.** Verbatim from `RealityKitSurfaceShader.h`.
+- **One texture slot, in the root graph only.** `params.textures().custom()` is a `texture2d<half>`; a group function's texture parameters are `texture2d<float>` and MSL converts neither (spec §23.6). A second sample, or one inside a group, is a diagnostic.
+- **`mn_sampler` is a program-scope `constexpr sampler` from the stdlib** (`MSLStdlib`, pulled in by the Texture Sample node's `requires`). Never declare another inside a generated function.
 - Commit trailers on every commit:
   ```
   Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
