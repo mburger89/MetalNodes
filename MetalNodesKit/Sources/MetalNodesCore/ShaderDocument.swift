@@ -40,18 +40,23 @@ public struct GroupDefinition: Sendable, Hashable, Identifiable {
 }
 
 /// Self-describing on the wire — `{"kind":"graph","graph":{…}}` or `{"kind":"msl","msl":"…"}` —
-/// so a later build can add a third kind without moving what is already written (spec §24.3).
+/// so a later build can add a third kind without moving what is already written, and this build
+/// can tell that it has met one (spec §24.3).
 extension DefinitionBody: Codable {
     private enum Keys: String, CodingKey { case kind, graph, msl }
     private enum Kind: String, Codable { case graph, msl }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        // A kind this build has no case for degrades to an empty subgraph rather than failing the
-        // definition — and so the whole document — the way §23.2's `target` degrades to Fragment.
-        switch try? c.decode(Kind.self, forKey: .kind) {
+        // An unrecognised kind is a body a newer build wrote, and it **throws**. Unlike §23.2's
+        // unknown `target` — where degrading to a default loses a preference — degrading here
+        // would hand back an empty definition, and the next save would rewrite someone's source
+        // code as `{"kind":"graph","graph":{}}`, unrecoverably. Failing leaves the bytes on disk
+        // intact for a build that understands them. `currentFormatVersion` should stop such a
+        // document at the door anyway (`ShaderPackage.VersionProbe`); this is the loud backstop.
+        switch try c.decode(Kind.self, forKey: .kind) {
         case .msl: self = .msl(try c.decodeIfPresent(String.self, forKey: .msl) ?? "")
-        case .graph, nil: self = .graph(try c.decodeIfPresent(Graph.self, forKey: .graph) ?? Graph())
+        case .graph: self = .graph(try c.decodeIfPresent(Graph.self, forKey: .graph) ?? Graph())
         }
     }
 
@@ -166,8 +171,15 @@ extension DocumentSettings: Codable {
 }
 
 public struct ShaderDocument: Sendable, Hashable {
-    public static let currentFormatVersion = 1
+    /// 2 since M8. Every change before it was additive — a new key an older build's
+    /// `decodeIfPresent` simply skipped — so the number never had to move. M8 writes a
+    /// definition's `body` and no longer writes `graph`, which an M0–M7 build cannot decode at
+    /// all, so the version now says so and those builds report "saved by a newer version of
+    /// MetalNodes" instead of a decoding failure (`ShaderPackage.VersionProbe`, spec §24.3).
+    public static let currentFormatVersion = 2
 
+    /// The version this document was *read* as; what is written is always
+    /// `currentFormatVersion`, because that is the format the bytes are in.
     public var formatVersion: Int = ShaderDocument.currentFormatVersion
     public var root: Graph = Graph()
     public var definitions: [GroupID: GroupDefinition] = [:]
@@ -294,7 +306,11 @@ extension ShaderDocument: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
-        try c.encode(formatVersion, forKey: .formatVersion)
+        // Always the current version, never the one the document was read as: these bytes carry
+        // `body`, so a document migrated from M0–M7 and saved is an M8 document and must announce
+        // itself as one — otherwise the build that wrote the original still cannot read it back
+        // and reports a decoding failure rather than "saved by a newer version".
+        try c.encode(ShaderDocument.currentFormatVersion, forKey: .formatVersion)
         try c.encode(root, forKey: .root)
         try c.encode(definitions.values.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .definitions)
         try c.encode(settings, forKey: .settings)

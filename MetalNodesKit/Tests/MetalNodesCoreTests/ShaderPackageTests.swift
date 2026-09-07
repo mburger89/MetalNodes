@@ -53,8 +53,11 @@ import Testing
     @Test func newerFormatIsRefused() throws {
         let wrapper = try ShaderPackage(document: .sample(), viewState: EditorViewState(), textures: [:]).fileWrapper()
         var text = String(decoding: wrapper.fileWrappers!["document.json"]!.regularFileContents!, as: UTF8.self)
-        text = text.replacingOccurrences(of: "\"formatVersion\" : 1", with: "\"formatVersion\" : 99")
-            .replacingOccurrences(of: "\"formatVersion\": 1", with: "\"formatVersion\": 99")
+        // Spelled from the constant rather than the literal it happens to be, so bumping the
+        // format version (M8 made it 2) cannot silently turn this rewrite into a no-op.
+        let current = ShaderDocument.currentFormatVersion
+        text = text.replacingOccurrences(of: "\"formatVersion\" : \(current)", with: "\"formatVersion\" : 99")
+            .replacingOccurrences(of: "\"formatVersion\": \(current)", with: "\"formatVersion\": 99")
         wrapper.removeFileWrapper(wrapper.fileWrappers!["document.json"]!)
         wrapper.addRegularFile(withContents: Data(text.utf8), preferredFilename: "document.json")
         #expect(throws: PackageError.newerFormat(99)) { try ShaderPackage(fileWrapper: wrapper) }

@@ -61,16 +61,17 @@ import Foundation
         #expect(back.graph.inputs.count == 1)
     }
 
-    /// A body kind a future build writes and this one has no case for must not fail the whole
-    /// definition — and so the whole document (the same degradation §23.2 chose for `target`).
-    @Test func anUnknownBodyKindDegradesInsteadOfFailingTheDocument() throws {
+    /// A body kind a future build writes and this one has no case for **fails the decode**. The
+    /// alternative — degrading to an empty graph — is unrecoverable: the next save would rewrite
+    /// the user's source as an empty definition. Failing leaves the bytes on disk for a build that
+    /// understands them. (The format-version gate should stop such a document first; this is the
+    /// backstop, and it must be loud.)
+    @Test func anUnknownBodyKindFailsTheDecodeRatherThanEmptyingTheDefinition() {
         let json = Data("""
         {"id":"E63408AB-F398-45E3-A306-E8B989C079CC","name":"Future","inputs":[],"outputs":[],
          "body":{"kind":"spirv","spirv":"…"},"accent":"purple"}
         """.utf8)
-        let d = try JSONDecoder().decode(GroupDefinition.self, from: json)
-        #expect(d.name == "Future")
-        if case .graph(let g) = d.body { #expect(g.nodes.isEmpty) } else { Issue.record("unknown kind did not degrade to a graph body") }
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(GroupDefinition.self, from: json) }
     }
 
     /// A real M7 document, loaded end to end.
@@ -119,6 +120,51 @@ import Foundation
         guard case .msl(let text) = doc.definitions[d.id]?.body else { Issue.record("body stopped being msl"); return }
         #expect(text == "out = 1.0;")
         #expect(doc[.definition(d.id)].nodes.isEmpty)
+    }
+}
+
+/// M8 is the first non-additive change to the document format: it writes a definition's `body`
+/// and no longer writes `graph`, which no M0–M7 build can decode. The version number has to say so,
+/// or those builds report "The shader could not be read" instead of naming the real cause.
+@Suite struct DocumentFormatVersionTests {
+    private func package(_ doc: ShaderDocument) throws -> FileWrapper {
+        try ShaderPackage(document: doc, viewState: EditorViewState(), textures: [:]).fileWrapper()
+    }
+
+    private func documentJSON(_ wrapper: FileWrapper) throws -> [String: Any] {
+        let data = try #require(wrapper.fileWrappers?["document.json"]?.regularFileContents)
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    @Test func aDocumentWrittenNowSaysVersionTwo() throws {
+        #expect(ShaderDocument.currentFormatVersion == 2)
+        let json = try documentJSON(try package(.sampleWithGroup()))
+        #expect(json["formatVersion"] as? Int == 2)
+    }
+
+    /// A document migrated from M0–M7 carries `formatVersion: 1` in memory, but once it is saved
+    /// its bytes are M8's, so what is written is the current version — not the one it was read as.
+    @Test func aMigratedDocumentIsRewrittenAsVersionTwo() throws {
+        var legacyJSON = try documentJSON(try package(.sampleWithGroup()))
+        legacyJSON["formatVersion"] = 1
+        let decoded = try JSONDecoder().decode(ShaderDocument.self,
+                                               from: try JSONSerialization.data(withJSONObject: legacyJSON))
+        #expect(decoded.formatVersion == 1)                     // read as what it said
+        let json = try documentJSON(try package(decoded))
+        #expect(json["formatVersion"] as? Int == 2)             // written as what it now is
+    }
+
+    /// The gate this bump exists to arm: a version this build does not know is named, not blamed
+    /// on a decoding error (spec §21.1).
+    @Test func aNewerDocumentIsRefusedByName() throws {
+        let wrapper = try package(.sampleWithGroup())
+        var json = try documentJSON(wrapper)
+        json["formatVersion"] = 3
+        wrapper.removeFileWrapper(try #require(wrapper.fileWrappers?["document.json"]))
+        wrapper.addRegularFile(withContents: try JSONSerialization.data(withJSONObject: json),
+                               preferredFilename: "document.json")
+        #expect(throws: PackageError.newerFormat(3)) { try ShaderPackage(fileWrapper: wrapper) }
+        #expect(PackageError.newerFormat(3).errorDescription == "This shader was saved by a newer version of MetalNodes")
     }
 }
 
@@ -213,6 +259,21 @@ import Foundation
         let def = try #require(removed.definitions[id])
         guard case .msl(let b) = def.body else { Issue.record("body stopped being msl"); return }
         #expect(b == "out = a * 2.0;")
+    }
+
+    /// The other arm of the precondition a `.msl` body relaxes: a `.graph` definition that has
+    /// lost a pseudo-node still refuses a socket edit, because the edit rewires through it.
+    @Test func aGraphDefinitionMissingAPseudoNodeStillRefusesSocketEdits() throws {
+        var doc = ShaderDocument()
+        var def = GroupDefinition.make(name: "Broken")
+        def.inputs = [SocketDecl(name: "a", type: .concrete(.float), default: .value(.float(0)))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        let gout = try #require(def.outputNode)
+        def.graph.nodes[gout] = nil
+        doc.definitions[def.id] = def
+
+        #expect(GroupOperations.renameSocket(def.id, kind: .input, from: "a", to: "amount", in: doc) == nil)
+        #expect(GroupOperations.removeSocket(def.id, kind: .input, name: "a", in: doc) == nil)
     }
 
     @Test func setAccentKeepsTheBody() throws {
