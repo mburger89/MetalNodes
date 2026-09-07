@@ -96,7 +96,7 @@ import Foundation
     }
 
     @Test func registryHasTheFullV1Set() {
-        #expect(reg.all.count == 54)
+        #expect(reg.all.count == 55)
         // .group has no builtin defs — it's only ever a group instance's category, never a NodeDef's.
         for c in NodeCategory.allCases where c != .group { #expect(reg.all.contains { $0.category == c }, "\(c)") }
     }

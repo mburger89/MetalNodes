@@ -15,7 +15,7 @@ import Testing
             "sdf.circle", "sdf.box", "sdf.union", "sdf.subtract",
             "noise.perlin", "noise.simplex", "noise.voronoi", "noise.fbm",
             "color.ramp", "color.hsv2rgb", "color.rgb2hsv", "color.invert", "color.mixcolor",
-            "utility.reroute", "utility.compare", "utility.switch",
+            "utility.reroute", "utility.compare", "utility.switch", "utility.expression",
             "texture.sample", "texture.gradient", "texture.checker",
             "output.material",
             "input.worldPosition", "input.modelPosition", "input.normal3d", "input.tangent",

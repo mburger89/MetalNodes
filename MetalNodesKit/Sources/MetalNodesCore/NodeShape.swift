@@ -52,6 +52,9 @@ public extension ShaderDocument {
     func shape(of node: NodeInstance, in path: GraphPath, registry: NodeRegistry) -> NodeShape? {
         switch node.kind {
         case .builtin(let id):
+            // The Expression node's sockets come from its formula, so its shape depends on the
+            // instance rather than the registry (spec §24.2). Every other builtin is its def.
+            if id == ExpressionNode.id { return ExpressionNode.shape(for: node) }
             return registry[id].map(NodeShape.init(def:))
         case .group(let gid):
             guard let d = definitions[gid] else { return nil }
