@@ -101,23 +101,63 @@ import Testing
         #expect(paths.contains(ParamPath(node: b.id, param: "value")))
     }
 
+    /// Surface and geometry are two independent `[[visible]]` functions, each emitted from its own
+    /// pass over the graph (`MaterialCodegen.stageOrder`, one per `MaterialStage`) — so each pass's
+    /// *own* first-use numbering starts back at slot 0 for whatever texture it happens to see
+    /// first. `sharedBindings` is what merges those two passes into one numbering both functions'
+    /// texture lists agree on, since the RealityKit export binds one shared texture list read by
+    /// both (spec §23.4, §23.6). A test that emits the same node for both stages (as this one used
+    /// to) never exercises that merge: with one shared source, both "passes" would already agree on
+    /// slot 0 for trivial reasons. This version emits two textures from genuinely different nodes
+    /// under the two real RealityKit environments, so the geometry pass's own slot 0 for its asset
+    /// only becomes slot 1 once merged with the surface pass's asset at slot 0.
     @Test func sharedTextureSlotsKeepTheirIndices() {
         var doc = ShaderDocument()
+        doc.settings.target = .realityKit
         var g = Graph()
         let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
-        let sample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
-        for n in [terminal, sample] { g.nodes[n.id] = n }
-        g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(sample.id, "color")
+        let surfaceAsset = AssetID(), geometryAsset = AssetID()
+        var surfaceSample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        surfaceSample.params["asset"] = .asset(surfaceAsset)
+        var geometrySample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
+        geometrySample.params["asset"] = .asset(geometryAsset)
+        for n in [terminal, surfaceSample, geometrySample] { g.nodes[n.id] = n }
+        g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(surfaceSample.id, "color")
+        g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(geometrySample.id, "color")
         doc.root = g
-        let order = MaterialCodegen.stageOrder(graph: g, terminal: terminal.id, stage: .surface)
-        let (resolved, _) = TypeResolver.resolve(g, path: .root, document: doc, registry: .builtin, order: order)
-        let first = Emitter.emit(order: order, graph: g, path: .root, document: doc, registry: .builtin,
-                                 resolved: resolved, env: .fragment)
-        let shared = MaterialCodegen.sharedBindings(surface: first, geometry: first)
-        let again = Emitter.emit(order: order, graph: g, path: .root, document: doc, registry: .builtin,
-                                 resolved: resolved, env: .fragment, shared: shared)
-        #expect(again.textureRequests == shared.order)
-        #expect(again.textureRequests.first?.index == 0)
+
+        let orders: [MaterialStage: [NodeID]] = [
+            .surface: MaterialCodegen.stageOrder(graph: g, terminal: terminal.id, stage: .surface),
+            .geometry: MaterialCodegen.stageOrder(graph: g, terminal: terminal.id, stage: .geometry),
+        ]
+        func emit(_ stage: MaterialStage, env: EmitEnvironment, shared: Emitter.SharedBindings?) -> Emitter.Output {
+            let order = orders[stage]!
+            let (resolved, diags) = TypeResolver.resolve(g, path: .root, document: doc, registry: .builtin, order: order)
+            #expect(diags.isEmpty)
+            return Emitter.emit(order: order, graph: g, path: .root, document: doc, registry: .builtin,
+                                resolved: resolved, env: env, shared: shared)
+        }
+
+        // Each stage's own pass numbers its one texture request as slot 0 — the collision the
+        // shared pass below must resolve.
+        let probeSurface = emit(.surface, env: .realityKitSurface, shared: nil)
+        let probeGeometry = emit(.geometry, env: .realityKitGeometry, shared: nil)
+        #expect(probeSurface.textureRequests.first?.index == 0)
+        #expect(probeGeometry.textureRequests.first?.index == 0)
+
+        // The surface pass is numbered first (`sharedBindings`'s documented order).
+        let shared = MaterialCodegen.sharedBindings(surface: probeSurface, geometry: probeGeometry)
+        #expect(shared.order == [TextureSlot(index: 0, asset: surfaceAsset), TextureSlot(index: 1, asset: geometryAsset)])
+
+        // Re-emitting against `shared` seeds *both* stages' `textureRequests` from the one merged
+        // list (both `[[visible]]` functions bind the same texture table), so each must now carry
+        // the geometry asset at slot 1 — renumbered from its own first pass's slot 0 — alongside
+        // the surface asset that keeps slot 0.
+        let surfaceAgain = emit(.surface, env: .realityKitSurface, shared: shared)
+        let geometryAgain = emit(.geometry, env: .realityKitGeometry, shared: shared)
+        #expect(surfaceAgain.textureRequests == shared.order)
+        #expect(geometryAgain.textureRequests == shared.order)
+        #expect(geometryAgain.textureRequests.first { $0.asset == geometryAsset }?.index == 1)
     }
 }
 
