@@ -1562,7 +1562,7 @@ public static let realityKitGeometry = EmitEnvironment(
     textureName: realityKitSurface.textureName)
 ```
 
-`sys` carries no `resolution` or `mouse` key; the generator treats a missing key as a hard error rather than emitting a bad expression, which is what makes §23.7's refusal a code path rather than a convention. Group functions are unchanged — `EmitEnvironment.groupFunction` already parameterises uniforms and textures, so a group called from either stage emits one function, and a group whose body needs a stage-illegal node is caught by validation walking reachable definitions (§22.6's `reachableDefinitions`).
+`sys` maps `resolution` to `float2(1.0, 1.0)` and `mouse` to `float2(0.0, 0.0)`. Those are not features: every group function's signature begins `float2 uv, float time, float2 size, float2 mouse`, and the UV node's `aspect` variant reads `{sys.resolution}`, so the keys must resolve to something. No node can observe them as data — Resolution and Mouse are refused by §23.7 — and a unit aspect ratio makes `aspect` degenerate to centred UV rather than to nonsense. Group functions are otherwise unchanged — `EmitEnvironment.groupFunction` already parameterises uniforms and textures, so a group called from either stage emits one function, and a group whose body needs a stage-illegal node is caught by validation walking reachable definitions (§22.6's `reachableDefinitions`).
 
 `GeneratedShader` gains:
 
@@ -1620,7 +1620,7 @@ Buffer bindings: **vertex** stage 0 = the vertex array, 1 = `CameraUniforms`, 2 
 
 `GraphValidator.validate(document:registry:target:)` gains a `.realityKit` branch, all `Diagnostic(.error, …)` unless noted:
 
-1. **Terminal.** "A RealityKit material needs a Material Output node" when absent; "Only one Material Output node is allowed" when more than one. (The fragment target's single-terminal rule is unchanged and independent.)
+1. **Terminal.** "A RealityKit material needs a Material Output node" when absent; "Only one Material Output node is allowed" when more than one. The existing rules for Fragment Output become target-conditional rather than absolute: `GraphValidator.terminal(in:)` grows a `target:` argument and returns the terminal that target requires, because `ShaderGenerator` force-unwraps it today and would trap on a RealityKit document that has no Fragment Output. A Fragment Output present under `.realityKit` (or a Material Output under any other target) is ignored, not refused — switching a document's target back and forth must not destroy the other terminal.
 2. **Stage legality.** For each stage, every node reachable from that stage's roots — through group definitions — whose `stages` set omits the stage: "<title> is not available in the <stage> stage". Anchored to the node.
 3. **Target legality.** A node reachable under `.realityKit` whose emission has no `sys` entry — Mouse, Resolution: "<title> needs the Fragment or SwiftUI target". A 3D input node reachable under any other target: "<title> needs the RealityKit Material target".
 4. **Texture count.** More than one Texture Sample reachable (root graph plus reachable definitions, the M5 counting rule): "A RealityKit material has one texture slot — remove the extra Texture Sample", anchored to the second and later samples.
