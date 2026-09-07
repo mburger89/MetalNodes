@@ -6,8 +6,12 @@ import Foundation
     let reg = NodeRegistry.builtin
 
     /// Every node as a one-node graph (first output → Fragment Output) generates without diagnostics.
-    /// The RealityKit-only material nodes are exempt: their `{sys.…}` builtins only resolve under
-    /// `.realityKit`, which this smoke test — like the rest of the `.fragment` pipeline — does not target.
+    /// Scaffolding, not a permanent exemption: the ten `material3D` nodes read RealityKit-only system
+    /// values that have no `.fragment` spelling, so they are skipped here rather than asserted clean.
+    /// Once the target-legality validation rule lands (spec §23.7 rule 3,
+    /// `docs/superpowers/specs/2026-09-04-metalnodes-design.md` — a 3D input node reachable under any
+    /// target but `.realityKit` is refused), replace this skip with an assertion that generating one
+    /// of these nodes under `.fragment` *fails* with that diagnostic.
     @Test func everyNodeGeneratesAsAOneNodeGraph() throws {
         let material3DIDs = Set(BuiltinNodes.material3D.map(\.id))
         for def in reg.all where def.id != "output.fragment" && !material3DIDs.contains(def.id) {
