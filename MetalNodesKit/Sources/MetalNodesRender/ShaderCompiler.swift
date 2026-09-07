@@ -8,6 +8,15 @@ public struct CompiledPipeline: @unchecked Sendable {
     public let state: MTLRenderPipelineState
     public let shader: GeneratedShader
     public let generation: UInt64
+    /// Depth testing for a 3D program (spec §23.5); `nil` for the fullscreen path, which has no
+    /// depth attachment and must not set one.
+    public let depthStencilState: MTLDepthStencilState?
+
+    public init(state: MTLRenderPipelineState, shader: GeneratedShader, generation: UInt64,
+                depthStencilState: MTLDepthStencilState? = nil) {
+        self.state = state; self.shader = shader; self.generation = generation
+        self.depthStencilState = depthStencilState
+    }
 }
 
 public enum CompileSeverity: String, Sendable, Hashable {
@@ -39,7 +48,10 @@ public enum ShaderCompilerError: Error { case vertexFunctionMissing, fragmentFun
 /// generations are per-`EditorModel` counters and are only echoed back here. Each client drops its
 /// own stale results (`EditorModel.compileNow` compares the echoed generation against its own).
 public actor ShaderCompiler {
-    private struct CacheKey: Hashable { let source: String; let fastMath: Bool }
+    private struct CacheKey: Hashable { let source: String; let fastMath: Bool; let depth: Bool }
+
+    /// The 3D preview's depth attachment (spec §23.5). `MTKView.depthStencilPixelFormat` must match.
+    public static let depthPixelFormat: MTLPixelFormat = .depth32Float
 
     private let device: MTLDevice
     private let vertexFunction: MTLFunction
@@ -47,6 +59,14 @@ public actor ShaderCompiler {
     private var cache: [CacheKey: MTLRenderPipelineState] = [:]
     private var lru: [CacheKey] = []          // least recent first
     public let cacheLimit: Int
+
+    // A `lazy var` inside an `actor` is fine — access is already serialized.
+    private lazy var depthState: MTLDepthStencilState? = {
+        let d = MTLDepthStencilDescriptor()
+        d.depthCompareFunction = .less
+        d.isDepthWriteEnabled = true
+        return device.makeDepthStencilState(descriptor: d)
+    }()
 
     public init(device: MTLDevice, pixelFormat: MTLPixelFormat = .bgra8Unorm, cacheLimit: Int = 64) throws {
         self.device = device
@@ -60,11 +80,11 @@ public actor ShaderCompiler {
     public var cacheCount: Int { cache.count }
 
     public func isCached(_ shader: GeneratedShader, fastMath: Bool = true) -> Bool {
-        cache[CacheKey(source: shader.source, fastMath: fastMath)] != nil
+        cache[CacheKey(source: shader.source, fastMath: fastMath, depth: shader.target == .realityKit)] != nil
     }
 
     public func compile(_ shader: GeneratedShader, generation: UInt64, fastMath: Bool = true) async -> CompileResult {
-        let key = CacheKey(source: shader.source, fastMath: fastMath)
+        let key = CacheKey(source: shader.source, fastMath: fastMath, depth: shader.target == .realityKit)
 
         if let hit = cache[key] {
             touch(key)
@@ -79,10 +99,23 @@ public actor ShaderCompiler {
             guard let frag = lib.makeFunction(name: shader.fragmentFunctionName) else {
                 throw ShaderCompilerError.fragmentFunctionMissing
             }
+            // A 3D program brings its own vertex stage — that is what makes a geometry modifier
+            // visible in the preview (spec §23.5). Every 2D program uses the static one compiled
+            // in `init`.
+            let vertex: MTLFunction
+            if shader.vertexFunctionName == VertexStage.functionName {
+                vertex = vertexFunction
+            } else if let generated = lib.makeFunction(name: shader.vertexFunctionName) {
+                vertex = generated
+            } else {
+                throw ShaderCompilerError.vertexFunctionMissing
+            }
             let desc = MTLRenderPipelineDescriptor()
-            desc.vertexFunction = vertexFunction
+            desc.vertexFunction = vertex
             desc.fragmentFunction = frag
             desc.colorAttachments[0].pixelFormat = pixelFormat
+            let needsDepth = shader.target == .realityKit
+            if needsDepth { desc.depthAttachmentPixelFormat = ShaderCompiler.depthPixelFormat }
             let state = try await device.makeRenderPipelineState(descriptor: desc)
             insert(key, state)
             return finish(state, shader, generation)
@@ -93,7 +126,8 @@ public actor ShaderCompiler {
     }
 
     private func finish(_ state: MTLRenderPipelineState, _ shader: GeneratedShader, _ generation: UInt64) -> CompileResult {
-        .success(CompiledPipeline(state: state, shader: shader, generation: generation))
+        .success(CompiledPipeline(state: state, shader: shader, generation: generation,
+                                  depthStencilState: shader.target == .realityKit ? depthState : nil))
     }
 
     private func touch(_ key: CacheKey) {

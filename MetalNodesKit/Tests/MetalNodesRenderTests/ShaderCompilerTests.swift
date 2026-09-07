@@ -341,3 +341,18 @@ import MetalNodesCore
         }
     }
 }
+
+@Suite struct VertexFunctionNameTests {
+    /// `MetalNodesCore` cannot import `MetalNodesRender`, so `GeneratedShader.vertexFunctionName`
+    /// defaults to the string literal. This is the guard against the two drifting apart.
+    @Test func theDefaultVertexFunctionNameMatchesTheStaticStage() {
+        #expect(VertexStage.functionName == "mn_fullscreenVertex")
+        var doc = ShaderDocument()
+        var g = Graph()
+        let t = NodeInstance(id: NodeID(), kind: .builtin("output.fragment"), position: .zero)
+        g.nodes[t.id] = t
+        doc.root = g
+        let shader = try? ShaderGenerator.generate(doc, target: .fragment)
+        #expect(shader?.vertexFunctionName == VertexStage.functionName)
+    }
+}
