@@ -27,6 +27,14 @@ public enum GraphValidator {
     /// Fragment convenience, kept so existing callers compile unchanged.
     public static func terminal(in graph: Graph) -> NodeID? { terminal(in: graph, target: .fragment) }
 
+    /// Whether `kind` is either target's terminal (spec §23.2). A terminal is never valid inside a
+    /// definition — the `.definition` branch below already says so — so an operation that would
+    /// place a node into one can refuse at the source instead of producing a document only
+    /// `validate` catches afterward.
+    public static func isTerminal(_ kind: NodeKind) -> Bool {
+        kind == .builtin(fragmentTerminalID) || kind == .builtin(materialTerminalID)
+    }
+
     /// The whole document: the root and every definition (spec §20.2, §20.4).
     public static func validate(document doc: ShaderDocument, registry: NodeRegistry, target: OutputTarget) -> [Diagnostic] {
         var out = validate(graph: doc.root, path: .root, document: doc, registry: registry, target: target)

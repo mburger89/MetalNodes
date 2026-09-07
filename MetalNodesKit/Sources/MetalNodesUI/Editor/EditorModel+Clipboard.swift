@@ -46,7 +46,8 @@ extension EditorModel {
 
     private func insert(_ clip: GraphClipboard, at origin: CGPoint, undoName: String) -> Set<NodeID> {
         let (nodes, edges) = clip.materialize(at: origin)
-        guard !refusesRecursion(nodes, definitions: clip.definitions) else { return [] }
+        guard !refusesRecursion(nodes, definitions: clip.definitions),
+              !refusesTerminalIntoDefinition(nodes) else { return [] }
         let (stickies, frames) = clip.materializeComments(at: origin)
         let ids = Set(nodes.map(\.id))
         // Only ids the clipboard has both the manifest entry and bytes for become insertable
@@ -79,5 +80,16 @@ extension EditorModel {
             return true
         }
         return false
+    }
+
+    /// Mirrors `GroupOperations.group`'s refusal (spec §23.2): a Fragment/Material Output is never
+    /// valid inside a definition, so a paste that would drop one there — the copy having been made
+    /// from the root, or from an already-corrupt document — is refused whole, with a notice, rather
+    /// than silently landing a terminal where `validate` will only catch it afterward.
+    private func refusesTerminalIntoDefinition(_ nodes: [NodeInstance]) -> Bool {
+        guard case .definition = activePath, let terminal = nodes.first(where: { GraphValidator.isTerminal($0.kind) }) else { return false }
+        let label = terminal.kind == .builtin(GraphValidator.materialTerminalID) ? "Material Output" : "Fragment Output"
+        showNotice("\(label) cannot be pasted into a group")
+        return true
     }
 }

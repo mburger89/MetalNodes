@@ -254,6 +254,43 @@ import Testing
         #expect(GroupOperations.group([mul], in: .definition(g.definition), of: g.document, registry: reg, name: nil) != nil)  // nested group inside is fine
     }
 
+    /// D1 fix: ⌘A + ⌘G must not be able to move the graph's only Fragment Output into the new
+    /// definition — that leaves the root without one and the document fails validation, recoverable
+    /// only by undo. Grouping every node (the terminal included) is refused whole, and the document
+    /// is byte-for-byte unchanged (no definition created, no nodes removed from root).
+    @Test func groupingRefusesASelectionContainingTheFragmentTerminal() throws {
+        let doc = ShaderDocument.sample()
+        let all = Set(doc.root.nodes.keys)
+        #expect(all.contains { doc.root.nodes[$0]!.kind == .builtin(GraphValidator.fragmentTerminalID) })
+        #expect(GroupOperations.group(all, in: .root, of: doc, registry: reg, name: nil) == nil)
+        // A refusal must not mutate anything the caller can observe (EditorModel relies on this to
+        // detect "nothing was created" and show a notice) — same document, same definitions.
+        #expect(doc.definitions.isEmpty)
+    }
+
+    /// Same corruption, the RealityKit target's terminal (spec §23.2): `output.material` must be
+    /// refused exactly like `output.fragment` is.
+    @Test func groupingRefusesASelectionContainingTheMaterialTerminal() throws {
+        var doc = ShaderDocument()
+        let src = NodeInstance(kind: .builtin("input.float"))
+        let terminal = NodeInstance(kind: .builtin("output.material"))
+        doc.root.nodes[src.id] = src
+        doc.root.nodes[terminal.id] = terminal
+        #expect(GroupOperations.group([src.id, terminal.id], in: .root, of: doc, registry: reg, name: nil) == nil)
+        #expect(doc.definitions.isEmpty)
+    }
+
+    /// The other half of the regression gate (D1): a normal selection that excludes the terminal
+    /// must keep working exactly as before — the guard must not have widened past terminals.
+    @Test func groupingASelectionThatExcludesTheTerminalStillWorks() throws {
+        let (doc, mul, sine, _, _, _) = sample()
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin(GraphValidator.fragmentTerminalID) }!.id
+        let r = try #require(GroupOperations.group([mul, sine], in: .root, of: doc, registry: reg, name: nil))
+        #expect(r.document.definitions.count == 1)
+        #expect(r.document.root.nodes[terminal] != nil)                     // the terminal stayed in root
+        #expect(GraphValidator.validate(document: r.document, registry: reg, target: .fragment).isEmpty)
+    }
+
     @Test func namesAreUnique() {
         var doc = ShaderDocument()
         let a = GroupDefinition.make(name: "Group"); doc.definitions[a.id] = a

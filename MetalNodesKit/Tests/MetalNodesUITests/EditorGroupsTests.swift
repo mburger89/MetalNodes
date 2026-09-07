@@ -356,6 +356,23 @@ import MetalNodesRender
         #expect(m.document.definitions[gid]!.graph == before)
     }
 
+    /// D1 fix: copying the root's Fragment Output and pasting it into an open definition would
+    /// otherwise drop a terminal where one is never valid (spec §23.2) — the same corruption class
+    /// as ⌘A + ⌘G, through the clipboard instead. Refused whole, with a notice, doc unchanged.
+    @Test func pastingTheFragmentTerminalIntoADefinitionIsRefused() {
+        let m = model()
+        let terminal = node(m, "output.fragment")
+        m.select(nodes: [terminal], mode: .replace)
+        m.copySelection()
+        m.select(nodes: [node(m, "math.math", op: "multiply")], mode: .replace)
+        let gid = m.groupSelection()!
+        m.diveIn(m.selection.first!)
+        let before = m.document.definitions[gid]!.graph
+        #expect(m.paste(at: .zero).isEmpty)
+        #expect(m.notice == "Fragment Output cannot be pasted into a group")
+        #expect(m.document.definitions[gid]!.graph == before)
+    }
+
     /// A refused ⌘G says so rather than doing nothing (spec §20.6): a selection of nothing but
     /// pseudo-nodes leaves no editable selection to group.
     @Test func aRefusedGroupShowsANotice() {

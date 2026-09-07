@@ -32,8 +32,12 @@ public enum GroupOperations {
                              name: String?) -> (document: ShaderDocument, definition: GroupID, instance: NodeID)? {
         let g = doc[path]
         let picked = ids.compactMap { g.nodes[$0] }.sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        // A terminal (spec §23.2) is never valid inside a definition (`GraphValidator.isTerminal`,
+        // Validation.swift's `.definition` branch) — refuse it here rather than let ⌘A + ⌘G
+        // silently relocate the graph's only Fragment/Material Output and leave the root without one.
         guard picked.count == ids.count, !picked.isEmpty,
-              !picked.contains(where: { $0.kind == .groupInput || $0.kind == .groupOutput }) else { return nil }
+              !picked.contains(where: { $0.kind == .groupInput || $0.kind == .groupOutput || GraphValidator.isTerminal($0.kind) })
+        else { return nil }
         // Recursion: grouping inside definition D a selection that instantiates an ancestor of D is impossible
         // by construction (D would already contain itself), but a nested instance of D itself must be refused.
         if case .definition(let host) = path, picked.contains(where: { $0.kind == .group(host) }) { return nil }
