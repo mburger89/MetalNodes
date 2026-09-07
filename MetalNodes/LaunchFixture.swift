@@ -6,7 +6,11 @@ import MetalNodesCore
 /// the XCUITests can address nodes and sockets by their ids (spec §22.8). `UserDefaults` sees the
 /// launch arguments through `NSArgumentDomain`, so no parsing is needed.
 enum LaunchFixture {
-    static func document() -> ShaderDocument {
+    /// Touches no main-actor state — just `UserDefaults` and plain `Sendable` factories from
+    /// `MetalNodesCore` — so it stays `nonisolated` rather than picking up the app target's
+    /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`. That lets `DocumentGroup(newDocument:)` call
+    /// it from the synchronous, non-isolated closure SwiftUI requires there.
+    nonisolated static func document() -> ShaderDocument {
         switch UserDefaults.standard.string(forKey: "mnFixture") {
         case "sample": .sample()
         case "textured": .textured()
