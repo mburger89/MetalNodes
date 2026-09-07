@@ -11,6 +11,7 @@ public enum MaterialValidation {
         guard let terminal = GraphValidator.terminal(in: doc.root, target: .realityKit) else { return [] }
         return stageDiagnostics(doc, registry: registry, terminal: terminal, reachable: reachable)
             + targetDiagnostics(doc, registry: registry, reachable: reachable)
+            + definitionNodeDiagnostics(doc, registry: registry, reachable: reachable)
             + textureDiagnostics(doc, reachable: reachable)
             + lightingDiagnostics(doc, terminal: terminal)
     }
@@ -87,14 +88,48 @@ public enum MaterialValidation {
         }
     }
 
+    /// The nodes only the RealityKit target can emit — the 3D inputs, not the terminal, which is
+    /// what makes the document a material in the first place.
+    private static let threeDimensionalOnly: Set<String> =
+        Set(BuiltinNodes.material3D.map(\.id)).subtracting(["output.material"])
+
     /// The mirror rule: a node that only RealityKit can emit, reachable under another target.
     /// Applies to every target *but* `.realityKit`, which is why it sits outside the guard above.
     private static func foreignNodeDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry,
                                                reachable: [GroupDefinition]) -> [Diagnostic] {
-        let materialOnly = Set(BuiltinNodes.material3D.map(\.id)).subtracting(["output.material"])
-        return allNodes(doc, reachable: reachable).compactMap { inst, _ in
-            guard case .builtin(let id) = inst.kind, materialOnly.contains(id) else { return nil }
+        allNodes(doc, reachable: reachable).compactMap { inst, _ in
+            guard case .builtin(let id) = inst.kind, threeDimensionalOnly.contains(id) else { return nil }
             return Diagnostic(.error, "\(title(inst, doc, registry)) needs the RealityKit Material target", node: inst.id)
+        }
+    }
+
+    /// The *inverse* of `foreignNodeDiagnostics`, and the same walk: under `.realityKit` a 3D input
+    /// is legal in the root and illegal inside a group definition.
+    ///
+    /// A group function is target-agnostic by design — `EmitEnvironment.groupFunction`'s `sys`
+    /// carries `uv`/`time`/`resolution`/`mouse` and nothing else, because one emitted function
+    /// serves every target and every caller (spec §23.4). It therefore cannot spell
+    /// `params.geometry().world_position()`, and without this rule a World Position inside a
+    /// definition emitted `v0 = /* ?sys.worldPosition */;` into *both* the preview program (a raw
+    /// MSL error the user cannot act on) and `exportSource` (a `.metal` file that will not
+    /// compile). Rule 2 does not catch it — these nodes carry both stages — and rule 3 refuses only
+    /// Mouse and Resolution, which have no counterpart in *any* material stage.
+    ///
+    /// Reachable definitions only, and inside each one only what is wire-reachable from its own
+    /// Group Output — the breadth rule 2 uses and `GroupCodegen` actually emits. A 3D input left
+    /// orphaned on a definition's canvas reaches no function, so it produces no marker and must not
+    /// be flagged (fix round 1 settled that principle for rule 2).
+    private static func definitionNodeDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry,
+                                                  reachable: [GroupDefinition]) -> [Diagnostic] {
+        reachable.flatMap { d -> [Diagnostic] in
+            guard let output = d.outputNode else { return [] }
+            return TopoSort.order(d.graph, from: output).compactMap { nodeID -> Diagnostic? in
+                guard let inst = d.graph.nodes[nodeID], case .builtin(let id) = inst.kind,
+                      threeDimensionalOnly.contains(id) else { return nil }
+                return Diagnostic(.error,
+                    "A RealityKit material reads \(title(inst, doc, registry)) in the root graph — move this node out of the group",
+                    node: inst.id)
+            }
         }
     }
 

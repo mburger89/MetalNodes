@@ -272,4 +272,71 @@ enum MaterialFixture {
         #expect(errors(makeDoc(wireVertexID: false)).isEmpty)
         #expect(errors(makeDoc(wireVertexID: true)).contains { $0.message.contains("Vertex ID") })
     }
+
+    // Final review — Finding 2 (Important): a 3D input inside a group definition.
+
+    /// A group function is target-agnostic by design: `EmitEnvironment.groupFunction`'s `sys` has
+    /// only `uv`/`time`/`resolution`/`mouse`, because one emitted function serves every target
+    /// (spec §23.4). So a World Position inside a reachable definition emitted
+    /// `v0 = /* ?sys.worldPosition */;` into **both** the preview program and `exportSource` — a
+    /// raw MSL error the user cannot act on, and an exported `.metal` that will not compile.
+    ///
+    /// Rule 2 could not catch it (these nodes carry both stages) and rule 3 refused only Mouse and
+    /// Resolution. Reachable by selecting a node and choosing Group Selection.
+    private func wrapperDocument(wireIntoTheGroupOutput: Bool, nodeID: String = "input.worldPosition") -> ShaderDocument {
+        var doc = MaterialFixture.document()
+        var def = GroupDefinition(id: GroupID(), name: "Wrapper",
+                                  outputs: [SocketDecl(name: "out", type: .concrete(.float3))])
+        var inner = Graph()
+        let gin = NodeInstance(id: NodeID(), kind: .groupInput, position: .zero)
+        let gout = NodeInstance(id: NodeID(), kind: .groupOutput, position: .zero)
+        let fallback = NodeInstance(id: NodeID(), kind: .builtin("input.float3"), position: .zero)
+        let threeD = NodeInstance(id: NodeID(), kind: .builtin(nodeID), position: .zero)
+        for n in [gin, gout, fallback, threeD] { inner.nodes[n.id] = n }
+        let source = wireIntoTheGroupOutput
+            ? SocketRef(threeD.id, NodeRegistry.builtin[nodeID]!.outputs.first!.name)
+            : SocketRef(fallback.id, "out")
+        inner.inputs[SocketRef(gout.id, "out")] = source
+        def.graph = inner
+        doc.definitions[def.id] = def
+        let instance = NodeInstance(id: NodeID(), kind: .group(def.id), position: .zero)
+        doc.root.nodes[instance.id] = instance
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        doc.root.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(instance.id, "out")
+        return doc
+    }
+
+    @Test func aThreeDimensionalInputInsideAGroupIsRefused() {
+        let diags = errors(wrapperDocument(wireIntoTheGroupOutput: true))
+        #expect(diags.contains { $0.message.contains("World Position") && $0.message.contains("out of the group") })
+        // Anchored on the offending node, so the canvas can point at it.
+        #expect(diags.first { $0.message.contains("out of the group") }?.node != nil)
+    }
+
+    /// Every 3D input, not just the one the review reproduced. Vertex ID is geometry-only, so it
+    /// also trips rule 2 from this surface-side instance — either refusal keeps it out of source.
+    @Test func everyThreeDimensionalInputInsideAGroupIsRefused() {
+        for def in BuiltinNodes.material3D where def.id != "output.material" {
+            let doc = wrapperDocument(wireIntoTheGroupOutput: true, nodeID: def.id)
+            #expect(!errors(doc).isEmpty, "\(def.id) was accepted inside a group definition")
+        }
+    }
+
+    /// The mirror: the same node orphaned on the definition's canvas reaches no emitted function,
+    /// so it must not be flagged — the principle fix round 1 settled for rule 2.
+    @Test func anOrphanedThreeDimensionalGroupNodeIsNotFlagged() {
+        #expect(errors(wrapperDocument(wireIntoTheGroupOutput: false)).isEmpty)
+    }
+
+    /// The consequence, end to end: neither product may carry an unresolved `{sys.…}` marker.
+    /// Before the rule existed both `source` and `exportSource` contained
+    /// `/* ?sys.worldPosition */`; now generation refuses the document outright.
+    @Test func aGroupedThreeDimensionalInputNeverReachesGeneratedSource() {
+        let doc = wrapperDocument(wireIntoTheGroupOutput: true)
+        #expect(throws: GenerationError.self) {
+            let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+            #expect(!shader.source.contains("?sys."))
+            #expect(!(shader.exportSource ?? "").contains("?sys."))
+        }
+    }
 }
