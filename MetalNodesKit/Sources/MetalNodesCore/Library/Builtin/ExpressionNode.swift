@@ -42,20 +42,17 @@ public enum ExpressionNode {
     }
 
     /// The instance's formula as an emitter template: `a * 2.0` becomes `{out.out} = {in.a} * 2.0;`.
-    /// Identifiers are replaced by whole-token match, so `a` inside `saturate` is untouched. The
-    /// pattern is built from an escaped literal, so a name that happens to contain regex
-    /// metacharacters (it never does — `identifiers(in:)` only yields MSL identifier tokens — but
-    /// nothing here should ever `try!`-trap if that changed) cannot make the `Regex` malformed.
+    /// Substitution goes through `MSLScanner.rewritingIdentifiers`, which replaces exactly the
+    /// token occurrences `identifiers(in:)` would name — so `a` inside `saturate` is untouched and,
+    /// unlike a `\b`-bounded regex, so is a real swizzle like `col.rgb` (`\b` is a Unicode word
+    /// boundary, and `.` between letters does not break there, so a regex route silently never
+    /// matches `col` in `col.rgb` at all).
     static func template(for node: NodeInstance) -> String {
         let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
-        guard !formula.isEmpty else { return "{out.out} = 0.0;" }
-        var out = formula
-        for name in MSLScanner.identifiers(in: formula) {
-            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: name))\\b"
-            guard let re = try? Regex(pattern) else { continue }
-            out = out.replacing(re, with: "{in.\(name)}")
-        }
-        return "{out.out} = \(out);"
+        let trimmed = formula.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "{out.out} = 0.0;" }
+        let body = MSLScanner.rewritingIdentifiers(in: trimmed) { "{in.\($0)}" }
+        return "{out.out} = \(body);"
     }
 
     /// The shape of one instance: sockets from its formula, output from its type param.

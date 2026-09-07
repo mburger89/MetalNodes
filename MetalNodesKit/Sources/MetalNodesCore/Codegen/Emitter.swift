@@ -112,9 +112,11 @@ enum Emitter {
                 // The Expression node's registry def carries no sockets and an empty body — its
                 // real shape is per-instance (spec §24.2) — so `referencedNames` would see nothing
                 // to request. Every socket its own shape declares is, by construction, named in
-                // its formula, so all of them are requested unconditionally.
+                // its formula, so all of them are requested unconditionally. `shape(inst)` mirrors
+                // `def.inputs` exactly for every other builtin (`NodeShape(def:)` copies it
+                // verbatim), so reading through it here is a no-op everywhere but Expression.
                 let isExpression = defID == ExpressionNode.id
-                let declInputs = isExpression ? (shape(inst)?.inputs ?? []) : def.inputs
+                let declInputs = shape(inst)?.inputs ?? def.inputs
                 let refs = referencedNames(in: def.body, chosen: chosenVariant(def, inst))
                 let custom: Bool = { if case .custom = def.body { return true } else { return false } }()
                 requestUnwiredInputs(id, declInputs.filter { isExpression || custom || refs.inputs.contains($0.name) }, r)
@@ -185,9 +187,10 @@ enum Emitter {
                 // Same reasoning as pass 1: an Expression's declared sockets live on its instance
                 // shape, not the registry def, so `declareOutputs`/`inputExpressions` must read
                 // from there or the emitted `{out.out}`/`{in.x}` placeholders resolve to nothing.
+                // `shape(inst)` is `def.inputs`/`.outputs` verbatim for every other builtin.
                 let isExpression = defID == ExpressionNode.id
-                let declOutputs = isExpression ? (shape(inst)?.outputs ?? []) : def.outputs
-                let declInputs = isExpression ? (shape(inst)?.inputs ?? []) : def.inputs
+                let declOutputs = shape(inst)?.outputs ?? def.outputs
+                let declInputs = shape(inst)?.inputs ?? def.inputs
                 let outputs = declareOutputs(id, declOutputs, r)
                 let inputs = inputExpressions(id, declInputs, r)
                 out.inputExpressions[id] = inputs

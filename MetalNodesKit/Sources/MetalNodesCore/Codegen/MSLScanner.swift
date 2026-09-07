@@ -29,6 +29,10 @@ public enum MSLScanner {
         let line: Int
         /// True when the previous non-space token was `.`, so this is a member or swizzle.
         let afterDot: Bool
+        /// This token's start, as an index into the `Character` array `tokenise` walks — lets a
+        /// caller splice the original source losslessly (`rewritingIdentifiers`) instead of
+        /// re-deriving formatting the scanner never tried to preserve.
+        let start: Int
     }
 
     /// MSL keywords, type names, qualifiers and the stdlib functions a formula may call.
@@ -52,16 +56,47 @@ public enum MSLScanner {
         "smoothstep", "sqrt", "step", "tan", "tanh", "trunc", "isnan", "isinf", "select",
     ]
 
+    /// A token is a free identifier — a socket, not a keyword/type/stdlib call, a swizzle/member,
+    /// or a name bound earlier in the same text — under exactly this rule. `identifiers(in:)` and
+    /// `rewritingIdentifiers(in:with:)` both call this so the two can never disagree about which
+    /// occurrences are free.
+    private static func isFreeIdentifier(_ t: Token, declared: Set<String>) -> Bool {
+        t.kind == .identifier && !t.afterDot && !reservedNames.contains(t.text) && !declared.contains(t.text)
+    }
+
     /// Free identifiers in first-appearance order: not reserved, not a member after `.`, and not
     /// bound by a declaration earlier in the same text.
     public static func identifiers(in source: String) -> [String] {
         let tokens = tokenise(source)
         let declared = declaredLocals(tokens)
         var seen = Set<String>(), out: [String] = []
-        for t in tokens where t.kind == .identifier && !t.afterDot {
-            guard !reservedNames.contains(t.text), !declared.contains(t.text) else { continue }
+        for t in tokens where isFreeIdentifier(t, declared: declared) {
             if seen.insert(t.text).inserted { out.append(t.text) }
         }
+        return out
+    }
+
+    /// Rewrites `source`, replacing every occurrence of a free identifier — exactly the token
+    /// occurrences `identifiers(in:)` would name, by the same rule — with `replacement(name)`.
+    /// Everything else passes through unchanged: punctuation, numbers, whitespace, comments, and
+    /// crucially a member/swizzle access after `.` (`col.rgb` keeps its `.rgb`; only a *bound*
+    /// `col` before the dot is ever a candidate). Splicing the original characters around each
+    /// substituted span — rather than re-joining tokens with synthesized spacing — is what keeps
+    /// the untouched text byte-for-byte, which a whole-token regex on `\b` cannot do: `\b` is a
+    /// Unicode word boundary, and `.` between two letters is *not* a break there, so `\bcol\b`
+    /// never matches inside `col.rgb` at all (spec §24.2).
+    static func rewritingIdentifiers(in source: String, with replacement: (String) -> String) -> String {
+        let chars = Array(source)
+        let tokens = tokenise(source)
+        let declared = declaredLocals(tokens)
+        var out = ""
+        var cursor = 0
+        for t in tokens where isFreeIdentifier(t, declared: declared) {
+            if t.start > cursor { out += String(chars[cursor..<t.start]) }
+            out += replacement(t.text)
+            cursor = t.start + t.text.count
+        }
+        if cursor < chars.count { out += String(chars[cursor...]) }
         return out
     }
 
@@ -294,26 +329,28 @@ public enum MSLScanner {
             }
             if c.isWhitespace { i += 1; continue }
             if c.isLetter || c == "_" {
+                let start = i
                 var s = ""
                 while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
                     s.append(chars[i]); i += 1
                 }
-                out.append(Token(kind: .identifier, text: s, line: line, afterDot: afterDot))
+                out.append(Token(kind: .identifier, text: s, line: line, afterDot: afterDot, start: start))
                 afterDot = false
                 continue
             }
             if c.isNumber {
+                let start = i
                 var s = ""
                 while i < chars.count, chars[i].isNumber || chars[i] == "." || chars[i] == "e"
                     || chars[i] == "E" || chars[i] == "f" || chars[i] == "F"
                     || (chars[i] == "-" && (s.last == "e" || s.last == "E")) {
                     s.append(chars[i]); i += 1
                 }
-                out.append(Token(kind: .number, text: s, line: line, afterDot: false))
+                out.append(Token(kind: .number, text: s, line: line, afterDot: false, start: start))
                 afterDot = false
                 continue
             }
-            out.append(Token(kind: .punctuation, text: String(c), line: line, afterDot: false))
+            out.append(Token(kind: .punctuation, text: String(c), line: line, afterDot: false, start: i))
             afterDot = (c == ".")
             i += 1
         }
