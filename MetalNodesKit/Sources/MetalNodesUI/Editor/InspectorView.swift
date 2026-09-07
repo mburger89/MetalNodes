@@ -191,6 +191,20 @@ public struct InspectorView: View {
                 ForEach(OutputTarget.all, id: \.self) { Text($0.title).tag($0) }
             }
             .pickerStyle(.menu)
+            if s.target == .realityKit {
+                Picker("Lighting", selection: Binding(get: { s.lightingModel },
+                                                      set: { m in var n = s; n.lightingModel = m; model.apply(.setSettings(n)) })) {
+                    ForEach(MaterialLightingModel.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Mesh", selection: Binding(get: { model.viewState.previewMesh },
+                                                  set: { model.setPreviewMesh($0) })) {
+                    ForEach(PreviewMesh.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.menu)
+                Text("The preview approximates RealityKit's lit model with Cook-Torrance GGX. It shows the material's shape, not RealityKit's exact output.")
+                    .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            }
             HStack {
                 Text("Export name").font(.caption)
                 TextField("metalNodesShader", text: $exportNameDraft)
@@ -203,11 +217,14 @@ public struct InspectorView: View {
             HStack {
                 // Both actions read `settings.exportName`, so an uncommitted edit must land first.
                 Button("Copy Swift snippet") { commitExportName(); _ = model.copySwiftSnippet() }
-                    .disabled(s.target.stitchableKind == nil)
+                    .disabled(s.target.stitchableKind == nil && s.target != .realityKit)
                 Button("Export…") { commitExportName(); model.requestExport() }
             }
             .controlSize(.small)
-            if s.target.stitchableKind != nil {
+            if s.target == .realityKit {
+                Text("Export writes the .metal file with both [[visible]] functions and a .swift snippet that builds the CustomMaterial. Parameter values are baked in; re-export after changing one.")
+                    .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            } else if s.target.stitchableKind != nil {
                 Text("Preview renders the same function through a fragment wrapper. Export writes the .metal file and a .swift extension with the ShaderLibrary call in argument order.")
                     .font(.caption2).foregroundStyle(DraculaToken.muted.color)
             } else {

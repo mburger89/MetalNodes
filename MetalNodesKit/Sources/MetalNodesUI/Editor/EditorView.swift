@@ -10,6 +10,7 @@ public struct EditorView: View {
     @State private var exportError: String?
     /// A chooser is on screen; a second request must not stack another one behind it.
     @State private var exporting = false
+    @State private var lastOrbitTranslation: CGSize = .zero
 
     public init(model: EditorModel, device: MTLDevice, services: EditorServices = .platform) {
         self.model = model
@@ -100,9 +101,18 @@ public struct EditorView: View {
                         Color.clear
                             .contentShape(Rectangle())
                             .onContinuousHover { phase in
+                                guard model.document.settings.target != .realityKit else { return }
                                 if case .active(let p) = phase { setMouse(p, in: geo.size) }
                             }
-                            .gesture(DragGesture(minimumDistance: 0).onChanged { g in setMouse(g.location, in: geo.size) })
+                            .gesture(DragGesture(minimumDistance: 0)
+                                .onChanged { g in
+                                    if model.document.settings.target == .realityKit {
+                                        orbit(g)
+                                    } else {
+                                        setMouse(g.location, in: geo.size)
+                                    }
+                                }
+                                .onEnded { _ in lastOrbitTranslation = .zero })
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -145,6 +155,17 @@ public struct EditorView: View {
     private func setMouse(_ p: CGPoint, in size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         model.preview.mouse = SIMD2(Float(min(max(p.x / size.width, 0), 1)), Float(1 - min(max(p.y / size.height, 0), 1)))
+    }
+
+    /// Orbits the 3D preview. `DragGesture` reports cumulative translation, so the delta is the
+    /// difference from the last event — the same shape the canvas's pan uses.
+    private func orbit(_ g: DragGesture.Value) {
+        let dx = Float(g.translation.width - lastOrbitTranslation.width)
+        let dy = Float(g.translation.height - lastOrbitTranslation.height)
+        lastOrbitTranslation = g.translation
+        var camera = model.viewState.orbit
+        camera.orbit(dx: dx, dy: dy)
+        model.setOrbit(camera)
     }
 
     private func rangeBinding(lower: Bool) -> Binding<Float> {

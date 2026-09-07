@@ -42,3 +42,25 @@ import CoreGraphics
         #expect(text.contains("\"showsInspector\":true"))
     }
 }
+
+@Suite struct EditorViewState3DTests {
+    @Test func meshAndOrbitDefaultAndRoundTrip() throws {
+        var s = EditorViewState()
+        #expect(s.previewMesh == .sphere)
+        #expect(s.orbit == OrbitCamera.default)
+        s.previewMesh = .torus
+        s.orbit.distance = 4.2
+        let back = try JSONDecoder().decode(EditorViewState.self, from: JSONEncoder().encode(s))
+        #expect(back.previewMesh == .torus)
+        #expect(back.orbit.distance == 4.2)
+    }
+
+    /// Every document that predates M7 must open with the defaults, not fail to decode.
+    @Test func viewStateWithoutTheNewFieldsDecodes() throws {
+        let json = Data(#"{"showsCode":true}"#.utf8)
+        let s = try JSONDecoder().decode(EditorViewState.self, from: json)
+        #expect(s.previewMesh == .sphere)
+        #expect(s.orbit == OrbitCamera.default)
+        #expect(s.showsCode)
+    }
+}

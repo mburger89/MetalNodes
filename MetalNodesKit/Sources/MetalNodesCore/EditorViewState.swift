@@ -44,6 +44,10 @@ public struct EditorViewState: Sendable, Hashable {
     /// The iPad's trailing inspector column — preview, inspector and (with `showsCode`) the code
     /// panel — on by default (spec §22.3).
     public var showsInspector = true
+    /// The 3D preview's mesh and camera (spec §23.8). View state: persisted with the document,
+    /// never snapshotted, never undone.
+    public var previewMesh: PreviewMesh = .sphere
+    public var orbit: OrbitCamera = .default
     public init() {}
 
     /// The graph the editor is bound to: the last dived instance's definition, else the edited
@@ -61,6 +65,7 @@ extension EditorViewState: Codable {
     private enum Keys: String, CodingKey {
         case cameras, editingStack, editingDefinition, viewer, viewerPath, viewerDefinition, selection
         case selectedComments, showsCode, showsMinimap, canvasMode, showsInspector
+        case previewMesh, orbit
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -76,6 +81,8 @@ extension EditorViewState: Codable {
         showsMinimap = try c.decodeIfPresent(Bool.self, forKey: .showsMinimap) ?? true
         canvasMode = try c.decodeIfPresent(CanvasMode.self, forKey: .canvasMode) ?? .pointer
         showsInspector = try c.decodeIfPresent(Bool.self, forKey: .showsInspector) ?? true
+        previewMesh = try c.decodeIfPresent(PreviewMesh.self, forKey: .previewMesh) ?? .sphere
+        orbit = try c.decodeIfPresent(OrbitCamera.self, forKey: .orbit) ?? .default
     }
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -87,5 +94,6 @@ extension EditorViewState: Codable {
         try c.encode(selectedComments, forKey: .selectedComments)
         try c.encode(showsCode, forKey: .showsCode); try c.encode(showsMinimap, forKey: .showsMinimap)
         try c.encode(canvasMode, forKey: .canvasMode); try c.encode(showsInspector, forKey: .showsInspector)
+        try c.encode(previewMesh, forKey: .previewMesh); try c.encode(orbit, forKey: .orbit)
     }
 }

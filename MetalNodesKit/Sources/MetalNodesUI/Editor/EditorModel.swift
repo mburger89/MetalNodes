@@ -129,6 +129,20 @@ public final class EditorModel {
             own.groupsByEvent = false
             return own
         }()
+        self.preview.mesh = viewState.previewMesh
+        self.preview.orbit = viewState.orbit
+    }
+
+    /// The 3D preview's mesh and camera (spec §23.5, §23.8). View state, never undone; mirrored
+    /// into `preview` so the renderer's next frame picks it up.
+    public func setPreviewMesh(_ mesh: PreviewMesh) {
+        viewState.previewMesh = mesh
+        preview.mesh = mesh
+    }
+
+    public func setOrbit(_ orbit: OrbitCamera) {
+        viewState.orbit = orbit
+        preview.orbit = orbit
     }
 
     /// Replaces everything the package owns because the file changed underneath the editor —
@@ -146,6 +160,8 @@ public final class EditorModel {
 
         document = package.document
         viewState = package.viewState
+        preview.mesh = viewState.previewMesh
+        preview.orbit = viewState.orbit
         // The GPU cache is keyed by `AssetID` alone, and a reseed can bring different bytes under an
         // id it already holds (relink an asset, then revert): drop it all before the new bytes land,
         // so the rebind `textures` triggers decodes them afresh.
