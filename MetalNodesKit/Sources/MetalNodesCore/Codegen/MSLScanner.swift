@@ -10,6 +10,7 @@ public enum MSLScanner {
             case preprocessor(String)
             case unbalancedBrace
             case bareReturn
+            case unbracedLoopBody
         }
         public let kind: Kind
         /// 0-based line within the user's own text.
@@ -107,29 +108,40 @@ public enum MSLScanner {
         for t in tokens where t.kind == .identifier && t.text == "return" && !t.afterDot {
             out.append(Violation(kind: .bareReturn, line: t.line))
         }
+        // Run over the same comment-blanked text the preprocessor check uses, so a `{` that only
+        // exists inside a comment can never read as the brace this loop is missing.
+        for opener in loopOpeners(tokenise(uncommented)) where !opener.isBraced {
+            out.append(Violation(kind: .unbracedLoopBody, line: opener.line))
+        }
         return out.sorted { $0.line < $1.line }
     }
 
-    /// The 0-based line of every `for`, `while` or `do` that opens a loop. A `while` that closes a
-    /// `do` is not a separate site — hardening the `do` covers it.
+    /// A `for`, non-closing `while`, or `do` that opens a loop, and whether its body is a braced
+    /// `{ … }` block.
+    private struct LoopOpener {
+        let line: Int
+        let isBraced: Bool
+    }
+
+    /// Every loop-opening `for`/`while`/`do` in `tokens`, in the order encountered, alongside
+    /// whether each one's body is braced. A `do`'s own closing `while` is excluded: it is
+    /// recognised by brace depth, not by simple order — each `do` that opens a `{ … }` body is
+    /// paired with the `while` that follows once that block's closing `}` has brought the brace
+    /// depth back down to where the `do` was seen. That is what keeps a *nested*
+    /// `do { do { } while (a); } while (b);` from reporting the outer closing `while` as a third,
+    /// spurious opener.
     ///
-    /// A `do`'s own closing `while` is recognised by brace depth, not by simple order: each `do`
-    /// that opens a `{ … }` body is paired with the `while` that follows once that block's closing
-    /// `}` has brought the brace depth back down to where the `do` was seen. That is what keeps a
-    /// *nested* `do { do { } while (a); } while (b);` from reporting the outer closing `while` as a
-    /// third, spurious loop site — every site this returns genuinely opens a loop body, which matters
-    /// because a caller hardens each site by inserting a guard as the first statement of that body.
-    ///
-    /// A `do` whose body is a single statement with no braces is a known gap: there is no brace
-    /// event to pair it against, so its closing `while` is matched as soon as it is seen. That is a
-    /// pre-existing simplification of a scanner (not a parser) and is not expected in generated or
-    /// user-authored formula bodies, which always brace a multi-statement loop body.
-    public static func loopSites(in source: String) -> [Int] {
+    /// A `do` whose body is a single statement with no braces is a known gap in that pairing:
+    /// there is no brace event to pair it against, so its closing `while` is matched as soon as
+    /// one is seen — which can swallow a genuine nested loop as if it were that `while`. This is
+    /// not chased further, because doing so turns a token scanner into a parser (spec §24.4); it
+    /// is closed instead by `scopeBreakers` refusing every unbraced loop body outright — see
+    /// `loopSites`.
+    private static func loopOpeners(_ tokens: [Token]) -> [LoopOpener] {
         struct DoFrame { var closeDepth: Int; var satisfied: Bool }
-        var out: [Int] = []
+        var out: [LoopOpener] = []
         var depth = 0
         var doStack: [DoFrame] = []
-        let tokens = tokenise(source)
         for (i, t) in tokens.enumerated() {
             if t.kind == .punctuation {
                 if t.text == "{" {
@@ -145,22 +157,62 @@ public enum MSLScanner {
             guard t.kind == .identifier, !t.afterDot else { continue }
             switch t.text {
             case "for":
-                out.append(t.line)
+                let braced = isBracedAfterParenthesizedHeader(tokens, headerStart: i + 1)
+                out.append(LoopOpener(line: t.line, isBraced: braced))
             case "do":
-                out.append(t.line)
-                let opensBlock = i + 1 < tokens.count && tokens[i + 1].kind == .punctuation
+                let braced = i + 1 < tokens.count && tokens[i + 1].kind == .punctuation
                     && tokens[i + 1].text == "{"
-                doStack.append(DoFrame(closeDepth: depth, satisfied: !opensBlock))
+                doStack.append(DoFrame(closeDepth: depth, satisfied: !braced))
+                out.append(LoopOpener(line: t.line, isBraced: braced))
             case "while":
                 if let top = doStack.last, top.satisfied {
                     doStack.removeLast()
                 } else {
-                    out.append(t.line)
+                    let braced = isBracedAfterParenthesizedHeader(tokens, headerStart: i + 1)
+                    out.append(LoopOpener(line: t.line, isBraced: braced))
                 }
             default: break
             }
         }
-        return out.sorted()
+        return out
+    }
+
+    /// True when `tokens[headerStart]` opens a `( … )` clause (tracking nested parens, so a call
+    /// like `length(v)` inside a `for`'s condition doesn't close it early) and the token right
+    /// after its matching `)` is `{`.
+    private static func isBracedAfterParenthesizedHeader(_ tokens: [Token], headerStart: Int) -> Bool {
+        guard headerStart < tokens.count, tokens[headerStart].kind == .punctuation,
+              tokens[headerStart].text == "(" else { return false }
+        var depth = 0
+        var i = headerStart
+        while i < tokens.count {
+            let t = tokens[i]
+            if t.kind == .punctuation {
+                if t.text == "(" {
+                    depth += 1
+                } else if t.text == ")" {
+                    depth -= 1
+                    if depth == 0 {
+                        let next = i + 1
+                        return next < tokens.count && tokens[next].kind == .punctuation
+                            && tokens[next].text == "{"
+                    }
+                }
+            }
+            i += 1
+        }
+        return false
+    }
+
+    /// The 0-based line of every `for`, `while` or `do` that opens a loop. A `while` that closes a
+    /// `do` is not a separate site — hardening the `do` covers it.
+    ///
+    /// Every reported site opens a *braced* loop body: `scopeBreakers` refuses any `for`, `while`,
+    /// or `do` whose body is not a `{ … }` block (`.unbracedLoopBody`), so a caller that hardens
+    /// each site by inserting a guard as the first statement of the loop body can rely on there
+    /// being a body to insert it into.
+    public static func loopSites(in source: String) -> [Int] {
+        loopOpeners(tokenise(source)).map(\.line).sorted()
     }
 
     /// Blanks `//` and `/* … */` comment *content* to spaces while leaving every newline in place,

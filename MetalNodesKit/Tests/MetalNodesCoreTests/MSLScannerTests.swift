@@ -90,6 +90,42 @@ import Testing
         #expect(v.count == 1)
         #expect(v[0].line == 4)
     }
+
+    /// An unbraced loop body silently relocates whatever a caller inserts as the loop body's first
+    /// statement (Task 8's runaway-loop guard) — refusing it, rather than trying to pin down where
+    /// that guard would even land, keeps every other diagnostic (and `loopSites`) trustworthy.
+    @Test func refusesAnUnbracedForBody() {
+        #expect(kinds("for (int i = 0; i < 4; ++i) x += 1.0;") == [.unbracedLoopBody])
+    }
+
+    @Test func refusesAnUnbracedWhileBody() {
+        #expect(kinds("while (x) y += 1.0;") == [.unbracedLoopBody])
+    }
+
+    @Test func refusesAnUnbracedDoBody() {
+        #expect(kinds("do y += 1.0; while (a);") == [.unbracedLoopBody])
+    }
+
+    /// The pathological case that motivated the rule: an unbraced `do` whose single statement is
+    /// itself a braced loop. Pairing which `while` closes which construct is ambiguous here (that
+    /// is exactly the gap `loopOpeners` documents), so this only asserts that the text is refused
+    /// at all — not which lines, and nothing about `loopSites`, which is meaningless once refused.
+    @Test func refusesADoWhoseUnbracedBodyIsItselfALoop() {
+        #expect(kinds("do while (x) { y += 1.0; } while (a);").contains(.unbracedLoopBody))
+    }
+
+    @Test func doesNotRefuseBracedLoopBodies() {
+        #expect(kinds("for (int i = 0; i < n; i++) { s += i; }") == [])
+        #expect(kinds("while (t > 0.0) { t -= 1.0; }") == [])
+        #expect(kinds("do { t -= 1.0; } while (t > 0.0);") == [])
+    }
+
+    /// The brace is still there — a comment or a newline between the header and `{` must not read
+    /// as a missing body. This is the false-refusal direction and it must not fire.
+    @Test func aDelayedBraceIsNotMistakenForAMissingOne() {
+        #expect(kinds("while (x) /* go */ { y += 1.0; }") == [])
+        #expect(kinds("while (x)\n{\n  y += 1.0;\n}") == [])
+    }
 }
 
 @Suite struct MSLScannerLoopTests {
