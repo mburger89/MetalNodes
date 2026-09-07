@@ -199,4 +199,94 @@ import Metal
         }
         #expect(pipeline.depthStencilState == nil)
     }
+
+    /// The correspondence invariant between `EmitEnvironment.materialSys` and the preview shims
+    /// (spec §23.3–§23.5): every spelling the vocabulary produces for a stage must resolve
+    /// against the shim struct `MaterialPreviewCodegen` serves that stage from — `MNSurface` /
+    /// `MNSurfaceGeometry` / `MNSurfaceUniforms` for `.surface`, `MNGeometry` / `MNGeometryParams`
+    /// for `.geometry`. Nothing mechanically ties the two together: a `{sys.…}` key added to
+    /// `materialSys` but forgotten in a shim compiles fine as *Swift* (`EmitEnvironment` is just a
+    /// dictionary) and produces `use of undeclared identifier` only when a node happens to reach
+    /// it at the *GPU* compile — which is exactly how the Time-in-geometry and grouped-3D-input
+    /// defects late in M7 slipped past `swift test` and were only found by hand in the app.
+    ///
+    /// This test does not depend on any node or graph: it reads `materialSys(for:)`'s own
+    /// dictionary directly and assembles a program from the exact shim source
+    /// `MaterialPreviewCodegen` serves, mirroring the shape `vertexFunction`/`fragmentBody`
+    /// actually emit (a `geo`/`params` local, then one statement per system value). So a future
+    /// key with no matching accessor fails here even before any node exposes it — the class of
+    /// bug, not one instance of it.
+    ///
+    /// `resolution` and `mouse` are neutral literals (`float2(1.0, 1.0)` / `float2(0.0, 0.0)`),
+    /// not accessors — no shim declares them, and RealityKit refuses the two nodes that could
+    /// reach them (`MaterialValidation.twoDimensionalOnly`) — so they are excluded here on
+    /// purpose, not by oversight.
+    @Test(arguments: MaterialStage.allCases)
+    func everyMaterialSysSpellingResolvesAgainstItsShim(_ stage: MaterialStage) async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        let layout = UniformLayoutBuilder.build([])
+        var sys = EmitEnvironment.materialSys(for: stage)
+        sys["resolution"] = nil
+        sys["mouse"] = nil
+
+        var reads = ""
+        for (i, key) in sys.keys.sorted().enumerated() {
+            reads += "    auto mn_test_\(i) = \(sys[key]!); // sys.\(key)\n"
+        }
+
+        var source = "#include <metal_stdlib>\nusing namespace metal;\n\n"
+        source += layout.mslStruct + "\n\n"
+        source += MaterialPreviewCodegen.meshVertexStruct + "\n\n"
+        source += MaterialPreviewCodegen.cameraStruct + "\n\n"
+        source += MaterialPreviewCodegen.geometryShim + "\n\n"
+        source += MaterialPreviewCodegen.interpolantsStruct + "\n\n"
+        source += MaterialPreviewCodegen.surfaceShim + "\n\n"
+
+        // One function per stage, declaring exactly the local(s) the real preview program
+        // declares for it (`vertexFunction`/`fragmentBody`) before reading every spelling.
+        switch stage {
+        case .geometry:
+            source += """
+            vertex VertexOut mn_correspondence_test_vertex(uint vid [[vertex_id]],
+                                                            device const MeshVertex *verts [[buffer(0)]],
+                                                            constant CameraUniforms &cam [[buffer(1)]],
+                                                            constant Uniforms &u [[buffer(2)]]) {
+                MeshVertex vert = verts[vid];
+                MNGeometry geo = MNGeometry{ vert, cam, vid };
+                MNGeometryParams params = MNGeometryParams{ u };
+            \(reads)
+                VertexOut o;
+                o.position = float4(0.0);
+                o.worldPosition = float3(0.0);
+                o.modelPosition = float3(0.0);
+                o.normal = float3(0.0, 0.0, 1.0);
+                o.tangent = float3(1.0, 0.0, 0.0);
+                o.bitangent = float3(0.0, 1.0, 0.0);
+                o.viewDirection = float3(0.0, 0.0, 1.0);
+                o.uv = float2(0.0);
+                o.color = float4(1.0);
+                return o;
+            }
+            """
+        case .surface:
+            source += """
+            fragment float4 mn_correspondence_test_fragment(VertexOut in [[stage_in]],
+                                                             constant Uniforms &u [[buffer(0)]],
+                                                             constant CameraUniforms &cam [[buffer(1)]]) {
+                MNSurface params = MNSurface{ in, cam, u };
+            \(reads)
+                return float4(0.0);
+            }
+            """
+        }
+
+        do {
+            _ = try await device.makeLibrary(source: source, options: nil)
+        } catch {
+            Issue.record("`\(stage)` vocabulary does not resolve against its shim: \(error)\n\(source)")
+        }
+    }
 }
