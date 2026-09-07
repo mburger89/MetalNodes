@@ -20,6 +20,16 @@ public enum GroupOperations {
         return "\(base) \(n)"
     }
 
+    /// Whether a socket edit can proceed: a `.graph` definition must still hold both pseudo-nodes,
+    /// since the edit rewires through them; a `.msl` definition has none to hold, and its sockets
+    /// are edited on the declarations alone (spec §24.3).
+    private static func hasItsPseudoNodes(_ def: GroupDefinition) -> Bool {
+        switch def.body {
+        case .graph: def.inputNode != nil && def.outputNode != nil
+        case .msl: true
+        }
+    }
+
     public static func uniqueSocketName(_ base: String, among existing: [String]) -> String {
         let b = StitchableCodegen.sanitizedName(base)
         if !existing.contains(b) { return b }
@@ -101,9 +111,13 @@ public enum GroupOperations {
         return (out, def.id, inst.id)
     }
 
+    /// Splices a definition's subgraph into its parent (spec §20.6). A `.msl` definition has no
+    /// subgraph to splice, so it is refused outright rather than deleting the instance — and with
+    /// it the only reference to the user's code (spec §24.3).
     public static func ungroup(_ instance: NodeID, in path: GraphPath, of doc: ShaderDocument) -> (document: ShaderDocument, nodes: Set<NodeID>)? {
         var g = doc[path]
         guard let inst = g.nodes[instance], case .group(let gid) = inst.kind, let def = doc.definitions[gid],
+              case .graph = def.body,
               let gin = def.inputNode, let gout = def.outputNode else { return nil }
         var map: [NodeID: NodeID] = [:]
         for n in def.graph.nodes.values where n.id != gin && n.id != gout {
@@ -202,8 +216,13 @@ public enum GroupOperations {
 
     /// Renames everywhere (spec §20.6). Nil on an unknown socket or a clash (within the same
     /// namespace — inputs and outputs are separate, ruling R11) after sanitising.
+    ///
+    /// The internal rewiring below is a `.graph` body's alone: a `.msl` body has no pseudo-nodes
+    /// and no wires, and its text is never rewritten (spec §24.4). Renaming an input there leaves
+    /// the code naming an identifier that no longer exists, which the Metal compiler reports on
+    /// the user's own line — better than silently editing what someone wrote.
     public static func renameSocket(_ id: GroupID, kind: SocketKind, from old: String, to newName: String, in doc: ShaderDocument) -> ShaderDocument? {
-        guard var def = doc.definitions[id], let gin = def.inputNode, let gout = def.outputNode else { return nil }
+        guard var def = doc.definitions[id], hasItsPseudoNodes(def) else { return nil }
         let names = (kind == .input ? def.inputs : def.outputs).map(\.name)
         guard names.contains(old) else { return nil }
         let new = StitchableCodegen.sanitizedName(newName)
@@ -214,14 +233,17 @@ public enum GroupOperations {
             guard let i = def.inputs.firstIndex(where: { $0.name == old }) else { return nil }
             def.inputs[i].name = new
             def.inputs[i].label = new.capitalized
-            def.graph.inputs = Dictionary(uniqueKeysWithValues: def.graph.inputs.map { to, from in
-                (to, from == SocketRef(gin, old) ? SocketRef(gin, new) : from)
-            })
+            if let gin = def.inputNode {
+                def.graph.inputs = Dictionary(uniqueKeysWithValues: def.graph.inputs.map { to, from in
+                    (to, from == SocketRef(gin, old) ? SocketRef(gin, new) : from)
+                })
+            }
         case .output:
             guard let i = def.outputs.firstIndex(where: { $0.name == old }) else { return nil }
             def.outputs[i].name = new
             def.outputs[i].label = new.capitalized
-            if let f = def.graph.inputs[SocketRef(gout, old)] { def.graph.inputs[SocketRef(gout, old)] = nil; def.graph.inputs[SocketRef(gout, new)] = f }
+            if let gout = def.outputNode,
+               let f = def.graph.inputs[SocketRef(gout, old)] { def.graph.inputs[SocketRef(gout, old)] = nil; def.graph.inputs[SocketRef(gout, new)] = f }
         }
         var out = doc
         out.definitions[id] = def
@@ -242,18 +264,20 @@ public enum GroupOperations {
         return out
     }
 
-    /// Removes the socket and every wire that used it (spec §4.5, §20.6).
+    /// Removes the socket and every wire that used it (spec §4.5, §20.6). As with `renameSocket`,
+    /// the internal wires are a `.graph` body's alone; a `.msl` body loses the parameter and keeps
+    /// its text.
     public static func removeSocket(_ id: GroupID, kind: SocketKind, name: String, in doc: ShaderDocument) -> ShaderDocument? {
-        guard var def = doc.definitions[id], let gin = def.inputNode, let gout = def.outputNode else { return nil }
+        guard var def = doc.definitions[id], hasItsPseudoNodes(def) else { return nil }
         switch kind {
         case .input:
             guard def.inputs.contains(where: { $0.name == name }) else { return nil }
             def.inputs.removeAll { $0.name == name }
-            def.graph.inputs = def.graph.inputs.filter { $0.value != SocketRef(gin, name) }
+            if let gin = def.inputNode { def.graph.inputs = def.graph.inputs.filter { $0.value != SocketRef(gin, name) } }
         case .output:
             guard def.outputs.contains(where: { $0.name == name }) else { return nil }
             def.outputs.removeAll { $0.name == name }
-            def.graph.inputs[SocketRef(gout, name)] = nil
+            if let gout = def.outputNode { def.graph.inputs[SocketRef(gout, name)] = nil }
         }
         var out = doc
         out.definitions[id] = def

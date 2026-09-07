@@ -1,19 +1,96 @@
 import Foundation
 import CoreGraphics
 
+/// What a definition's function is built from (spec §24.3): a subgraph, as every definition was
+/// before M8, or hand-written MSL. Both emit one function, called once per instance.
+public enum DefinitionBody: Sendable, Hashable {
+    case graph(Graph)
+    case msl(String)
+}
+
 /// A reusable function: one definition, many `NodeKind.group` instances (spec §3, §4).
-public struct GroupDefinition: Codable, Sendable, Hashable, Identifiable {
+public struct GroupDefinition: Sendable, Hashable, Identifiable {
     public let id: GroupID
     public var name: String
     public var inputs: [SocketDecl]
     public var outputs: [SocketDecl]
-    public var graph: Graph
+    /// What the function is made of (spec §24.3). Assigning this is the only way to change a
+    /// definition from a subgraph to hand-written code or back.
+    public var body: DefinitionBody
     public var accent: DraculaAccent
 
     public init(id: GroupID = GroupID(), name: String, inputs: [SocketDecl] = [], outputs: [SocketDecl] = [],
                 graph: Graph = Graph(), accent: DraculaAccent = .purple) {
         self.id = id; self.name = name; self.inputs = inputs; self.outputs = outputs
-        self.graph = graph; self.accent = accent
+        self.body = .graph(graph); self.accent = accent
+    }
+
+    /// The definition's subgraph — the whole story for a `.graph` body, and an empty graph for a
+    /// `.msl` one, so every call site that only reads a definition's nodes keeps working.
+    ///
+    /// The setter deliberately does **nothing** for a `.msl` body. Writing a graph into a text
+    /// definition would replace the user's code with a subgraph and lose it, which is the worst
+    /// thing this milestone could do; a caller that really means to change what a definition is
+    /// made of assigns `body`. For a `.graph` body it is exactly the stored property it replaced,
+    /// so `def.graph.nodes[id] = n` still reads-modifies-writes the subgraph in place.
+    public var graph: Graph {
+        get { if case .graph(let g) = body { return g } else { return Graph() } }
+        set { if case .graph = body { body = .graph(newValue) } }
+    }
+}
+
+/// Self-describing on the wire — `{"kind":"graph","graph":{…}}` or `{"kind":"msl","msl":"…"}` —
+/// so a later build can add a third kind without moving what is already written (spec §24.3).
+extension DefinitionBody: Codable {
+    private enum Keys: String, CodingKey { case kind, graph, msl }
+    private enum Kind: String, Codable { case graph, msl }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        // A kind this build has no case for degrades to an empty subgraph rather than failing the
+        // definition — and so the whole document — the way §23.2's `target` degrades to Fragment.
+        switch try? c.decode(Kind.self, forKey: .kind) {
+        case .msl: self = .msl(try c.decodeIfPresent(String.self, forKey: .msl) ?? "")
+        case .graph, nil: self = .graph(try c.decodeIfPresent(Graph.self, forKey: .graph) ?? Graph())
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        switch self {
+        case .graph(let g): try c.encode(Kind.graph, forKey: .kind); try c.encode(g, forKey: .graph)
+        case .msl(let text): try c.encode(Kind.msl, forKey: .kind); try c.encode(text, forKey: .msl)
+        }
+    }
+}
+
+extension GroupDefinition: Codable {
+    private enum Keys: String, CodingKey { case id, name, inputs, outputs, body, graph, accent }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = try c.decode(GroupID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        inputs = try c.decodeIfPresent([SocketDecl].self, forKey: .inputs) ?? []
+        outputs = try c.decodeIfPresent([SocketDecl].self, forKey: .outputs) ?? []
+        accent = try c.decodeIfPresent(DraculaAccent.self, forKey: .accent) ?? .purple
+        // M8 writes `body`; every document written before it wrote `graph` (spec §24.3). Both
+        // shapes must open, and a pre-M8 definition must come back as exactly the graph it was.
+        if let b = try c.decodeIfPresent(DefinitionBody.self, forKey: .body) {
+            body = b
+        } else {
+            body = .graph(try c.decodeIfPresent(Graph.self, forKey: .graph) ?? Graph())
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(inputs, forKey: .inputs)
+        try c.encode(outputs, forKey: .outputs)
+        try c.encode(body, forKey: .body)
+        try c.encode(accent, forKey: .accent)
     }
 }
 
@@ -110,6 +187,8 @@ public extension GroupDefinition {
         return d
     }
 
+    /// The pseudo-nodes, which only a `.graph` body has: `nil` for a `.msl` one, whose inputs and
+    /// outputs are the declared sockets alone (spec §24.3).
     var inputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupInput }?.id }
     var outputNode: NodeID? { graph.nodes.values.first { $0.kind == .groupOutput }?.id }
 
@@ -120,8 +199,14 @@ public extension GroupDefinition {
     /// inside the copied graph are left pointing at whatever they pointed at; a caller that also
     /// needs to retarget those (e.g. because the referenced definition is itself being imported
     /// under a new id) does so as a separate pass.
+    ///
+    /// A `.msl` body has no ids to remint, so the copy carries the text verbatim.
     func duplicate(name: String) -> GroupDefinition {
         var copy = GroupDefinition(name: name, inputs: inputs, outputs: outputs, accent: accent)
+        if case .msl(let text) = body {
+            copy.body = .msl(text)
+            return copy
+        }
         var map: [NodeID: NodeID] = [:]
         for n in graph.nodes.values {
             let id = NodeID(); map[n.id] = id
@@ -137,7 +222,7 @@ public extension GroupDefinition {
         return copy
     }
 
-    /// Identity of the definition's content (spec §20.7): name, sockets, accent and graph, ids included.
+    /// Identity of the definition's content (spec §20.7): name, sockets, accent and body, ids included.
     var contentHash: String {
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys]
@@ -155,8 +240,16 @@ public extension ShaderDocument {
     }
 
     /// Reads/mutates the graph at `path`. Writing to a missing definition is a programmer error.
-    /// `_modify` yields the storage in place, so `doc[path].nodes[id]?.position = p` mutates the
-    /// graph without the get→copy→set round trip a get/set-only subscript would force.
+    /// `_modify` yields the storage, so `doc[path].nodes[id]?.position = p` reaches the graph
+    /// through one access rather than the get→copy→set an assignment would spell out. The root is
+    /// still yielded in place; a definition's graph now lives inside `body`, so it is yielded
+    /// through `GroupDefinition.graph` and costs one copy of the node table per mutation — next to
+    /// nothing beside the document copy every `DocumentChange` already makes.
+    ///
+    /// A `.msl` definition reads as an empty graph and *ignores* every write, through both paths —
+    /// see `GroupDefinition.graph`. Silently dropping the write is deliberate: this subscript is
+    /// the editor's channel for canvas edits, and against a text body the alternative is either
+    /// replacing the user's code with a graph or trapping in the middle of a gesture.
     subscript(path: GraphPath) -> Graph {
         get { graph(at: path) ?? Graph() }
         _modify {

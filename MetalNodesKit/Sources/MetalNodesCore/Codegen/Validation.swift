@@ -39,7 +39,13 @@ public enum GraphValidator {
     public static func validate(document doc: ShaderDocument, registry: NodeRegistry, target: OutputTarget) -> [Diagnostic] {
         var out = validate(graph: doc.root, path: .root, document: doc, registry: registry, target: target)
         for d in doc.definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
-            out += validate(graph: d.graph, path: .definition(d.id), document: doc, registry: registry, target: target)
+            // Only a `.graph` body has a subgraph to check. A `.msl` one is not an empty graph —
+            // applying the pseudo-node rules to it would report "has no Group Input" for a
+            // definition that has no canvas at all. What its *text* must satisfy is checked
+            // separately (spec §24.4).
+            if case .graph(let g) = d.body {
+                out += validate(graph: g, path: .definition(d.id), document: doc, registry: registry, target: target)
+            }
             if GroupDependencies.transitive(d.id, in: doc).contains(d.id) || GroupDependencies.direct(d).contains(d.id) {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
