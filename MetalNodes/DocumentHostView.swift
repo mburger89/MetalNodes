@@ -18,14 +18,6 @@ struct DocumentHostView: View {
     let compiler: ShaderCompiler
     @Environment(\.undoManager) private var undoManager
     @State private var bridge: DocumentBridge?
-    #if os(iOS)
-    /// Not `\.openDocument`: that environment action is macOS-only (SwiftUI declares it
-    /// `macOS 13.0+`), so the iPad opens the sample the way any other app would hand us a
-    /// `.mnshader` — through the system, which routes the URL back to this app's `DocumentGroup`
-    /// and opens it in its own scene.
-    @Environment(\.openURL) private var openURL
-    @State private var sampleError: String?
-    #endif
 
     var body: some View {
         Group {
@@ -45,18 +37,6 @@ struct DocumentHostView: View {
         .onChange(of: undoManager) { _, manager in
             if let manager, let bridge { bridge.model.adoptUndoManager(manager) }
         }
-        #if os(iOS)
-        // iPad has no Help menu; the sample rides the document's toolbar overflow (spec §22.4).
-        .toolbar {
-            ToolbarItem(placement: .secondaryAction) {
-                Button("Open Sample Shader", systemImage: "sparkles") { openSample() }
-            }
-        }
-        .alert("Could not open the sample", isPresented: Binding(get: { sampleError != nil },
-                                                                set: { if !$0 { sampleError = nil } })) {
-            Button("OK") { sampleError = nil }
-        } message: { Text(sampleError ?? "") }
-        #endif
         #if os(macOS)
         .frame(minWidth: 960, minHeight: 620)
         #endif
@@ -75,22 +55,6 @@ struct DocumentHostView: View {
         bridge.mirror(into: &file.package)
     }
 
-    #if os(iOS)
-    /// Writes the sample and hands its URL to the system, which opens it in this app — the
-    /// document type is ours — leaving the current document open behind it, exactly what tapping
-    /// the file in Files would do. A refusal is reported rather than swallowed.
-    private func openSample() {
-        do {
-            let url = try SamplePackage.writeTemporary()
-            openURL(url) { accepted in
-                if !accepted { sampleError = "The system would not open \(url.lastPathComponent)." }
-            }
-        } catch {
-            sampleError = error.localizedDescription
-        }
-    }
-    #endif
-
     private func makeModel() {
         // One cache per window: `AssetID`s are only unique within their own document.
         let m = EditorModel(document: file.package.document, viewState: file.package.viewState,
@@ -100,4 +64,5 @@ struct DocumentHostView: View {
         m.start()
         bridge = DocumentBridge(model: m)
     }
+
 }

@@ -17,6 +17,9 @@ struct MetalNodesApp: App {
         self.device = device
         do { compiler = try ShaderCompiler(device: device) }
         catch { fatalError("Could not build the vertex stage: \(error)") }
+        #if os(iOS)
+        SamplePackage.installIntoDocuments()
+        #endif
     }
 
     var body: some Scene {
@@ -31,6 +34,21 @@ struct MetalNodesApp: App {
             }
             #endif
         }
+        #if os(iOS)
+        // The iPad launch screen (title, Create Document, the document browser). With it in place
+        // the editor's split view owns the one navigation bar over a document; without it
+        // `DocumentGroup` stacks its own bar above that one.
+        //
+        // No sample door here: iPadOS 27 gives a `FileDocument` group no way to open a second
+        // document from code or to tell its launch-screen buttons apart (`openDocument` is
+        // macOS-only, `openURL` refuses file URLs, `NewDocumentButton`'s `prepareDocumentURL` never
+        // runs and its `contentType` is ignored). The sample is a file instead — installed into
+        // On My iPad › MetalNodes at launch (`SamplePackage.installIntoDocuments`) and opened from
+        // the browser like any other (spec §22.4, as amended by the M6 record).
+        DocumentGroupLaunchScene("MetalNodes") {
+            NewDocumentButton("Create Document")
+        }
+        #endif
     }
 
     #if os(macOS)

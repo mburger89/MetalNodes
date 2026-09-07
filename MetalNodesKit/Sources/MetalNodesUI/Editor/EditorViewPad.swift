@@ -47,6 +47,16 @@ struct EditorViewPad<Inspector: View>: View {
 
     @ToolbarContentBuilder
     private var toolbarItems: some ToolbarContent {
+        // The sidebar column's own bar keeps its collapse button; with the detail bar hidden this
+        // is the way back once it is collapsed.
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+            } label: {
+                Label("Nodes", systemImage: "sidebar.leading")
+            }
+            .accessibilityIdentifier("toolbar.palette")
+        }
         ToolbarItemGroup(placement: .topBarTrailing) {
             Button { model.requestCanvas(.openChooser) } label: {
                 Label("Add Node", systemImage: "plus")

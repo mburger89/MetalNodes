@@ -1,9 +1,10 @@
 import Foundation
 import MetalNodesCore
 
-/// Help ▸ Open Sample Shader (macOS) and the document toolbar's item (iPad), spec §22.4. The
-/// sample is written to a fresh temporary package and opened as an ordinary document, so editing
-/// it never touches anything the user owns and both platforms open the identical file.
+/// Help ▸ Open Sample Shader (macOS), spec §22.4. The sample is written to a fresh temporary
+/// package and opened as an ordinary document, so editing it never touches anything the user
+/// owns. On iPad the same package is a file in On My iPad › MetalNodes (`installIntoDocuments`),
+/// so both platforms open the identical graph.
 enum SamplePackage {
     static func writeTemporary() throws -> URL {
         let directory = URL.temporaryDirectory
@@ -14,4 +15,18 @@ enum SamplePackage {
             .write(to: url, options: .atomic, originalContentsURL: nil)
         return url
     }
+
+    #if os(iOS)
+    /// Writes `Documents/Sample.mnshader` — On My iPad › MetalNodes, where the launch screen's
+    /// browser lists it — unless one is already there: a copy the user has edited is theirs to keep.
+    /// A failure here costs the sample, not the app, so it is not reported.
+    static func installIntoDocuments() {
+        guard let documents = try? FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
+                                                           appropriateFor: nil, create: true) else { return }
+        let url = documents.appending(path: "Sample.mnshader")
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        try? ShaderPackage(document: .sample()).fileWrapper()
+            .write(to: url, options: .atomic, originalContentsURL: nil)
+    }
+    #endif
 }
