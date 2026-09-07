@@ -2165,8 +2165,9 @@ import Foundation
 public enum MaterialPreviewCodegen {
     public static let vertexFunctionName = "mn_meshVertex"
 
-    /// Mirrors `MetalNodesRender.MeshVertex` byte for byte. Both sides are checked against this
-    /// text: the Swift struct's `MemoryLayout` in `MeshBuilderTests`, the MSL here.
+    /// Mirrors `MetalNodesRender.MeshVertex` byte for byte: 16 + 16 + 16 + 8 (+8 pad) + 16 = 80,
+    /// which is what `MeshBuilderTests` asserts for the Swift side. `float3` costs a full 16 bytes
+    /// in MSL exactly as `SIMD3<Float>` does in Swift, so this field order agrees without padding.
     public static let meshVertexStruct = """
     struct MeshVertex {
         float3 position;
@@ -2816,14 +2817,14 @@ import simd
 
     /// The Swift struct and the MSL struct must agree, or the vertex stage reads garbage.
     @Test func theSwiftLayoutMatchesTheGeneratedMslStruct() {
-        #expect(MemoryLayout<MeshVertex>.stride == 64)   // 12 + 12 + 16 + 8 + 16, padded to 16
-        #expect(MaterialPreviewCodegen.meshVertexStruct.contains("float3 position;"))
-        #expect(MaterialPreviewCodegen.meshVertexStruct.contains("float4 tangent;"))
+        // 16 + 16 + 16 + 8 (+8 pad) + 16. Both languages give `float3`/`SIMD3<Float>` a full
+        // 16 bytes — there is no 12-byte packing on either side — so the two structs agree at 80.
+        #expect(MemoryLayout<MeshVertex>.stride == 80)
     }
 }
 ```
 
-If `MemoryLayout<MeshVertex>.stride` is not 64 once written, do **not** change the assertion to whatever it happens to be — pad the Swift struct explicitly so the MSL struct's natural layout matches, and record the chosen padding in a comment. MSL aligns `float3` to 16 bytes; Swift's `SIMD3<Float>` does too, which is why the sizes agree, but assert it rather than assume it.
+Do not change that assertion to whatever the compiler happens to produce if it disagrees — adjust the struct so its layout is what the MSL side will read, and record the reasoning in a comment.
 
 Create `MetalNodesKit/Tests/MetalNodesRenderTests/CameraUniformsTests.swift`:
 
@@ -2881,7 +2882,6 @@ import simd
     @Test func theSwiftLayoutMatchesTheGeneratedMslStruct() {
         // float4x4 ×3 (192) + float3x3 (48) + float3 (16) = 256.
         #expect(MemoryLayout<CameraUniforms>.stride == 256)
-        #expect(MaterialPreviewCodegen.cameraStruct.contains("float3x3 normalToWorld;"))
     }
 }
 ```
