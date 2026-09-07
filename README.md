@@ -87,7 +87,7 @@ docs/superpowers/plans/   One implementation plan per milestone
 | M4 Node groups | done |
 | M5 Package persistence with textures, comment frames and stickies, generated-code panel, minimap, `.metal` export, cross-document paste | done |
 | M6 iPadOS UI layer — touch canvas, iPad layout, Photos/Files import, Files/Share export, hardware keyboard, XCUITests | done |
-| M7 — to be brainstormed | planned |
+| M7 RealityKit material target — surface shader + geometry modifier, 3D lit preview, `.metal` + Swift export | planned |
 
 ## Development notes
 

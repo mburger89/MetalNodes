@@ -1446,3 +1446,196 @@ Documents need no new code: `DocumentGroup` + `ShaderFileDocument` already give 
 - §22.5 — the context menu adopts an unselected pressed node (body or socket) as the selection before an item acts.
 - §22.6 — `DocumentBridge.mirror(into:)` returns what it wrote; the host mirrors with undo registration off and marks the platform document changed on every write (`PlatformDocument`); `EditorModel.undo()`/`redo()` skip unnamed groups; `PreviewProgram` is not `Sendable`.
 - §22.8 — one set of platform services per window, created next to the bridge.
+
+## 23. M7 addendum — RealityKit material target (added 2026-09-07)
+
+M7 adds a **third output target**: a RealityKit `CustomMaterial`, authored as one graph that emits **two** `[[visible]]` Metal functions — a surface shader (per-fragment material properties) and a geometry modifier (per-vertex displacement) — plus a **3D preview** that renders the graph on a lit mesh instead of a fullscreen quad. Decisions taken with the user: **one Material Output node** carrying both stages, not two terminals; the preview is a **second, parallel render path** rather than a change to the existing one; parameters are **baked as literals** in the exported file. §23 wins for M7 wherever it and §9/§10/§19 differ in detail. The fullscreen-triangle path, the fragment target and the three stitchable targets are untouched.
+
+The M6 debt list (handoff §13) is **not** part of M7; it moves to M8.
+
+`CustomMaterial` is `@available(visionOS, unavailable)` — visionOS's equivalent is `ShaderGraphMaterial`, which accepts no hand-written Metal. This target is macOS 12+ / iOS 15+ / tvOS 26+ and does not change the app's own deployment targets.
+
+### 23.1 Scope and order
+
+1. `MaterialStage`, `NodeDef.stages`, the Material Output node, the new 3D input nodes (§23.2, §23.3).
+2. Two-pass emission through a pair of `EmitEnvironment`s (§23.4).
+3. Validation rules (§23.7).
+4. Mesh generation and the `CameraUniforms` buffer (§23.5).
+5. The generated vertex stage and the compiler's second pipeline shape (§23.5).
+6. The 3D preview renderer, orbit camera and mesh picker (§23.5, §23.8).
+7. Export: `.metal` + `.swift`, baked parameters, the boundsMargin note (§23.6).
+8. Integration: the in-app checklist and the `xcrun metal -c` gate (§23.9).
+
+### 23.2 The graph shape
+
+`OutputTarget` gains `case realityKit`, title "RealityKit Material", appended to `OutputTarget.all`. Old documents decode unchanged. Forward compatibility needs one edit: `decodeIfPresent` **throws** on a target it does not recognise, which would fail the whole document, so `DocumentSettings.init(from:)` decodes `target` with `try?` and falls back to `.fragment`. A document written by a newer build therefore opens as a fragment shader instead of refusing to open.
+
+```swift
+public enum MaterialStage: String, Codable, Sendable, CaseIterable, Hashable {
+    case surface, geometry
+    public static let all: Set<MaterialStage> = [.surface, .geometry]
+}
+```
+
+One terminal serves both stages:
+
+```swift
+NodeDef(id: "output.material", title: "Material Output", category: .output, inputs: [
+    SocketDecl(name: "baseColor",       type: .concrete(.color),  default: .value(.float4(.init(0.8, 0.8, 0.8, 1)))),
+    SocketDecl(name: "normal",          type: .concrete(.float3), default: .value(.float3(.init(0, 0, 1)))),
+    SocketDecl(name: "roughness",       type: .concrete(.float),  default: .value(.float(0.5))),
+    SocketDecl(name: "metallic",        type: .concrete(.float),  default: .value(.float(0))),
+    SocketDecl(name: "emissive",        type: .concrete(.color),  default: .value(.float4(.init(0, 0, 0, 1)))),
+    SocketDecl(name: "opacity",         type: .concrete(.float),  default: .value(.float(1))),
+    SocketDecl(name: "occlusion",       type: .concrete(.float),  default: .value(.float(1))),
+    SocketDecl(name: "specular",        type: .concrete(.float),  default: .value(.float(0.5))),
+    SocketDecl(name: "positionOffset",  type: .concrete(.float3), default: .value(.float3(.init(0, 0, 0)))),
+], body: .template(""))
+```
+
+The first eight are **surface** sockets; `positionOffset` is the sole **geometry** socket. The body template is never emitted: as with `output.fragment`, `ShaderGenerator` recognises the terminal by id and writes the stage's setter block itself. `GraphValidator.materialTerminalID = "output.material"`.
+
+A socket's stage is data on the terminal, not a new `SocketDecl` field: `BuiltinNodes.materialStages: [String: MaterialStage]` maps socket name → stage, and the generator reads it. Only one node needs it.
+
+**Setter mapping** (types verbatim from `RealityKitSurfaceShader.h`; every surface setter takes `half`/`half3` except `set_normal`, which takes a tangent-space `float3`):
+
+| Socket | Emitted |
+|---|---|
+| baseColor | `s.set_base_color(half3(<expr>.rgb));` |
+| normal | `s.set_normal(<expr>);` |
+| roughness | `s.set_roughness(half(<expr>));` |
+| metallic | `s.set_metallic(half(<expr>));` |
+| emissive | `s.set_emissive_color(half3(<expr>.rgb));` |
+| opacity | `s.set_opacity(half(<expr>));` |
+| occlusion | `s.set_ambient_occlusion(half(<expr>));` |
+| specular | `s.set_specular(half(<expr>));` |
+| positionOffset | `g.set_model_position_offset(<expr>);` |
+
+A socket left at its default still emits its setter — Apple's docs require a surface shader to call at least one supported setter, and emitting all eight keeps the generated source stable and the goldens simple. `set_clearcoat*` is not emitted in M7, so the **`.clearcoat` lighting model is not offered** either: it is `.lit` plus three setters no socket produces, and an option that changes nothing is worse than an absent one. Clearcoat arrives with its sockets or not at all.
+
+### 23.3 New input nodes and stage legality
+
+`NodeDef` gains `public var stages: Set<MaterialStage> = MaterialStage.all` (both, the default for every existing node — pure math, vector, SDF, noise, colour and utility nodes are stage-agnostic). `NodeRegistry` validation is unchanged; the field is consulted only under `.realityKit`.
+
+New nodes, category `.input`, all `requires: []`:
+
+| Node id | Title | Output | Surface | Geometry |
+|---|---|---|---|---|
+| `input.worldPosition` | World Position | float3 | `params.geometry().world_position()` | same |
+| `input.modelPosition` | Model Position | float3 | `params.geometry().model_position()` | same |
+| `input.normal3d` | Normal | float3 | `params.geometry().normal()` | `g.normal()` (model space) |
+| `input.tangent` | Tangent | float3 | `params.geometry().tangent()` | — |
+| `input.bitangent` | Bitangent | float3 | `params.geometry().bitangent()` | `g.bitangent()` |
+| `input.viewDirection` | View Direction | float3 | `params.geometry().view_direction()` | — |
+| `input.uv1` | UV1 | float2 | `params.geometry().uv1()` | `g.uv1()` |
+| `input.vertexColor` | Vertex Color | color | `params.geometry().color()` | `g.color()` |
+| `input.vertexID` | Vertex ID | int | — | `int(g.vertex_id())` |
+| `input.screenPosition` | Screen Position | float4 | `params.geometry().screen_position()` | — |
+
+An em dash means the node is absent from that stage's `stages` set. These nodes appear in the palette under every target (they are ordinary library nodes) but are **refused by validation outside `.realityKit`**, the way M3 refuses stitchable-only shapes — one rule, §23.7.
+
+Existing nodes under `.realityKit`: `input.uv` maps to `params.geometry().uv0()` in both stages; `input.time` to `params.uniforms().time()` in both; `input.mouse` and `input.resolution` are **refused** (no counterpart exists). Texture Sample is legal in both stages.
+
+`geometry().normal()` on the surface side is documented by Apple only as "the geometry normal"; its space is not stated. The spec records it as **unverified**, the preview renders whatever the target does, and the M7 execution record corrects this line once the in-app check has looked at Normal → Base Color on a sphere.
+
+### 23.4 Emission — two passes over one graph
+
+`ShaderGenerator.generate(_:target:viewer:registry:)` under `.realityKit` runs the existing emitter **twice** over the same document, once per stage, and concatenates. Each pass:
+
+- takes the terminal's sockets for that stage as its roots, so `TopoSort` visits only the nodes that stage actually needs — a graph feeding only `baseColor` emits an empty geometry function, and vice versa;
+- uses a stage-specific `EmitEnvironment`;
+- shares one `UniformLayout`, built from the union of both passes so a parameter used in both stages occupies one field.
+
+Two new environments:
+
+```swift
+public static let realityKitSurface = EmitEnvironment(
+    uniform: { f in f.type == .bool ? "bool(u.\(f.name))" : "u.\(f.name)" },
+    sys: ["uv": "params.geometry().uv0()", "time": "params.uniforms().time()"],
+    textureSample: { slot, uv in "float4(\(slot.fragmentName).sample(mn_sampler, float2((\(uv)).x, 1.0 - (\(uv)).y)))" },
+    textureName: { $0.fragmentName })
+
+public static let realityKitGeometry = EmitEnvironment(
+    uniform: realityKitSurface.uniform,
+    sys: ["uv": "g.uv0()", "time": "params.uniforms().time()"],
+    textureSample: realityKitSurface.textureSample,
+    textureName: realityKitSurface.textureName)
+```
+
+`sys` carries no `resolution` or `mouse` key; the generator treats a missing key as a hard error rather than emitting a bad expression, which is what makes §23.7's refusal a code path rather than a convention. Group functions are unchanged — `EmitEnvironment.groupFunction` already parameterises uniforms and textures, so a group called from either stage emits one function, and a group whose body needs a stage-illegal node is caught by validation walking reachable definitions (§22.6's `reachableDefinitions`).
+
+`GeneratedShader` gains:
+
+```swift
+public let stageFunctionNames: [MaterialStage: String]   // empty for every other target
+public let vertexFunctionName: String                    // VertexStage.functionName for 2D programs
+```
+
+The **preview** program for `.realityKit` is a different source from the **export** source, as it already is for the stitchable targets: `source` is the 3D preview program (vertex + fragment, §23.5) and `exportSource` is the two `[[visible]]` functions with `#include <RealityKit/RealityKit.h>`. The preview never includes a RealityKit header — those headers ship with Xcode, not with the OS, and the runtime compiler cannot find them (verified by probe, 2026-09-06).
+
+### 23.5 The 3D preview
+
+A second render path in `MetalNodesRender`. The existing fullscreen-triangle path is not modified; which path runs is decided by `shader.target`.
+
+**Mesh.** `PreviewMesh: String, Codable, CaseIterable { case sphere, cube, plane, torus }`. `MeshBuilder.build(_ mesh: PreviewMesh) -> (vertices: [MeshVertex], indices: [UInt16])` is a pure function with no Metal types, so it is unit-testable headless.
+
+```swift
+public struct MeshVertex: Equatable, Sendable {
+    public var position: SIMD3<Float>, normal: SIMD3<Float>, tangent: SIMD4<Float>, uv: SIMD2<Float>, color: SIMD4<Float>
+}
+```
+
+`tangent.w` carries handedness; the bitangent is `cross(normal, tangent.xyz) * tangent.w`. UVs use the **bottom-left origin** the fragment target uses, so a graph looks the same in 2D and in the 3D preview; the exported shader's texture sample keeps the same flip, which is correct for a mesh authored that way and is the flip Apple's own examples apply to USD-loaded meshes.
+
+**Camera.** Its own buffer, so `SocketType` never grows a matrix case and no node can reach it:
+
+```swift
+struct CameraUniforms { float4x4 modelToWorld, worldToView, viewToProjection; float3x3 normalToWorld; float3 cameraPosition; }
+```
+
+Buffer bindings: **vertex** stage 0 = the vertex array, 1 = `CameraUniforms`, 2 = `Uniforms`; **fragment** stage 0 = `Uniforms` (unchanged from the 2D path), 1 = `CameraUniforms`. Textures keep their existing indices in the fragment stage and are bound to the vertex stage as well, since the geometry stage may sample.
+
+**Generated vertex stage.** The 3D program's vertex function is generated, not static — that is what makes a geometry modifier visible in the preview. It reads `MeshVertex` by `[[vertex_id]]` (no vertex descriptor), runs the geometry pass's statements, adds the resulting offset to `position`, and interpolates position, normal, tangent, uv and colour to the fragment stage. `ShaderCompiler` reads `shader.vertexFunctionName` from the library it just built instead of the one compiled in `init`; the static `VertexStage` function remains for every 2D program.
+
+**Depth.** 3D pipelines set `depthAttachmentPixelFormat = .depth32Float`; the renderer keeps a depth texture sized to the drawable and an `MTLDepthStencilState` (`.less`, writes enabled). The pixel format and depth format join the pipeline cache key.
+
+**Lighting.** The fragment stage runs the surface pass to produce base colour, normal, roughness, metallic, emissive, opacity, occlusion and specular, then shades them with a **Cook-Torrance GGX approximation** of RealityKit's `.lit` model — GGX distribution, Smith height-correlated visibility, Schlick Fresnel, Lambert diffuse — under one fixed key light plus a constant hemispheric ambient. This is an approximation, stated as such in the spec, in the generated source's header comment and in the app's inspector: the preview shows the material's shape, not RealityKit's exact output. `.unlit` renders emissive alone. Tangent-space normals are resolved against the interpolated normal/tangent/bitangent basis.
+
+**Viewer flag.** Under `.realityKit`, viewing a socket renders that value as **unlit colour** on the mesh (the same `ViewerWrap` machinery, emitting the value into emissive and forcing the unlit path), so the viewer keeps meaning without a lighting term distorting it.
+
+**Interaction.** Under this target the preview's one-finger / mouse drag orbits the camera instead of writing the `mouse` uniform (which no node can read here anyway); scroll and pinch dolly. Under every other target the drag keeps its existing meaning.
+
+### 23.6 Export, parameters and textures
+
+`ShaderExport.files(for:)` under `.realityKit` returns two files, as the stitchable targets do:
+
+- `<name>.metal` — a header comment (target, lighting model, mesh caveats, the baked parameter table, the texture slot) then `#include <RealityKit/RealityKit.h>` and the two functions, `<name>_surface` and `<name>_geometry`. The geometry function is omitted when `positionOffset` is unwired and nothing in the geometry stage is reachable.
+- `<name>.swift` — a snippet that loads the default library, builds `CustomMaterial.SurfaceShader` / `.GeometryModifier`, constructs the `CustomMaterial` with the document's lighting model, and assigns `material.custom.texture` when the graph samples a texture. When a geometry function was emitted the snippet ends with a commented `modelEntity.model?.boundsMargin = …` line and Apple's reason for it: a modifier that moves vertices outside the original bounds can get the entity culled.
+
+**Parameters bake as literals.** `CustomMaterial` offers one `float4` (`params.uniforms().custom_parameter()`) and one texture (`params.textures().custom()`); an arbitrary uniform struct needs `withMutableUniforms` — iOS 18 / macOS 15 and a `[[stitchable]]` signature rather than `[[visible]]`. So the exported functions read no uniform buffer at all: every `UniformField` is emitted as its current value spelled as an MSL literal, and the header comment lists node · param → value so the reader knows what to edit. Mapping up to four exposed floats onto `custom_parameter()` is recorded here as the natural M8+ follow-up and is deliberately not half-built in M7. `time` is the exception: it maps natively to `params.uniforms().time()` in both stages and stays live.
+
+**Textures.** `params.textures().custom()` is the only general-purpose sampler, so a document with **one** Texture Sample exports cleanly (`<name>.custom()`, `texture2d<half>`, sampled through a `constexpr sampler`) and a second is refused (§23.7). The preview path is unaffected — it binds real `MTLTexture`s at the existing indices and supports as many slots as the graph has.
+
+### 23.7 Validation
+
+`GraphValidator.validate(document:registry:target:)` gains a `.realityKit` branch, all `Diagnostic(.error, …)` unless noted:
+
+1. **Terminal.** "A RealityKit material needs a Material Output node" when absent; "Only one Material Output node is allowed" when more than one. (The fragment target's single-terminal rule is unchanged and independent.)
+2. **Stage legality.** For each stage, every node reachable from that stage's roots — through group definitions — whose `stages` set omits the stage: "<title> is not available in the <stage> stage". Anchored to the node.
+3. **Target legality.** A node reachable under `.realityKit` whose emission has no `sys` entry — Mouse, Resolution: "<title> needs the Fragment or SwiftUI target". A 3D input node reachable under any other target: "<title> needs the RealityKit Material target".
+4. **Texture count.** More than one Texture Sample reachable (root graph plus reachable definitions, the M5 counting rule): "A RealityKit material has one texture slot — remove the extra Texture Sample", anchored to the second and later samples.
+5. **Lighting model.** `Diagnostic(.warning, …)` when the model is `.unlit` and any surface socket other than `emissive` is wired: "Unlit materials render only Emissive". Not an error — the graph compiles and previews; the warning says what will not be visible.
+
+### 23.8 Document and view state
+
+- `DocumentSettings.lightingModel: MaterialLightingModel = .lit` (`enum MaterialLightingModel: String, Codable, Sendable, CaseIterable { case lit, unlit }` — `.clearcoat` is deferred with its sockets, §23.2), decoded with the existing `decodeIfPresent` default. It is a document setting — it changes what validates and what the preview shades — and is undoable like the other settings.
+- `EditorViewState.previewMesh: PreviewMesh = .sphere` and `EditorViewState.orbit: OrbitCamera` (`azimuth`, `elevation`, `distance`; defaults 0.6 / 0.3 / 3.0) are **view state**: persisted with the document, never snapshotted, never undone — the §18.3 rule.
+- The inspector's document section shows Output Target (now four entries), Lighting Model and Preview Mesh; the last two are hidden under the other targets.
+
+### 23.9 Testing and verification
+
+- **Core, no GPU:** golden source for both emitted functions across a matrix of graphs (surface only, geometry only, both, a group called from each stage, a group called from both, a viewer flag, one texture, unlit); the stage partition (a node feeding only `positionOffset` is absent from the surface function and vice versa); one shared `UniformLayout` across stages; literal baking for every `SocketType`; each of the five validation rules with a positive and a negative case; `OutputTarget` and `DocumentSettings` round-trip including an unknown-target fallback.
+- **MeshBuilder, no GPU:** vertex and index counts, unit-length normals, tangents orthogonal to normals, UVs inside 0…1, and every index in range, for all four meshes.
+- **Render (GPU):** the 3D preview program compiles and links for each mesh × lighting model × with/without a geometry modifier, the way §14's compile tests already cover every 2D program shape.
+- **Export (gated):** the exported `.metal` compiles with `xcrun metal -c` against the SDK — the RealityKit headers ship in the SDK even though the running OS does not carry them, so this is a real gate, skipped like the existing export-compile tests when the Metal toolchain is absent.
+- **Integration (controller-run):** an in-app checklist enumerated in the plan — switch a fragment document to RealityKit and see the diagnostics; wire each surface socket and watch the sphere; orbit, dolly, change mesh; a geometry modifier that visibly displaces; viewer flag under 3D; unlit warning; export both files and read them; the macOS and iPad regression subsets from §22.8.
