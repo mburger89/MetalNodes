@@ -31,17 +31,31 @@ struct EditorViewPad<Inspector: View>: View {
                     .navigationBarTitleDisplayMode(.inline)
             } detail: {
                 VStack(spacing: 0) {
-                    BreadcrumbBar(model: model)
+                    HStack(spacing: 0) {
+                        BreadcrumbBar(model: model)
+                        Spacer(minLength: 8)
+                        modePicker
+                            .fixedSize()
+                            .padding(.trailing, 8)
+                    }
                     GraphCanvasView(model: model)
                 }
-                .toolbar { toolbarItems }
+                // `DocumentGroup` already puts a bar over the editor — back to the browser and the
+                // title menu — and that bar carries the editor's toolbar (below). Left to itself the
+                // detail column adds a second one under it, repeating the document title behind a
+                // chevron that only collapses the sidebar.
+                .toolbar(.hidden, for: .navigationBar)
+                // Both bindings write only on a real change: `viewState` is a struct on an
+                // `@Observable` model, so an equal write still invalidates every reader, and
+                // SwiftUI re-invokes these setters during layout.
                 .inspector(isPresented: Binding(get: { model.viewState.showsInspector },
-                                                set: { model.viewState.showsInspector = $0 })) {
+                                                set: { if model.viewState.showsInspector != $0 { model.viewState.showsInspector = $0 } })) {
                     inspector()
                         .inspectorColumnWidth(380)
                 }
             }
             .navigationSplitViewStyle(.balanced)
+            .toolbar { toolbarItems }
         }
     }
 
@@ -63,15 +77,6 @@ struct EditorViewPad<Inspector: View>: View {
             }
             .accessibilityIdentifier("toolbar.add")
 
-            Picker("Canvas Mode", selection: Binding(get: { model.viewState.canvasMode },
-                                                     set: { model.viewState.canvasMode = $0 })) {
-                Label("Pointer", systemImage: "cursorarrow").tag(CanvasMode.pointer)
-                Label("Select", systemImage: "plus.square.dashed").tag(CanvasMode.select)
-                Label("Lasso", systemImage: "lasso").tag(CanvasMode.lasso)
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("toolbar.mode")
-
             // One button for both fits, like the two menu items: with a selection it frames the
             // selection, otherwise the whole graph (spec §22.3).
             Button { model.requestCanvas(model.selection.isEmpty ? .fitAll : .fitSelection) } label: {
@@ -91,6 +96,20 @@ struct EditorViewPad<Inspector: View>: View {
 
             exportMenu
         }
+    }
+
+    /// The canvas mode (spec §22.3), in the breadcrumb row rather than among the toolbar items:
+    /// next to the canvas it governs, and out of `DocumentGroup`'s UIKit-hosted bar, where a
+    /// segmented control's selection change re-lays the whole bar out.
+    private var modePicker: some View {
+        Picker("Canvas Mode", selection: Binding(get: { model.viewState.canvasMode },
+                                                 set: { if model.viewState.canvasMode != $0 { model.viewState.canvasMode = $0 } })) {
+            Image(systemName: "cursorarrow").accessibilityLabel("Pointer").tag(CanvasMode.pointer)
+            Image(systemName: "plus.square.dashed").accessibilityLabel("Select").tag(CanvasMode.select)
+            Image(systemName: "lasso").accessibilityLabel("Lasso").tag(CanvasMode.lasso)
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("toolbar.mode")
     }
 
     /// Export (spec §22.4). "Export to Files…" goes through `exportRequest` → `EditorView` →
