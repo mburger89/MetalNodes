@@ -6,6 +6,15 @@ extension EditorModel {
     @discardableResult
     public func addNode(defID: String, at point: CGPoint, select: Bool = true) -> NodeID? {
         guard registry[defID] != nil else { return nil }
+        // The third route a terminal can reach a definition, after ⌘G and ⌘V (spec §23.2): the
+        // palette and the ⇧A chooser both land here. A Fragment/Material Output is never valid
+        // inside a definition, so refuse with a notice rather than add a node `validate` will
+        // immediately condemn.
+        if case .definition = activePath, GraphValidator.isTerminal(.builtin(defID)) {
+            let label = defID == GraphValidator.materialTerminalID ? "Material Output" : "Fragment Output"
+            showNotice("\(label) is only valid in the root graph")
+            return nil
+        }
         let n = NodeInstance(kind: .builtin(defID), position: point)
         apply(.addNode(n))
         if select { self.select(n.id) }

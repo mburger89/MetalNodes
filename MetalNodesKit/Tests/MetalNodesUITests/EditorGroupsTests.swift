@@ -416,4 +416,19 @@ import MetalNodesRender
         m.paste(at: .zero)
         #expect(m.document.definitions[gid] != nil)
     }
+
+    /// The palette and the ⇧A chooser both go through `addNode`, which was the last unguarded
+    /// route for dropping a terminal into a definition (the other two being ⌘G and ⌘V).
+    @Test func addingATerminalInsideADefinitionIsRefused() {
+        let m = EditorModel(document: .sampleWithGroup(), compiler: RecordingCompiler())
+        let instance = m.document.root.nodes.values.first { if case .group = $0.kind { return true } else { return false } }!
+        m.diveIn(instance.id)
+        guard case .definition = m.activePath else { Issue.record("not inside a definition"); return }
+        let before = m.graph.nodes.count
+        #expect(m.addNode(defID: GraphValidator.fragmentTerminalID, at: .zero) == nil)
+        #expect(m.graph.nodes.count == before)
+        // An ordinary node still lands.
+        #expect(m.addNode(defID: "math.mix", at: .zero) != nil)
+        #expect(m.graph.nodes.count == before + 1)
+    }
 }
