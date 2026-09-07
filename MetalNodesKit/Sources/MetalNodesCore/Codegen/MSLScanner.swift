@@ -207,12 +207,14 @@ public enum MSLScanner {
     /// The 0-based line of every `for`, `while` or `do` that opens a loop. A `while` that closes a
     /// `do` is not a separate site — hardening the `do` covers it.
     ///
-    /// Every reported site opens a *braced* loop body: `scopeBreakers` refuses any `for`, `while`,
-    /// or `do` whose body is not a `{ … }` block (`.unbracedLoopBody`), so a caller that hardens
-    /// each site by inserting a guard as the first statement of the loop body can rely on there
-    /// being a body to insert it into.
+    /// Every reported site opens a *braced* loop body, unconditionally: an unbraced opener is
+    /// filtered out here as well as being refused by `scopeBreakers` as `.unbracedLoopBody`, so
+    /// neither path can hand a caller a site with no body to insert a guard into. (In practice the
+    /// two are indistinguishable, since codegen only runs on a document `scopeBreakers` has already
+    /// validated — but the guarantee does not depend on that call order; it holds for this function
+    /// on its own.)
     public static func loopSites(in source: String) -> [Int] {
-        loopOpeners(tokenise(source)).map(\.line).sorted()
+        loopOpeners(tokenise(source)).filter(\.isBraced).map(\.line).sorted()
     }
 
     /// Blanks `//` and `/* … */` comment *content* to spaces while leaving every newline in place,

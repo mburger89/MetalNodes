@@ -166,4 +166,20 @@ import Testing
         """
         #expect(MSLScanner.loopSites(in: s) == [0, 1])
     }
+
+    /// `loopSites`' guarantee that every reported site opens a braced body must hold on its own,
+    /// not merely because a caller happens to have already run `scopeBreakers` and refused the
+    /// text. An unbraced opener is filtered out here directly, whether or not it was ever refused.
+    @Test func anUnbracedLoopReportsNoSite() {
+        #expect(MSLScanner.loopSites(in: "while (x) y += 1.0;") == [])
+        #expect(MSLScanner.loopSites(in: "for (int i = 0; i < 4; ++i) x += 1.0;") == [])
+        #expect(MSLScanner.loopSites(in: "do y += 1.0; while (a);") == [])
+    }
+
+    /// A mix of one braced and one unbraced loop reports only the braced one, at its own line —
+    /// the filter must not drop a real site alongside the one it correctly excludes.
+    @Test func aMixOfBracedAndUnbracedLoopsReportsOnlyTheBracedSite() {
+        let s = "while (x) y += 1.0;\nfor (int i = 0; i < 4; i++) { s += i; }"
+        #expect(MSLScanner.loopSites(in: s) == [1])
+    }
 }
