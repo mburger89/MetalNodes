@@ -36,7 +36,9 @@ public enum GraphValidator {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
         }
-        return out + textureTargetDiagnostics(doc, target: target, reachable: reachableDefinitions(doc))
+        let reachable = reachableDefinitions(doc)
+        return out + textureTargetDiagnostics(doc, target: target, reachable: reachable)
+                   + MaterialValidation.diagnostics(document: doc, registry: registry, target: target, reachable: reachable)
     }
 
     /// What the SwiftUI targets make of Texture Sample (spec §21.2). Document-wide, because that is

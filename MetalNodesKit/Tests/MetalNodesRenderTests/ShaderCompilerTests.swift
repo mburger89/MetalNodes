@@ -25,12 +25,10 @@ import MetalNodesCore
 
     @Test func everyBuiltinNodeCompilesAsAOneNodeGraph() async throws {
         let c = try compiler()
-        // Scaffolding, not a permanent exemption: the ten `material3D` nodes read RealityKit-only
-        // system values that have no `.fragment` spelling, so they are skipped here rather than
-        // asserted to compile. Once the target-legality validation rule lands (spec §23.7 rule 3,
-        // docs/superpowers/specs/2026-09-04-metalnodes-design.md — a 3D input node reachable under
-        // any target but `.realityKit` is refused), replace this skip with an assertion that
-        // generating one of these nodes under `.fragment` *fails* with that diagnostic.
+        // The ten `material3D` nodes are excluded here — not as scaffolding any more, but because
+        // target-legality rule 3 (spec §23.7) now refuses every one of them under `.fragment`
+        // outright, so `ShaderGenerator.generate` never reaches this compiler at all for them.
+        // `materialOnlyNodesAreRefusedUnderFragment` below is the positive assertion of that refusal.
         let material3DIDs = Set(BuiltinNodes.material3D.map(\.id))
         for def in NodeRegistry.builtin.all where def.id != "output.fragment" && !material3DIDs.contains(def.id) {
             var doc = ShaderDocument()
@@ -43,6 +41,26 @@ import MetalNodesCore
             let shader = try ShaderGenerator.generate(doc)
             let result = await c.compile(shader, generation: 1)
             if case .failure(let msg, _, _) = result { Issue.record("\(def.id) failed: \(msg)\n\(shader.source)") }
+        }
+    }
+
+    /// The mirror of the census above: every `material3D` input node — the ten RealityKit-only
+    /// system values, `output.material` excluded since it is the terminal, not an input — is
+    /// refused outright under `.fragment` (target-legality rule 3, spec §23.7), before this ever
+    /// reaches the compiler.
+    @Test func materialOnlyNodesAreRefusedUnderFragment() throws {
+        let material3DIDs = Set(BuiltinNodes.material3D.map(\.id)).subtracting(["output.material"])
+        for def in NodeRegistry.builtin.all where material3DIDs.contains(def.id) {
+            var doc = ShaderDocument()
+            let n = NodeInstance(kind: .builtin(def.id))
+            let out = NodeInstance(kind: .builtin("output.fragment"))
+            doc.root.nodes[n.id] = n; doc.root.nodes[out.id] = out
+            if let first = def.outputs.first {
+                doc.root.connect(SocketRef(n.id, first.name), to: SocketRef(out.id, "color"))
+            }
+            let error = #expect(throws: GenerationError.self) { try ShaderGenerator.generate(doc) }
+            guard let error, case .invalid(let diags) = error else { Issue.record("no diagnostics for \(def.id)"); continue }
+            #expect(diags.contains { $0.message.contains("needs the RealityKit Material target") }, "\(def.id)")
         }
     }
 
