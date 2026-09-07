@@ -25,6 +25,7 @@ struct MetalNodesApp: App {
         // write). The sample is a file in On My iPad › MetalNodes instead, opened from the browser
         // like any other (spec §22.4, as amended by the M6 record).
         SamplePackage.installIntoDocuments()
+        SamplePackage.installIntoDocuments(.realityKitMaterial(), filename: "RealityKit Material.mnshader")
         #endif
     }
 
@@ -37,17 +38,20 @@ struct MetalNodesApp: App {
             #if os(macOS)
             CommandGroup(replacing: .help) {
                 Button("Open Sample Shader") { openSample() }
+                Button("Open RealityKit Material Sample") {
+                    openSample(.realityKitMaterial(), filename: "RealityKit Material.mnshader")
+                }
             }
             #endif
         }
     }
 
     #if os(macOS)
-    /// Opens the sample as a document, so Help ▸ Open Sample Shader lands in the same editor as
-    /// any other file — and editing it never touches the original.
-    private func openSample() {
+    /// Opens a sample as a document, so Help ▸ Open Sample Shader (and its RealityKit sibling)
+    /// land in the same editor as any other file — and editing it never touches the original.
+    private func openSample(_ document: ShaderDocument = .sample(), filename: String = "Sample.mnshader") {
         do {
-            let url = try SamplePackage.writeTemporary()
+            let url = try SamplePackage.writeTemporary(document, filename: filename)
             NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, error in
                 if let error { NSAlert(error: error).runModal() }
             }

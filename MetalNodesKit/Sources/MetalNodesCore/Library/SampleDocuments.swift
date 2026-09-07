@@ -41,6 +41,44 @@ public extension ShaderDocument {
         return doc
     }
 
+    /// A RealityKit material demonstrating the target (spec §23): Value Noise varies Roughness
+    /// across the surface, a Color feeds Base Color, and Time drives a small bob through the
+    /// geometry stage — Math(multiply)/Math(sine) scaled down and fed into one axis of a Combine
+    /// XYZ, so Position Offset moves the mesh without it flying apart.
+    static func realityKitMaterial() -> ShaderDocument {
+        func node(_ id: String, _ x: CGFloat, _ y: CGFloat, _ params: [ParamID: ParamValue] = [:]) -> NodeInstance {
+            NodeInstance(kind: .builtin(id), position: CGPoint(x: x, y: y), params: params)
+        }
+        let time   = node("input.time", 0, 0)
+        let speed  = node("input.float", 0, 120, ["value": .float(0.6)])
+        let amp    = node("input.float", 0, 240, ["value": .float(0.06)])
+        let mul    = node("math.math", 220, 60, ["op": .enumCase("multiply")])
+        let sine   = node("math.math", 440, 60, ["op": .enumCase("sine")])
+        let noise  = node("noise.value", 440, 300, ["scale": .float(6)])
+        let mul2   = node("math.math", 660, 60, ["op": .enumCase("multiply")])
+        let color  = node("input.color", 660, 300, ["value": .float4(.init(0.85, 0.55, 0.25, 1))])
+        let combine = node("vector.combine", 880, 60)
+        let out    = node("output.material", 1100, 150)
+
+        var g = Graph()
+        for n in [time, speed, amp, mul, sine, noise, mul2, color, combine, out] { g.nodes[n.id] = n }
+        g.connect(SocketRef(time.id, "time"),    to: SocketRef(mul.id, "a"))
+        g.connect(SocketRef(speed.id, "out"),    to: SocketRef(mul.id, "b"))
+        g.connect(SocketRef(mul.id, "out"),      to: SocketRef(sine.id, "a"))
+        g.connect(SocketRef(sine.id, "out"),     to: SocketRef(mul2.id, "a"))
+        g.connect(SocketRef(amp.id, "out"),      to: SocketRef(mul2.id, "b"))
+        g.connect(SocketRef(mul2.id, "out"),     to: SocketRef(combine.id, "y"))
+        g.connect(SocketRef(noise.id, "out"),    to: SocketRef(out.id, "roughness"))
+        g.connect(SocketRef(color.id, "out"),    to: SocketRef(out.id, "baseColor"))
+        g.connect(SocketRef(combine.id, "out"),  to: SocketRef(out.id, "positionOffset"))
+
+        var doc = ShaderDocument()
+        doc.root = g
+        doc.settings.target = .realityKit
+        doc.settings.lightingModel = .lit
+        return doc
+    }
+
     /// `sample()` with its Time → Multiply → Sine chain folded into a "Wobble" definition
     /// (spec §20.4). Covers a wired exposed input (`t`), a slot shared by the definition
     /// (the Float's value, inside), and the root's own per-instance slots.

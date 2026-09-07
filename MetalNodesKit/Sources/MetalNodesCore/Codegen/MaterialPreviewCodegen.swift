@@ -81,10 +81,21 @@ extension MaterialPreviewCodegen {
         // The statements run against a local `geo` shim whose accessors are the mesh vertex's own
         // fields, so `EmitEnvironment.realityKitGeometry`'s `geo.…()` spellings compile unchanged.
         add("    MNGeometry geo = MNGeometry{ vert, cam, vid };")
+        let offsetExpression = geometry.inputExpressions[terminal]?["positionOffset"]
+        // `{sys.time}` always spells as `params.uniforms().time()` (`EmitEnvironment.materialSys`),
+        // matching RealityKit's own `geometry_parameters` — so a Time node reachable from the
+        // geometry stage needs a `params` of that shape here too. `MNGeometryParams` is declared
+        // alongside `MNSurface` in `surfaceShim`, ahead of both functions. Declared only when a
+        // statement actually reads it — an always-emitted, never-read local would warn unused,
+        // exactly the wart a prior fix already had to remove from the RealityKit export snippet.
+        if geometry.bodyLines.contains(where: { $0.contains("params.uniforms()") })
+            || (offsetExpression?.contains("params.uniforms()") ?? false) {
+            add("    MNGeometryParams params = MNGeometryParams{ u };")
+        }
         for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
             add("    " + line, geometry.lineOwners[i])
         }
-        if let e = geometry.inputExpressions[terminal]?["positionOffset"] {
+        if let e = offsetExpression {
             add("    offset = \(e);", terminal)
         }
         add("    float3 modelPosition = vert.position + offset;")
@@ -248,6 +259,10 @@ extension MaterialPreviewCodegen {
         constant CameraUniforms &cam;
         constant Uniforms &u;
         MNSurfaceGeometry geometry() const { return MNSurfaceGeometry{ in }; }
+        MNSurfaceUniforms uniforms() const { return MNSurfaceUniforms{ u }; }
+    };
+    struct MNGeometryParams {
+        constant Uniforms &u;
         MNSurfaceUniforms uniforms() const { return MNSurfaceUniforms{ u }; }
     };
     """

@@ -146,6 +146,22 @@ import Foundation
         #expect(try ShaderGenerator.generate(doc, registry: reg).source.contains("in.uv"))
     }
 
+    /// Every ready-made document in the library — the two File ▸ New / Help ▸ Open Sample Shader
+    /// documents, the XCUITest fixture, the grouped variant, and the RealityKit material starter
+    /// (spec §23) — validates and generates cleanly under its own `settings.target`, not a
+    /// hardcoded one, so a document added here can never silently need a different target than
+    /// the one it declares.
+    @Test func everyLibraryDocumentValidatesAndGeneratesUnderItsOwnTarget() throws {
+        let docs: [ShaderDocument] = [.starter(), .sample(), .sampleWithGroup(), .textured(), .realityKitMaterial()]
+        for doc in docs {
+            let diags = GraphValidator.validate(document: doc, registry: reg, target: doc.settings.target)
+            #expect(diags.isEmpty, "\(doc.settings.target): \(diags)")
+            #expect(throws: Never.self, "\(doc.settings.target)") {
+                try ShaderGenerator.generate(doc, target: doc.settings.target, registry: reg)
+            }
+        }
+    }
+
     @Test func compareProducesBoolAndSwitchSelects() throws {
         let cmp = NodeInstance(kind: .builtin("utility.compare"), params: ["op": .enumCase("greater")])
         let sw = NodeInstance(kind: .builtin("utility.switch")), out = NodeInstance(kind: .builtin("output.fragment"))
