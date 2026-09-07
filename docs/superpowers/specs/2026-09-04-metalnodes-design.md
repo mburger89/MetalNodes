@@ -1654,3 +1654,122 @@ Where §23 as written above and the shipped code differ, the code is right and t
 - **§23.7 — two rules beyond the five listed.** A 3D input node inside a group definition is refused under `.realityKit`: `EmitEnvironment.groupFunction.sys` carries no RealityKit vocabulary and cannot, since a group function is target-agnostic, so such a node emitted `/* ?sys.worldPosition */` into real source. And viewing a geometry-only node is refused: §23.5 makes a viewed value unlit colour *on the mesh*, which is the fragment stage's product, so a per-vertex value has no viewable meaning and would arrive interpolated.
 - **§23.3 — `geometry().normal()`'s coordinate space remains unverified.** The preview commits to world space on the surface side and model space in the geometry shim; only running Normal → Base Color on a sphere in RealityKit settles it. `screen_position()` is likewise unverified: the preview serves framebuffer pixel coordinates.
 - **The three shims are the fragile part of the design.** Nothing mechanically ties `MNGeometry`, `MNSurface` and `MNSurfaceGeometry` to `EmitEnvironment.materialSys`. A `{sys.…}` key added to one and forgotten in the other produces a comment marker in generated MSL — the failure mode of both new §23.7 rules. A shared table, or a test asserting every `materialSys` key has a matching shim accessor, would make that class of bug impossible; it is the first thing M8 should take.
+
+## 24. M8 addendum — custom code, one legality predicate, RealityKit follow-ups (added 2026-09-07)
+
+M8 adds **user-authored shader code** in two forms, retires the **four-way legality seam** that M7's execution record identified as the shared cause of two late defects, and completes three **RealityKit follow-ups** the M7 milestone deliberately deferred. Decisions taken with the user: both an Expression node and a Custom MSL node, not one or the other; a Custom MSL node is a *definition* with instances while an Expression node carries its formula as instance data; compile errors land on the user's own line inside the node's editor; validation is the Metal compiler plus structural guards plus a refusal of unbounded loops; and the milestone takes the whole scope rather than splitting the RealityKit items to M9 — flagged as roughly double M7's size and reaffirmed.
+
+§24 wins for M8 wherever it and §8 (node definitions), §9 (codegen), §20 (groups) or §23 (RealityKit) differ in detail.
+
+### 24.1 Scope and order
+
+1. `ParamValue.text` / `ParamKind.text`, and the Expression node (§24.2).
+2. `GroupDefinition`'s body becomes graph-or-text; Custom MSL definitions (§24.3).
+3. The guards and the user-line error map (§24.4).
+4. The legality predicate, replacing three static sets (§24.5).
+5. Live material parameters (§24.6).
+6. Clearcoat (§24.7).
+7. Custom attribute (§24.8).
+8. Integration: the in-app checklist, and the five M6 manual checks finally run (§24.9).
+
+### 24.2 The Expression node
+
+One builtin, `utility.expression`, category `.utility`. Its formula is instance data, so two Expression nodes are independent — that is the point of it, against the Custom MSL node's shared definition.
+
+**A text parameter.** `ParamValue` gains `case text(String)` and `ParamKind` gains `case text`. `ParamValue` is `Codable`, so persistence follows; the inspector renders `.text` as a field. `ParamValues.mslLiteral` refuses `.text` — a formula is never a uniform, and its `socketType` is `nil`.
+
+**Sockets come from the formula.** `sin(a * 6.28) * b` declares inputs `a` and `b`. The identifiers are found by the same token scan the guards use (§24.4), filtered against the MSL keyword and builtin-function lists so `sin`, `float3` and `length` are not mistaken for sockets. Order is first appearance, so the socket list is stable as the user types rather than reordering under the cursor.
+
+Because the socket list depends on a parameter, the node's shape is **computed, not declared** — `ShaderDocument.shape(of:in:registry:)` already does exactly this for group instances with exposed sockets (§20.6), and the Expression node joins that path.
+
+**Types.** Each input's type resolves from what is wired into it, through the existing `generics` mechanism. Each inferred input gets its **own** generic — `T0`, `T1`, … in socket order, each over `anyFloat` — not a shared `T`: wiring a `float2` into `a` and a `float` into `b` is ordinary in an expression, and one shared parameter would force them to unify and reject it. The output type is a separate `.enumeration` parameter — `float`, `float2`, `float3`, `float4`, `color`, `int`, `bool` — defaulting to `float`, because an expression's result type cannot be read off its inputs. Nothing new is added to the type system.
+
+**Emission.** The formula becomes one SSA statement: `{out.out} = <formula with identifiers substituted>;`. Substitution reuses `Emitter.substitute`; the only difference from a builtin body is that the template came from the document rather than the library. An Expression node emits no function — it inlines, like every other builtin.
+
+### 24.3 Custom MSL definitions
+
+`GroupDefinition.graph: Graph` becomes `GroupDefinition.body: DefinitionBody`:
+
+```swift
+public enum DefinitionBody: Codable, Sendable, Hashable {
+    case graph(Graph)
+    case msl(String)
+}
+```
+
+Every group feature then applies unchanged, because they are features of the *definition*, not of its body: the My Functions palette section, dive-in editing (§20.3), rename, make-unique, delete, the accent colour, instancing, and one emitted MSL function called once per instance (§20.4).
+
+`GroupCodegen.function(for:document:registry:functions:)` already builds a signature from `inputs`/`outputs` and a result struct from the declared outputs. For a `.msl` body it emits the user's statements in place of the subgraph's, with the declared sockets in scope under their own names — `in_<name>` for inputs, as the graph path already spells them, and the outputs assigned by the user's own code before the epilogue packs them into the result struct.
+
+A `.msl` definition declares its sockets explicitly, with types. There is no inference: a definition is reused across instances, so its signature must be stable independently of any one call site.
+
+**Migration.** `GroupDefinition` is `Codable` and its `graph` key is written by every existing document. `init(from:)` decodes `body` when present and falls back to decoding `graph` into `.graph(...)`, so every M0–M7 document opens unchanged. This is the same shape as the `decodeIfPresent` defaults §23.2 uses for settings.
+
+**Cost, stated plainly.** Making the body a sum type touches every site that assumes `.graph` exists — 29 references across `Sources` at the time of writing, in validation, group operations, dependency walking and the canvas. The alternative is a parallel `CustomDefinition` type duplicating naming, instancing and palette code, which is worse: two things to keep in step is the exact failure this milestone is otherwise retiring.
+
+### 24.4 Authoring, guards, and the user-line error map
+
+**Editors.** The Expression node's formula is a field on the node body, and also in the inspector. A Custom MSL definition reuses dive-in: ⌘↓ shows a code editor where the canvas would be, built from M5's `CodePanel` and `MSLHighlighter` (§21.5) made editable.
+
+**Guards run before the compiler**, as a token scan — not a parser. Writing an MSL front end is not proportionate, and the compiler is the real type checker. Three families, each producing a `Diagnostic(.error, …)` anchored on the node:
+
+1. **Scope breakers** — preprocessor directives (`#include`, `#define`, `#pragma`), unbalanced braces, and a bare `return`. Each silently reshapes the surrounding generated program, so the compiler's complaint would land on a neighbouring node rather than the culprit. Refusing them is what keeps every *other* diagnostic trustworthy.
+2. **Unbounded loops** — `while` and `do` are refused outright; `for` is allowed only when its condition compares against an integer literal. Deliberately conservative, and it will refuse some legitimate code. The asymmetry is the reason: a compile error is recoverable and a GPU hang is not — it takes the preview down and needs a force quit.
+3. **Illegal accessors** — text naming a builtin unavailable where the node sits, via the §24.5 predicate.
+
+**Errors land on the user's line.** `LineMap.Entry` gains `userLineOffset: Int?`. When the emitter splices *N* lines of user text starting at generated-program line *P*, the entry records *P*. A compiler diagnostic at *P+k* then resolves to line *k+1* of the user's own text, and the editor underlines it. `ShaderCompiler.parseLines`, the diagnostics panel and the node outline are unchanged — this is one field and one lookup, not a new pipeline.
+
+### 24.5 One legality predicate
+
+Today "can this node be emitted here?" is answered in four places that must agree: `NodeDef.stages`, `MaterialValidation.twoDimensionalOnly`, the `material3D` set derived in `foreignNodeDiagnostics`, and — implicitly — the keys each `EmitEnvironment.sys` happens to hold. Handoff §14.6 records the seams between them as the shared cause of two M7 defects.
+
+The fourth is the real authority. A node can be emitted in an environment exactly when every `{sys.…}` name its body reads has a spelling there. That is not a rule maintained *beside* the vocabulary; it is the vocabulary, asked a question.
+
+**`EmitEnvironment` gains the predicate:**
+
+```swift
+public enum Legality: Equatable { case allowed, missing(String) }
+public func canEmit(_ body: NodeBody, chosen: String?) -> Legality
+```
+
+Validation calls it instead of consulting the static sets, and `NodeDef.stages` stops being declared: Vertex ID is geometry-only because `vertexID` appears only in the geometry vocabulary, not because that fact was written down twice.
+
+**Readable versus fill-only.** `materialSys` deliberately supplies `resolution` and `mouse` as neutral literals so group-function argument lists still compile (§23.4). Mere presence therefore cannot mean legal, or Mouse and Resolution would silently become available under the RealityKit target. `EmitEnvironment.sys` becomes `[String: SysValue]` where `SysValue` carries the spelling and a `readable: Bool`; the predicate asks about readable keys. Today's hand-written refusal list becomes data.
+
+**For custom MSL** the same predicate answers §24.4's third guard, but textually: a hand-written body names `params.geometry().normal()` directly rather than through a placeholder, so the check is against the environment's accessor set — the table M7's `everyMaterialSysSpellingResolvesAgainstItsShim` test already builds.
+
+**Migration test.** For every builtin node, the derived stage set must equal what §23.3 declared by hand. That test is what makes this refactor safe to land rather than hopeful, and it is the same shape as the correspondence test it generalises.
+
+### 24.6 Live material parameters
+
+A `CustomMaterial` exposes one `float4` (§23.6), so up to four floats can animate from Swift without re-export.
+
+`DocumentSettings` gains `liveParameters: [ParamPath]`, ordered, at most four. The inspector marks an exposed float parameter live and assigns it a component. The **export** then emits `params.uniforms().custom_parameter().x` where §23.6 bakes a literal, and the Swift snippet gains a named setter writing `material.custom.value`. Validation refuses a fifth entry and refuses a non-float type.
+
+**The preview is deliberately unchanged** — it keeps reading the uniform buffer. §23.6's baking was always a property of the export artifact, not of the graph, and this makes that explicit rather than eroding it.
+
+### 24.7 Clearcoat
+
+`MaterialLightingModel` gains `.clearcoat`, reversing §23.2's deferral now that the sockets exist. Material Output gains three surface sockets: `clearcoat` (float), `clearcoatRoughness` (float), `clearcoatNormal` (float3, tangent space).
+
+Setters, verbatim from `RealityKitSurfaceShader.h`: `set_clearcoat(half)`, `set_clearcoat_roughness(half)`, `set_clearcoat_normal(half3)`. `MaterialCodegen.liveSurfaceSockets` returns all eleven under `.clearcoat` and excludes the three under `.lit`, which is what the header's own doc comments require — those three are ignored unless the lighting model is clearcoat.
+
+**One availability trap.** `set_clearcoat_normal` is iOS 18 / macOS 15+, unlike the rest of the surface API (§23 preamble). When that socket is wired, the exported `.metal` header carries an availability note naming the floor, and the Swift snippet's doc comment repeats it.
+
+**The preview approximates clearcoat with a second, tighter specular lobe** over the base GGX response — crude but recognisable. The inspector's existing caption is extended to say clearcoat is the roughest part of the approximation. The alternative considered was rendering `.clearcoat` identically to `.lit` and saying so; it is more honest but makes the picker look broken, and the caption already sets the expectation that the preview shows shape rather than exact output.
+
+### 24.8 Custom attribute
+
+`custom_attribute` is the only channel from the geometry stage to the surface stage (§23 preamble). Material Output gains a `customAttribute` socket (float4, geometry stage), emitting `geo.set_custom_attribute(<expr>)`. A new node `input.customAttribute` (float4, surface stage only) reads `params.geometry().custom_attribute()`.
+
+The preview needs a real addition rather than a shim accessor alone: `MaterialPreviewCodegen.interpolantsStruct` carries a `float4 customAttribute`, the generated vertex function writes it from the geometry stage's expression, and `MNSurfaceGeometry` reads it. Interpolation is Metal's default, matching RealityKit's documented behaviour.
+
+### 24.9 Testing and verification
+
+- **Expression (Core, no GPU):** socket inference over a table of formulas including keyword and builtin-function collisions (`sin`, `float3`, `length` are not sockets); first-appearance ordering; type resolution from wires; `ParamValue.text` round-trip; golden emission of the substituted statement; a formula naming an unwired identifier.
+- **Custom MSL (Core, no GPU):** `DefinitionBody` round-trip for both cases; an M7-era document with a `graph` key still decoding; golden showing two instances calling one emitted function; rename, make-unique and delete over a `.msl` definition.
+- **Guards (Core, no GPU):** a positive and a negative case for each — `#include`, unbalanced braces, bare `return`, `while`, `do`, `for` without a literal bound, and `for` *with* one, which must be allowed.
+- **Error mapping (Render, GPU):** a deliberately broken body compiled on a device, asserting the diagnostic carries the user's line number and not the generated program's.
+- **Legality (Core, no GPU):** the derived-stages migration test above; readable-versus-fill-only, asserting Mouse and Resolution stay refused under `.realityKit` despite their keys existing; every existing validation test as the regression gate.
+- **RealityKit follow-ups:** live parameters emit `custom_parameter().x` in the export while the preview's golden does *not* move; a fifth live parameter refused; clearcoat setters present under `.clearcoat` and absent under `.lit`; the availability note when `clearcoatNormal` is wired; custom attribute written in the vertex stage and read in the fragment stage. All extend the two export gates that already exist — `xcrun metal -c` against the SDK, and `swiftc -typecheck` on the snippet.
+- **Integration (controller-run):** the M8 in-app checklist enumerated in the plan, plus the five M6 manual checks still owed (handoff §13, §14.4): macOS Finder→canvas drop, palette drag-in, iPad hardware-keyboard check 14, two-finger pan/pinch, and Slide Over compact width.
