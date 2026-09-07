@@ -38,6 +38,9 @@ public struct DocumentSettings: Sendable, Hashable {
     public var fastMath: Bool = true
     /// What the document exports as (spec §19). Fragment preview is always available regardless.
     public var target: OutputTarget = .fragment
+    /// The `CustomMaterial.LightingModel` the RealityKit target exports and the 3D preview
+    /// approximates (spec §23.8). Ignored by every other target.
+    public var lightingModel: MaterialLightingModel = .lit
     /// The name given to the exported SwiftUI stitchable function / Swift symbol.
     public var exportName: String = "metalNodesShader"
     /// The imported images this document references (spec §21.2). Never auto-pruned.
@@ -46,7 +49,7 @@ public struct DocumentSettings: Sendable, Hashable {
 }
 
 extension DocumentSettings: Codable {
-    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets }
+    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets, lightingModel }
 
     /// A dictionary keyed by a struct encodes as a flat `[key, value, …]` array, which neither
     /// diffs nor reads well — so `assets` is written as an array of these, sorted by id.
@@ -60,7 +63,11 @@ extension DocumentSettings: Codable {
         previewSize = try c.decodeIfPresent(CGSize.self, forKey: .previewSize) ?? CGSize(width: 512, height: 512)
         timeMode = try c.decodeIfPresent(TimeMode.self, forKey: .timeMode) ?? .wallClock
         fastMath = try c.decodeIfPresent(Bool.self, forKey: .fastMath) ?? true
-        target = try c.decodeIfPresent(OutputTarget.self, forKey: .target) ?? .fragment
+        // A document written by a newer build may name a target this build has no case for.
+        // `decodeIfPresent` *throws* on an unknown case, which would fail the whole settings
+        // object and so the whole document; `try?` degrades to Fragment instead (spec §23.2).
+        target = (try? c.decodeIfPresent(OutputTarget.self, forKey: .target))?.flatMap { $0 } ?? .fragment
+        lightingModel = (try? c.decodeIfPresent(MaterialLightingModel.self, forKey: .lightingModel))?.flatMap { $0 } ?? .lit
         exportName = try c.decodeIfPresent(String.self, forKey: .exportName) ?? "metalNodesShader"
         let entries = try c.decodeIfPresent([AssetEntry].self, forKey: .assets) ?? []
         assets = Dictionary(entries.map { ($0.id, $0.info) }, uniquingKeysWith: { $1 })
@@ -72,6 +79,7 @@ extension DocumentSettings: Codable {
         try c.encode(timeMode, forKey: .timeMode)
         try c.encode(fastMath, forKey: .fastMath)
         try c.encode(target, forKey: .target)
+        try c.encode(lightingModel, forKey: .lightingModel)
         try c.encode(exportName, forKey: .exportName)
         try c.encode(assets.map { AssetEntry(id: $0.key, info: $0.value) }
             .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .assets)

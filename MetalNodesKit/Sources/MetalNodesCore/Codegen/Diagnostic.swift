@@ -24,8 +24,9 @@ public enum StitchableKind: String, Sendable, CaseIterable, Codable {
 public enum OutputTarget: Sendable, Hashable, Codable {
     case fragment
     case stitchable(StitchableKind)
+    case realityKit
 
-    public static let all: [OutputTarget] = [.fragment, .stitchable(.colorEffect), .stitchable(.distortionEffect), .stitchable(.layerEffect)]
+    public static let all: [OutputTarget] = [.fragment, .stitchable(.colorEffect), .stitchable(.distortionEffect), .stitchable(.layerEffect), .realityKit]
 
     public var title: String {
         switch self {
@@ -33,6 +34,7 @@ public enum OutputTarget: Sendable, Hashable, Codable {
         case .stitchable(.colorEffect): "SwiftUI Color Effect"
         case .stitchable(.distortionEffect): "SwiftUI Distortion Effect"
         case .stitchable(.layerEffect): "SwiftUI Layer Effect"
+        case .realityKit: "RealityKit Material"
         }
     }
 

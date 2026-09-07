@@ -105,6 +105,10 @@ public enum ShaderGenerator {
         case .stitchable(let kind):
             return try assembleStitchable(doc, kind: kind, order: order, terminal: terminal, resolved: resolved, registry: registry,
                                           functions: functions, groupOrder: groupOrder, groupFunctions: groupFunctions)
+        case .realityKit:
+            // Codegen for this target lands in a later M7 task; Task 1 only introduces the case
+            // so `OutputTarget` and `DocumentSettings` can round-trip it.
+            throw .invalid([Diagnostic(.error, "RealityKit material export is not implemented yet")])
         }
     }
 

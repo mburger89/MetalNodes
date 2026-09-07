@@ -94,16 +94,22 @@ public struct NodeDef: Sendable, Identifiable {
     public var params: [ParamDecl]
     public var generics: [String: [SocketType]]
     public var requires: [String]
+    /// Which RealityKit shader stages this node may appear in (spec §23.3). Both for every node
+    /// that is pure arithmetic; narrowed only by nodes that read a stage-specific builtin.
+    /// Consulted only under `OutputTarget.realityKit`.
+    public var stages: Set<MaterialStage> = MaterialStage.all
     public var body: NodeBody
     public var style: NodeStyle
 
     public init(id: String, title: String, category: NodeCategory,
                 inputs: [SocketDecl] = [], outputs: [SocketDecl] = [], params: [ParamDecl] = [],
-                generics: [String: [SocketType]] = [:], requires: [String] = [], body: NodeBody,
+                generics: [String: [SocketType]] = [:], requires: [String] = [],
+                stages: Set<MaterialStage> = MaterialStage.all, body: NodeBody,
                 style: NodeStyle = .standard) {
         self.id = id; self.title = title; self.category = category
         self.inputs = inputs; self.outputs = outputs; self.params = params
-        self.generics = generics; self.requires = requires; self.body = body; self.style = style
+        self.generics = generics; self.requires = requires; self.stages = stages
+        self.body = body; self.style = style
     }
 
     public func input(named n: String) -> SocketDecl? { inputs.first { $0.name == n } }

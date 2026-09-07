@@ -34,10 +34,38 @@ import Foundation
     }
 
     @Test func outputTargetsHaveTitlesAndAStableOrder() {
-        #expect(OutputTarget.all.count == 4)
+        // M7 adds `.realityKit` as a fifth target (MaterialStageTests.realityKitIsAnOutputTargetWithATitle).
+        #expect(OutputTarget.all.count == 5)
         #expect(OutputTarget.all.first == .fragment)
         #expect(OutputTarget.stitchable(.layerEffect).title == "SwiftUI Layer Effect")
         #expect(OutputTarget.stitchable(.colorEffect).stitchableKind == .colorEffect)
         #expect(OutputTarget.fragment.stitchableKind == nil)
+    }
+}
+
+@Suite struct MaterialDocumentSettingsTests {
+    @Test func lightingModelDefaultsToLitAndRoundTrips() throws {
+        var s = DocumentSettings()
+        #expect(s.lightingModel == .lit)
+        s.lightingModel = .unlit
+        s.target = .realityKit
+        let data = try JSONEncoder().encode(s)
+        let back = try JSONDecoder().decode(DocumentSettings.self, from: data)
+        #expect(back.lightingModel == .unlit)
+        #expect(back.target == .realityKit)
+    }
+
+    @Test func settingsWithoutALightingModelDecodeAsLit() throws {
+        let json = Data(#"{"fastMath":true,"exportName":"x"}"#.utf8)
+        #expect(try JSONDecoder().decode(DocumentSettings.self, from: json).lightingModel == .lit)
+    }
+
+    /// A document written by a newer build must open, not fail: an unrecognised target
+    /// falls back to Fragment rather than throwing out the whole settings object.
+    @Test func anUnknownTargetFallsBackToFragment() throws {
+        let json = Data(#"{"target":{"holographic":{}},"exportName":"x"}"#.utf8)
+        let back = try JSONDecoder().decode(DocumentSettings.self, from: json)
+        #expect(back.target == .fragment)
+        #expect(back.exportName == "x")
     }
 }

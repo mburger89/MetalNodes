@@ -84,7 +84,9 @@ import MetalNodesCore
     @Test func groupProgramsCompile() async throws {
         let c = try compiler()
         var doc = ShaderDocument.sampleWithGroup()
-        for target in OutputTarget.all {
+        // RealityKit codegen lands in a later M7 task; `OutputTarget.all` names the case starting
+        // Task 1, but `ShaderGenerator.generate` still refuses it until that codegen exists.
+        for target in OutputTarget.all where target != .realityKit {
             doc.settings.target = target
             let shader = try ShaderGenerator.generate(doc, target: target)
             if case .failure(let msg, _, _) = await c.compile(shader, generation: 1) { Issue.record("\(target.title): \(msg)\n\(shader.source)") }
