@@ -24,10 +24,10 @@ import MetalNodesCore
         let m = model()
         let bridge = DocumentBridge(model: m)
         var file = bridge.package
-        #expect(bridge.mirror(into: &file) == false)          // already equal: nothing written
+        #expect(bridge.mirror(into: &file).isEmpty)          // already equal: nothing written
         let uv = m.document.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
         m.apply(.moveNodes([uv.id: CGPoint(x: 9, y: 9)]))
-        #expect(bridge.mirror(into: &file) == true)
+        #expect(bridge.mirror(into: &file) == [.document])
         #expect(file.document == m.document)
         #expect(file.viewState == m.viewState)
     }

@@ -94,8 +94,23 @@ struct EditorViewPad<Inspector: View>: View {
             }
             .accessibilityIdentifier("toolbar.inspector")
 
+            viewMenu
             exportMenu
         }
+    }
+
+    /// The View menu's two toggles (spec §22.5 lists them under ⌘⌥C and View ▸ Minimap), reachable
+    /// by touch: iPad's menu bar and its shortcuts need a hardware keyboard or a pointer.
+    private var viewMenu: some View {
+        Menu {
+            Toggle("Minimap", isOn: Binding(get: { model.viewState.showsMinimap },
+                                            set: { if model.viewState.showsMinimap != $0 { model.viewState.showsMinimap = $0 } }))
+            Toggle("Generated Code", isOn: Binding(get: { model.viewState.showsCode },
+                                                   set: { if model.viewState.showsCode != $0 { model.viewState.showsCode = $0 } }))
+        } label: {
+            Label("View", systemImage: "eye")
+        }
+        .accessibilityIdentifier("toolbar.view")
     }
 
     /// The canvas mode (spec §22.3), in the breadcrumb row rather than among the toolbar items:

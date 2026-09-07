@@ -42,15 +42,22 @@ extension EditorModel {
 
     /// No-op while a gesture transaction is open (spec §18.3): undoing mid-gesture would race
     /// the transaction's eventual `commitUndo`.
+    ///
+    /// Every step this model registers is named; an unnamed group on the window's manager is
+    /// someone else's — SwiftUI's own registration for a `FileDocument` write that slipped past the
+    /// host — and never a document edit (spec §18.3). Those pop first, so the user's ⌘Z lands on
+    /// the next named step, and a stack holding only such groups undoes nothing.
     public func undo() {
         guard !isInTransaction else { return }
-        undoManager.undo()
+        while undoManager.canUndo, undoManager.undoActionName.isEmpty { undoManager.undo() }
+        if undoManager.canUndo { undoManager.undo() }
         undoStackVersion += 1
     }
 
     public func redo() {
         guard !isInTransaction else { return }
-        undoManager.redo()
+        while undoManager.canRedo, undoManager.redoActionName.isEmpty { undoManager.redo() }
+        if undoManager.canRedo { undoManager.redo() }
         undoStackVersion += 1
     }
 

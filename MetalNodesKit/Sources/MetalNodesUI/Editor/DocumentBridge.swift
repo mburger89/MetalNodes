@@ -18,16 +18,26 @@ public final class DocumentBridge {
         return p
     }
 
+    /// What one `mirror(into:)` wrote. The host tells a view-state-only write apart: the model's
+    /// own undo step has already marked the document changed for anything else.
+    public struct Written: OptionSet, Sendable {
+        public let rawValue: UInt8
+        public init(rawValue: UInt8) { self.rawValue = rawValue }
+        public static let document = Written(rawValue: 1)
+        public static let viewState = Written(rawValue: 2)
+        public static let textures = Written(rawValue: 4)
+        public static let missingTextures = Written(rawValue: 8)
+    }
+
     /// Model → file. Writes each field only when it differs, so a value that arrived *from* the
-    /// file is never written back (which would mark the window dirty for nothing). True if anything
-    /// was written.
+    /// file is never written back (which would mark the window dirty for nothing).
     @discardableResult
-    public func mirror(into file: inout ShaderPackage) -> Bool {
-        var wrote = false
-        if file.document != model.document { file.document = model.document; wrote = true }
-        if file.viewState != model.viewState { file.viewState = model.viewState; wrote = true }
-        if file.textures != model.textures { file.textures = model.textures; wrote = true }
-        if file.missingTextures != model.missingTextures { file.missingTextures = model.missingTextures; wrote = true }
+    public func mirror(into file: inout ShaderPackage) -> Written {
+        var wrote: Written = []
+        if file.document != model.document { file.document = model.document; wrote.insert(.document) }
+        if file.viewState != model.viewState { file.viewState = model.viewState; wrote.insert(.viewState) }
+        if file.textures != model.textures { file.textures = model.textures; wrote.insert(.textures) }
+        if file.missingTextures != model.missingTextures { file.missingTextures = model.missingTextures; wrote.insert(.missingTextures) }
         return wrote
     }
 

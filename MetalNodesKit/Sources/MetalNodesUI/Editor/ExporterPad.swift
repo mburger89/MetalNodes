@@ -112,7 +112,7 @@ public struct ExporterPadHost: ViewModifier {
                           onCancellation: { exporter.finish(.cancelled) })
             .fileExporter(isPresented: isPresented(exporter, folder: false),
                           document: exporter.textDocument,
-                          contentTypes: [.sourceCode],
+                          contentTypes: [.metalSource],
                           defaultFilename: exporter.pending?.name,
                           onCompletion: { exporter.finish($0) },
                           onCancellation: { exporter.finish(.cancelled) })

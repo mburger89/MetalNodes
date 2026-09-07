@@ -30,7 +30,7 @@ struct MetalNodesApp: App {
 
     var body: some Scene {
         DocumentGroup(newDocument: ShaderFileDocument(package: ShaderPackage(document: LaunchFixture.document()))) { file in
-            DocumentHostView(file: file.$document, device: device, compiler: compiler)
+            DocumentHostView(file: file.$document, fileURL: file.fileURL, device: device, compiler: compiler)
         }
         .commands {
             EditorCommands()

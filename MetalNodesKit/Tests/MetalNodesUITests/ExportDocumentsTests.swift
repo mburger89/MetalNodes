@@ -30,7 +30,8 @@ import MetalNodesCore
     @Test func theTextDocumentRoundTripsItsContents() throws {
         let file = ExportFile(name: "metalNodesShader.metal", contents: "#include <metal_stdlib>\nusing namespace metal;\n")
         let document = ExportTextDocument(file: file)
-        #expect(ExportTextDocument.readableContentTypes == [.sourceCode])
+        #expect(ExportTextDocument.readableContentTypes == [.metalSource])
+        #expect(UTType.metalSource.preferredFilenameExtension == "metal")
         #expect(document.name == "metalNodesShader.metal")
 
         let wrapper = document.makeWrapper()

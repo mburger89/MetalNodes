@@ -79,6 +79,28 @@ import MetalNodesRender
         #expect(!m.canRedo)
     }
 
+    /// SwiftUI's own registration for a FileDocument write is an unnamed group; ⌘Z skips it and
+    /// lands on the model's named step.
+    @Test func undoSkipsUnnamedGroupsOnTopOfTheStack() {
+        let m = model()
+        let window = UndoManager()
+        window.groupsByEvent = false                 // no run loop here to close the event group
+        m.adoptUndoManager(window)
+        let node = uv(m)
+        let original = m.document
+        m.apply(.moveNodes([node.id: CGPoint(x: 5, y: 5)]))
+        #expect(m.document != original)
+        window.beginUndoGrouping()
+        window.registerUndo(withTarget: window) { _ in }
+        window.endUndoGrouping()
+        #expect(window.undoActionName.isEmpty)
+
+        m.undo()
+
+        #expect(m.document == original)
+        #expect(m.canRedo)
+    }
+
     @Test func adoptRefusesOnceSomethingIsOnTheStack() {
         let m = model()
         let node = uv(m)

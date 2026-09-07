@@ -43,9 +43,16 @@ nonisolated public struct ExportFolderDocument: FileDocument {
     public func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { makeWrapper() }
 }
 
+nonisolated extension UTType {
+    /// Metal shading-language source. No iOS app registers `.metal`, so this is the dynamic type
+    /// for the extension; the exporter names its file by it. Under the bare `.sourceCode` type the
+    /// system appended `.txt` to `metalNodesShader.metal` (manual check 17).
+    public static let metalSource = UTType(filenameExtension: "metal", conformingTo: .sourceCode) ?? .sourceCode
+}
+
 /// The fragment target's single `.metal` file, exported directly rather than inside a folder.
 nonisolated public struct ExportTextDocument: FileDocument {
-    public static var readableContentTypes: [UTType] { [.sourceCode] }
+    public static var readableContentTypes: [UTType] { [.metalSource] }
 
     public let name: String
     public let contents: String

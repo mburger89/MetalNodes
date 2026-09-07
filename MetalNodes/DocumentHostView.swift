@@ -14,6 +14,9 @@ import MetalNodesUI
 /// empty (spec §21.1).
 struct DocumentHostView: View {
     @Binding var file: ShaderFileDocument
+    /// Where the document lives, from the `DocumentGroup` configuration — how the platform document
+    /// behind `file` is found when a view-state change has to mark it edited. Nil until first saved.
+    let fileURL: URL?
     let device: MTLDevice
     let compiler: ShaderCompiler
     @Environment(\.undoManager) private var undoManager
@@ -56,8 +59,15 @@ struct DocumentHostView: View {
     private func mirror() {
         guard let bridge else { return }
         undoManager?.disableUndoRegistration()
-        defer { undoManager?.enableUndoRegistration() }
-        bridge.mirror(into: &file.package)
+        let written = bridge.mirror(into: &file.package)
+        undoManager?.enableUndoRegistration()
+        // A document or texture change has already marked the document through the model's own
+        // undo step. View state on its own has no step (spec §18.3), and a registration made for
+        // it would wipe the redo stack — so the platform document is told directly, or the
+        // camera, the selection and the panels of a document nobody edited again are never saved.
+        if !written.isEmpty, written.isDisjoint(with: [.document, .textures]) {
+            PlatformDocument.markChanged(at: fileURL)
+        }
     }
 
     private func makeModel() {
