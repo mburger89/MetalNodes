@@ -51,7 +51,12 @@ public enum ExpressionNode {
         let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
         let trimmed = formula.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "{out.out} = 0.0;" }
-        let body = MSLScanner.rewritingIdentifiers(in: trimmed) { "{in.\($0)}" }
+        // A one-line formula (the field is `.text(multiline: false)`) cannot contain a loop
+        // today, so `LoopHardening` never actually fires on this path — but calling it costs
+        // nothing and keeps the guarantee "every emitted loop is capped" true even if this field
+        // ever grows into a multi-line body.
+        let hardened = LoopHardening.harden(trimmed)
+        let body = MSLScanner.rewritingIdentifiers(in: hardened) { "{in.\($0)}" }
         return "{out.out} = \(body);"
     }
 

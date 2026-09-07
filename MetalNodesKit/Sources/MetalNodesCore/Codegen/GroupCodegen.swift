@@ -164,7 +164,11 @@ public enum GroupCodegen {
             for decl in outputs {
                 b.add("    \(concrete(decl.type).mslName) \(decl.name) = \(zeroLiteral(concrete(decl.type)));")
             }
-            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            // Hardened on the way into the generated program (spec §24.4): every loop the user
+            // wrote gets a counter and a `break`, so a runaway one terminates instead of hanging
+            // the GPU. The editor keeps showing the user's own, unmodified text — only what lands
+            // in the compiled program changes.
+            for line in LoopHardening.harden(text).split(separator: "\n", omittingEmptySubsequences: false) {
                 b.add("    " + line)
             }
             // The result-struct local cannot be named `out` unconditionally: the user's own text
