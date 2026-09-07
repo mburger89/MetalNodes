@@ -18,11 +18,16 @@ struct DocumentHostView: View {
     let compiler: ShaderCompiler
     @Environment(\.undoManager) private var undoManager
     @State private var bridge: DocumentBridge?
+    /// One set of platform services per window. `EditorServices.platform` builds new objects each
+    /// time, and the iPad's pickers are SwiftUI presentations bound to those objects: a presenter
+    /// recreated by the next render is one whose `isPresented` reads false, so a picker opened
+    /// from the previous one dismissed itself in the same breath.
+    @State private var services: EditorServices?
 
     var body: some View {
         Group {
-            if let bridge {
-                EditorView(model: bridge.model, device: device)
+            if let bridge, let services {
+                EditorView(model: bridge.model, device: device, services: services)
                     // Model → file: the three observable fields the bridge mirrors. Keyed on
                     // `texturesVersion`, not the bytes (spec §21.2).
                     .onChange(of: bridge.model.document) { _, _ in mirror() }
@@ -62,6 +67,7 @@ struct DocumentHostView: View {
                             undoManager: undoManager, textureStore: TextureStore(device: device))
         m.missingTextures = file.package.missingTextures
         m.start()
+        services = .platform
         bridge = DocumentBridge(model: m)
     }
 
