@@ -211,7 +211,9 @@ final class MetalNodesAppUITests: XCTestCase {
         let canvas = canvas(app)
         #if os(iOS)
         toggleInspector(app)
-        canvas.press(forDuration: 0.6)
+        // Below the graph, clear of the minimap: the canvas's centre lands on a node's slider in
+        // this fixture, and a param control keeps its touches (spec §22.2) — no menu there.
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.85)).press(forDuration: 0.6)
         // The iPad menu is a popover of SwiftUI buttons; macOS gets a real `NSMenu`.
         let addSticky = app.buttons["Add Sticky Note"]
         #else
