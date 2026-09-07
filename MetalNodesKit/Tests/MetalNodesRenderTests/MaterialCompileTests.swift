@@ -234,7 +234,7 @@ import Metal
 
         var reads = ""
         for (i, key) in sys.keys.sorted().enumerated() {
-            reads += "    auto mn_test_\(i) = \(sys[key]!); // sys.\(key)\n"
+            reads += "    auto mn_test_\(i) = \(sys[key]!.spelling); // sys.\(key)\n"
         }
 
         var source = "#include <metal_stdlib>\nusing namespace metal;\n\n"

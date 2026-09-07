@@ -3,8 +3,21 @@ import Foundation
 /// How generated statements spell a uniform read and the four system values (spec §19.2).
 /// One emitter serves every target; only this differs.
 public struct EmitEnvironment: Sendable {
+    /// One system value's spelling in this environment, and whether a node may *read* it.
+    /// A fill-only value exists so group-function argument lists compile (§23.4) but is not
+    /// something a node can name — that is how Mouse and Resolution stay refused under the
+    /// RealityKit target while `mn_g_…(uv, time, size, mouse, …)` still type-checks.
+    public struct SysValue: Sendable, Hashable {
+        public let spelling: String
+        public let readable: Bool
+        public init(_ spelling: String, readable: Bool = true) {
+            self.spelling = spelling
+            self.readable = readable
+        }
+    }
+
     public var uniform: @Sendable (UniformField) -> String
-    public var sys: [String: String]
+    public var sys: [String: SysValue]
     /// The whole sample expression a Texture Sample body becomes, given its slot and the
     /// expression for its `uv` input (spec §21.2). The y flip lives here, not in the loader.
     public var textureSample: @Sendable (TextureSlot, _ uvExpr: String) -> String
@@ -26,7 +39,7 @@ public struct EmitEnvironment: Sendable {
         "\(name).sample(mn_sampler, float2(\(uv).x, 1.0 - \(uv).y))"
     }
 
-    public init(uniform: @escaping @Sendable (UniformField) -> String, sys: [String: String],
+    public init(uniform: @escaping @Sendable (UniformField) -> String, sys: [String: SysValue],
                 textureSample: @escaping @Sendable (TextureSlot, String) -> String
                     = { slot, uv in EmitEnvironment.flippedSample(slot.fragmentName, uv) },
                 textureName: @escaping @Sendable (TextureSlot) -> String = { $0.fragmentName },
@@ -41,7 +54,8 @@ public struct EmitEnvironment: Sendable {
     /// The fragment program (and every viewer program): a `constant Uniforms &u` buffer.
     public static let fragment = EmitEnvironment(
         uniform: { f in f.type == .bool ? "bool(u.\(f.name))" : "u.\(f.name)" },
-        sys: ["uv": "in.uv", "time": "u.time", "resolution": "u.resolution", "mouse": "u.mouse"])
+        sys: ["uv": SysValue("in.uv"), "time": SysValue("u.time"),
+              "resolution": SysValue("u.resolution"), "mouse": SysValue("u.mouse")])
 
     /// Inside a group function (spec §20.4): uniforms are parameters named after their slot's
     /// path, so the function is the same whatever the caller's target.
@@ -50,7 +64,8 @@ public struct EmitEnvironment: Sendable {
             guard let p = f.path else { return f.name }
             return GroupCodegen.parameterName(for: p)
         },
-        sys: ["uv": "uv", "time": "time", "resolution": "size", "mouse": "mouse"],
+        sys: ["uv": SysValue("uv"), "time": SysValue("time"),
+              "resolution": SysValue("size"), "mouse": SysValue("mouse")],
         textureSample: { slot, uv in flippedSample(slot.parameterName, uv) },
         textureName: { $0.parameterName })
 
@@ -76,7 +91,8 @@ public struct EmitEnvironment: Sendable {
             default: f.name
             }
         },
-        sys: ["uv": "uv", "time": "time", "resolution": "size", "mouse": "mouse"])
+        sys: ["uv": SysValue("uv"), "time": SysValue("time"),
+              "resolution": SysValue("size"), "mouse": SysValue("mouse")])
 
     /// The exported Layer Effect function (spec §21.2): there is no asset to bind, so every
     /// Texture Sample reads the layer SwiftUI hands the effect. Alpha comes from the layer too.
@@ -96,27 +112,27 @@ public struct EmitEnvironment: Sendable {
     /// variant reads `{sys.resolution}`, so the keys must produce *something*. No node can observe
     /// them — Resolution and Mouse are refused under this target — and a unit aspect ratio makes
     /// `aspect` degenerate to centred UV rather than to nonsense.
-    public static func materialSys(for stage: MaterialStage) -> [String: String] {
+    public static func materialSys(for stage: MaterialStage) -> [String: SysValue] {
         let geo = stage == .surface ? "params.geometry()" : "geo"
-        var s: [String: String] = [
-            "time": "params.uniforms().time()",
-            "resolution": "float2(1.0, 1.0)",
-            "mouse": "float2(0.0, 0.0)",
-            "uv": "\(geo).uv0()",
-            "uv1": "\(geo).uv1()",
-            "worldPosition": "\(geo).world_position()",
-            "modelPosition": "\(geo).model_position()",
-            "normal3d": "\(geo).normal()",
-            "bitangent": "\(geo).bitangent()",
-            "vertexColor": "\(geo).color()",
+        var s: [String: SysValue] = [
+            "time": SysValue("params.uniforms().time()"),
+            "resolution": SysValue("float2(1.0, 1.0)", readable: false),
+            "mouse": SysValue("float2(0.0, 0.0)", readable: false),
+            "uv": SysValue("\(geo).uv0()"),
+            "uv1": SysValue("\(geo).uv1()"),
+            "worldPosition": SysValue("\(geo).world_position()"),
+            "modelPosition": SysValue("\(geo).model_position()"),
+            "normal3d": SysValue("\(geo).normal()"),
+            "bitangent": SysValue("\(geo).bitangent()"),
+            "vertexColor": SysValue("\(geo).color()"),
         ]
         switch stage {
         case .surface:
-            s["tangent"] = "\(geo).tangent()"
-            s["viewDirection"] = "\(geo).view_direction()"
-            s["screenPosition"] = "\(geo).screen_position()"
+            s["tangent"] = SysValue("\(geo).tangent()")
+            s["viewDirection"] = SysValue("\(geo).view_direction()")
+            s["screenPosition"] = SysValue("\(geo).screen_position()")
         case .geometry:
-            s["vertexID"] = "int(\(geo).vertex_id())"
+            s["vertexID"] = SysValue("int(\(geo).vertex_id())")
         }
         return s
     }
@@ -157,5 +173,45 @@ public struct EmitEnvironment: Sendable {
         }
         let literals = mutableLiterals
         return { field in literals[field.name] ?? ParamValues.mslLiteral(.float(0), as: field.type) }
+    }
+
+    /// Whether a node with a given body can be emitted here — spec §24.5's legality predicate.
+    public enum Legality: Equatable, Sendable {
+        case allowed
+        /// The `{sys.…}` name (or, for `canEmit(mslText:)`, the textual accessor) this body reads
+        /// that has no readable spelling in this environment.
+        case missing(String)
+    }
+
+    /// Whether a node with this body can be emitted here: every `{sys.…}` name it *reads* must
+    /// have a readable spelling in this environment (spec §24.5). `chosen` selects which case of a
+    /// `.variants` body is actually reached; the cases not chosen are not asked about at all.
+    ///
+    /// `.custom` bodies are a library escape hatch whose text is a Swift closure, not scannable
+    /// MSL — see the doc comment on `NodeBody.custom` and this task's report for why `.allowed` is
+    /// the right default rather than a token-level guess.
+    public func canEmit(_ body: NodeBody, chosen: String?) -> Legality {
+        let text: String
+        switch body {
+        case .template(let t): text = t
+        case .variants(_, let table): text = chosen.flatMap { table[$0] } ?? ""
+        case .custom: return .allowed
+        }
+        for m in text.matches(of: NodeRegistry.placeholderPattern) where m.1 == "sys" {
+            let name = String(m.2)
+            guard let v = sys[name], v.readable else { return .missing(name) }
+        }
+        return .allowed
+    }
+
+    /// The same question for hand-written MSL, which names accessors textually rather than
+    /// through a `{sys.…}` placeholder (spec §24.5). The accessor set this checks against is
+    /// derived from this environment's own readable spellings, so the two can never disagree.
+    public func canEmit(mslText: String) -> Legality {
+        let known = Set(sys.values.filter(\.readable).map(\.spelling))
+        for accessor in MSLScanner.accessorCalls(in: mslText) where !known.contains(accessor) {
+            if accessor.hasPrefix("params.") || accessor.hasPrefix("geo.") { return .missing(accessor) }
+        }
+        return .allowed
     }
 }

@@ -100,6 +100,42 @@ public enum MSLScanner {
         return out
     }
 
+    /// Dotted call chains rooted at a free identifier — `params.geometry().normal()` — the shape
+    /// hand-written MSL uses to name an environment accessor (spec §24.5), read textually rather
+    /// than through a `{sys.…}` placeholder. Each returned chain extends through every trailing
+    /// `.name()` call and stops at the first `.name` that is not itself a call, so
+    /// `params.geometry().normal().x` reports `params.geometry().normal()` — `.x` is a swizzle on
+    /// the result, not another accessor segment. A bare identifier with no call at all (`in_a`) is
+    /// not an accessor and is not reported.
+    public static func accessorCalls(in source: String) -> [String] {
+        let tokens = tokenise(source)
+        var out: [String] = []
+        var i = 0
+        while i < tokens.count {
+            let t = tokens[i]
+            guard t.kind == .identifier, !t.afterDot else { i += 1; continue }
+            var text = t.text
+            var j = i + 1
+            var matchedAny = false
+            while j + 3 < tokens.count,
+                  tokens[j].kind == .punctuation, tokens[j].text == ".",
+                  tokens[j + 1].kind == .identifier,
+                  tokens[j + 2].kind == .punctuation, tokens[j + 2].text == "(",
+                  tokens[j + 3].kind == .punctuation, tokens[j + 3].text == ")" {
+                text += ".\(tokens[j + 1].text)()"
+                j += 4
+                matchedAny = true
+            }
+            if matchedAny {
+                out.append(text)
+                i = j
+            } else {
+                i += 1
+            }
+        }
+        return out
+    }
+
     /// A name bound by `<type> <name>` earlier in the text is a local, not an input.
     private static func declaredLocals(_ tokens: [Token]) -> Set<String> {
         var out = Set<String>()

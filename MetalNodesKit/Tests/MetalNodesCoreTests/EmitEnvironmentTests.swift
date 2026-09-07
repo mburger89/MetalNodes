@@ -11,10 +11,10 @@ import Testing
         #expect(env.uniform(field("p0", .float)) == "u.p0")
         #expect(env.uniform(field("p3", .int)) == "u.p3")
         #expect(env.uniform(field("p4", .bool)) == "bool(u.p4)")
-        #expect(env.sys["uv"] == "in.uv")
-        #expect(env.sys["time"] == "u.time")
-        #expect(env.sys["resolution"] == "u.resolution")
-        #expect(env.sys["mouse"] == "u.mouse")
+        #expect(env.sys["uv"]?.spelling == "in.uv")
+        #expect(env.sys["time"]?.spelling == "u.time")
+        #expect(env.sys["resolution"]?.spelling == "u.resolution")
+        #expect(env.sys["mouse"]?.spelling == "u.mouse")
     }
 
     @Test func stitchableEnvironmentReadsArgumentsAndCastsScalars() {
@@ -25,9 +25,9 @@ import Testing
         // SwiftUI passes `.color(_:)` as a premultiplied half4, so a colour argument is widened on read.
         #expect(env.uniform(field("p5", .color)) == "float4(p5)")
         #expect(env.uniform(field("p6", .float4)) == "p6")
-        #expect(env.sys["uv"] == "uv")
-        #expect(env.sys["resolution"] == "size")
-        #expect(env.sys["mouse"] == "mouse")
+        #expect(env.sys["uv"]?.spelling == "uv")
+        #expect(env.sys["resolution"]?.spelling == "size")
+        #expect(env.sys["mouse"]?.spelling == "mouse")
     }
 
     @Test func sysPlaceholdersAreSubstitutedFromTheEnvironment() {
@@ -60,19 +60,19 @@ import Testing
 @Suite struct RealityKitEnvironmentTests {
     @Test func surfaceAndGeometrySpellTheirAccessors() {
         let s = EmitEnvironment.realityKitSurface.sys
-        #expect(s["uv"] == "params.geometry().uv0()")
-        #expect(s["time"] == "params.uniforms().time()")
-        #expect(s["worldPosition"] == "params.geometry().world_position()")
-        #expect(s["normal3d"] == "params.geometry().normal()")
-        #expect(s["tangent"] == "params.geometry().tangent()")
-        #expect(s["viewDirection"] == "params.geometry().view_direction()")
-        #expect(s["screenPosition"] == "params.geometry().screen_position()")
+        #expect(s["uv"]?.spelling == "params.geometry().uv0()")
+        #expect(s["time"]?.spelling == "params.uniforms().time()")
+        #expect(s["worldPosition"]?.spelling == "params.geometry().world_position()")
+        #expect(s["normal3d"]?.spelling == "params.geometry().normal()")
+        #expect(s["tangent"]?.spelling == "params.geometry().tangent()")
+        #expect(s["viewDirection"]?.spelling == "params.geometry().view_direction()")
+        #expect(s["screenPosition"]?.spelling == "params.geometry().screen_position()")
 
         let g = EmitEnvironment.realityKitGeometry.sys
-        #expect(g["uv"] == "geo.uv0()")
-        #expect(g["time"] == "params.uniforms().time()")
-        #expect(g["vertexID"] == "int(geo.vertex_id())")
-        #expect(g["normal3d"] == "geo.normal()")
+        #expect(g["uv"]?.spelling == "geo.uv0()")
+        #expect(g["time"]?.spelling == "params.uniforms().time()")
+        #expect(g["vertexID"]?.spelling == "int(geo.vertex_id())")
+        #expect(g["normal3d"]?.spelling == "geo.normal()")
     }
 
     /// Group functions take `(float2 uv, float time, float2 size, float2 mouse, …)`, and the UV
@@ -80,8 +80,10 @@ import Testing
     /// even though no node can observe them as data (spec §23.4).
     @Test func resolutionAndMouseAreNeutralLiterals() {
         for env in [EmitEnvironment.realityKitSurface, EmitEnvironment.realityKitGeometry] {
-            #expect(env.sys["resolution"] == "float2(1.0, 1.0)")
-            #expect(env.sys["mouse"] == "float2(0.0, 0.0)")
+            #expect(env.sys["resolution"]?.spelling == "float2(1.0, 1.0)")
+            #expect(env.sys["resolution"]?.readable == false)
+            #expect(env.sys["mouse"]?.spelling == "float2(0.0, 0.0)")
+            #expect(env.sys["mouse"]?.readable == false)
         }
     }
 

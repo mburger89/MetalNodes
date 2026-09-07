@@ -153,7 +153,7 @@ enum Emitter {
                     inputs[decl.name] = ConversionRules.convert(from: srcType, to: dst)!.apply(v)
                 } else {
                     switch decl.default {
-                    case .uv: inputs[decl.name] = env.sys["uv"] ?? "in.uv"
+                    case .uv: inputs[decl.name] = env.sys["uv"]?.spelling ?? "in.uv"
                     case .value:
                         let path = ParamPath(node: id, param: decl.name)
                         if out.layout.field(for: path) != nil { inputs[decl.name] = uniformExpr(path) }
@@ -205,9 +205,9 @@ enum Emitter {
                     }
                 }
                 let texture = textureSlotOfNode[id]
-                    .map { env.textureSample($0, inputs["uv"] ?? env.sys["uv"] ?? "in.uv") } ?? ""
+                    .map { env.textureSample($0, inputs["uv"] ?? env.sys["uv"]?.spelling ?? "in.uv") } ?? ""
                 let ctx = EmitContext(inputs: inputs, outputs: outputs, params: params, enums: enums,
-                                      types: r.generics, sys: env.sys, texture: texture)
+                                      types: r.generics, sys: env.sys.mapValues(\.spelling), texture: texture)
 
                 let lines: [String]
                 if isExpression {
@@ -249,8 +249,8 @@ enum Emitter {
                 let inputs = inputExpressions(id, s.inputs, r)
                 out.inputExpressions[id] = inputs
                 let result = "r\(varCounter)"; varCounter += 1
-                var args = [env.sys["uv"] ?? "in.uv", env.sys["time"] ?? "u.time",
-                            env.sys["resolution"] ?? "u.resolution", env.sys["mouse"] ?? "u.mouse"]
+                var args = [env.sys["uv"]?.spelling ?? "in.uv", env.sys["time"]?.spelling ?? "u.time",
+                            env.sys["resolution"]?.spelling ?? "u.resolution", env.sys["mouse"]?.spelling ?? "u.mouse"]
                 args += fn.inputs.map { inputs[$0.name] ?? GroupCodegen.zeroLiteral(r.inputTypes[$0.name] ?? .float) }
                 args += fn.uniformParams.map { uniformExpr($0.path) }
                 // A program that samples the layer has no texture to pass: it calls the callee's

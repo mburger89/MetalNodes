@@ -183,3 +183,26 @@ import Testing
         #expect(MSLScanner.loopSites(in: s) == [1])
     }
 }
+
+/// Custom MSL names an environment accessor textually — `params.geometry().normal()` — rather
+/// than through a `{sys.…}` placeholder (spec §24.5). `EmitEnvironment.canEmit(mslText:)` needs
+/// exactly this set of dotted call chains to check against its own readable spellings.
+@Suite struct MSLScannerAccessorCallTests {
+    @Test func findsADottedCallChainRootedAtAnIdentifier() {
+        #expect(MSLScanner.accessorCalls(in: "out = params.geometry().normal().x;")
+                == ["params.geometry().normal()"])
+    }
+
+    @Test func stopsTheChainAtAMemberAccessThatIsNotItselfACall() {
+        #expect(MSLScanner.accessorCalls(in: "out = geo.uv0().x + geo.uv0().y;")
+                == ["geo.uv0()", "geo.uv0()"])
+    }
+
+    @Test func aPlainIdentifierWithNoDottedCallIsNotAnAccessor() {
+        #expect(MSLScanner.accessorCalls(in: "out = in_a * 2.0;") == [])
+    }
+
+    @Test func aSingleSegmentCallCountsAsAnAccessor() {
+        #expect(MSLScanner.accessorCalls(in: "out = params.geometry();") == ["params.geometry()"])
+    }
+}
