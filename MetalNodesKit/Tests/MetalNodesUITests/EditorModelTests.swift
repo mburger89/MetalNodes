@@ -88,6 +88,24 @@ actor SwitchableCompiler: ShaderCompiling {
         #expect(await c.fastMathFlags == [true, false])
     }
 
+    /// The lighting model selects which setters the material emits and whether the preview
+    /// program carries the GGX helpers at all, so flipping it changes the source (spec §23.8).
+    @Test func lightingModelChangeRecompiles() async {
+        let c = RecordingCompiler()
+        // A RealityKit document, so the material actually generates — a fragment graph has no
+        // Material Output and would fail validation before ever reaching the compiler.
+        let m = EditorModel(document: .realityKitMaterial(), compiler: c)
+        m.debounceInterval = .milliseconds(5)
+        m.start(); await m.awaitIdle()
+        let before = await c.generations.count
+        var s = m.document.settings
+        s.lightingModel = .unlit
+        m.apply(.setSettings(s))
+        await m.awaitIdle()
+        #expect(m.document.settings.lightingModel == .unlit)
+        #expect(await c.generations.count == before + 1)
+    }
+
     @Test func previewSizeOnlyChangeDoesNotRecompile() async {
         let c = RecordingCompiler()
         let m = model(c); m.start(); await m.awaitIdle()

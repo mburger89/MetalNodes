@@ -398,10 +398,13 @@ public final class EditorModel {
             // Spec §18.2: settings are cosmetic unless `fastMath` or `target` flips — both are
             // part of what gets compiled, so they need a rebuild; preview size and time mode do not.
             // Under a stitchable target `exportName` also names the generated function, so a rename
-            // changes the source too (spec §19.4).
+            // changes the source too (spec §19.4). The lighting model selects which setters the
+            // material emits and whether the preview carries the GGX helpers at all (spec §23.8),
+            // so it changes the source under the RealityKit target.
             recompile = s.fastMath != document.settings.fastMath
                 || s.target != document.settings.target
                 || (s.target.stitchableKind != nil && s.exportName != document.settings.exportName)
+                || (s.target == .realityKit && s.lightingModel != document.settings.lightingModel)
             document.settings = s
         case .addSticky(let note):
             document[path].stickies[note.id] = note
