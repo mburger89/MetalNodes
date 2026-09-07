@@ -42,6 +42,26 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>MetalNodes Node Definition</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.maxburger.metalnodes.nodedef</string>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>MetalNodes Graph</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.maxburger.metalnodes.graph</string>
+		</dict>
 	</array>
 </dict>
 </plist>
