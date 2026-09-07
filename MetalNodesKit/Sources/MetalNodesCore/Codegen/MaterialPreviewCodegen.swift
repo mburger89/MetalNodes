@@ -78,18 +78,29 @@ extension MaterialPreviewCodegen {
         func add(_ l: String, _ o: NodeID? = nil) { out.append((l, o)) }
         add("    MeshVertex vert = verts[vid];")
         add("    float3 offset = float3(0.0);")
+        let offsetExpression = geometry.inputExpressions[terminal]?["positionOffset"]
         // The statements run against a local `geo` shim whose accessors are the mesh vertex's own
         // fields, so `EmitEnvironment.realityKitGeometry`'s `geo.…()` spellings compile unchanged.
-        add("    MNGeometry geo = MNGeometry{ vert, cam, vid };")
-        let offsetExpression = geometry.inputExpressions[terminal]?["positionOffset"]
+        // Declared only when a statement actually reads it — every builtin node's output is always
+        // hoisted into its own SSA variable (`Emitter.declareOutputs`), so a raw `geo.` accessor
+        // call can only ever appear inside `bodyLines`, never directly in `offsetExpression` (that
+        // is always a bare `vN` reference, at most wrapped in a conversion cast) — the
+        // `offsetExpression` arm is a defensive mirror of the `params` check below, not a case
+        // known to trigger today. Matched on the accessor form `geo.`, not the bare identifier: a
+        // node-derived name or `geometry` itself could contain `geo` as a substring.
+        if geometry.bodyLines.contains(where: { $0.contains("geo.") })
+            || (offsetExpression?.contains("geo.") ?? false) {
+            add("    MNGeometry geo = MNGeometry{ vert, cam, vid };")
+        }
         // `{sys.time}` always spells as `params.uniforms().time()` (`EmitEnvironment.materialSys`),
         // matching RealityKit's own `geometry_parameters` — so a Time node reachable from the
         // geometry stage needs a `params` of that shape here too. `MNGeometryParams` is declared
         // alongside `MNSurface` in `surfaceShim`, ahead of both functions. Declared only when a
         // statement actually reads it — an always-emitted, never-read local would warn unused,
         // exactly the wart a prior fix already had to remove from the RealityKit export snippet.
-        if geometry.bodyLines.contains(where: { $0.contains("params.uniforms()") })
-            || (offsetExpression?.contains("params.uniforms()") ?? false) {
+        // Matched on the accessor form `params.`, not the bare identifier, for the same reason.
+        if geometry.bodyLines.contains(where: { $0.contains("params.") })
+            || (offsetExpression?.contains("params.") ?? false) {
             add("    MNGeometryParams params = MNGeometryParams{ u };")
         }
         for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
@@ -196,13 +207,23 @@ extension MaterialPreviewCodegen {
                              viewerExpression: String? = nil) -> [(line: String, owner: NodeID?)] {
         var out: [(String, NodeID?)] = []
         func add(_ l: String, _ o: NodeID? = nil) { out.append((l, o)) }
+        let e = surface.inputExpressions[terminal] ?? [:]
         // `params` in the surface environment is RealityKit's; here the same accessor names are
-        // served by a shim built from the interpolants.
-        add("    MNSurface params = MNSurface{ in, cam, u };")
+        // served by a shim built from the interpolants. Declared only when a statement actually
+        // reads it — every system value the surface stage can read (uv, time, world position, …)
+        // routes through `params.` (`EmitEnvironment.materialSys(for: .surface)`), so this one
+        // check covers every surface-stage reader; matched on the accessor form `params.`, not the
+        // bare identifier, for the same substring-collision reason as `geo.` above. As with the
+        // geometry stage, a raw accessor call can only appear inside `bodyLines` — every builtin
+        // node's output is hoisted into its own SSA variable — so the `e.values` arm is a
+        // defensive mirror, not a case known to trigger today.
+        if surface.bodyLines.contains(where: { $0.contains("params.") })
+            || e.values.contains(where: { $0.contains("params.") }) {
+            add("    MNSurface params = MNSurface{ in, cam, u };")
+        }
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
             add("    " + line, surface.lineOwners[i])
         }
-        let e = surface.inputExpressions[terminal] ?? [:]
         func value(_ socket: String, _ fallback: String) -> String { e[socket] ?? fallback }
         add("    float4 baseColor = \(value("baseColor", "float4(0.8, 0.8, 0.8, 1.0)"));", terminal)
         add("    float4 emissive = \(viewerExpression ?? value("emissive", "float4(0.0, 0.0, 0.0, 1.0)"));", terminal)
