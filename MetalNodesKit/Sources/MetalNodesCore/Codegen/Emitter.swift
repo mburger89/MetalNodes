@@ -18,6 +18,15 @@ enum Emitter {
         var textureRequests: [TextureSlot] = []
     }
 
+    /// A uniform layout and texture-slot numbering imposed from outside, so two emissions over the
+    /// same document agree (spec §23.4). Without it every `emit` builds its own from its own
+    /// requests, which is right for a single-program target and wrong for a two-stage one.
+    struct SharedBindings {
+        let layout: UniformLayout
+        let textures: [AssetID?: TextureSlot]
+        let order: [TextureSlot]
+    }
+
     /// Which `{in.x}` / `{param.x}` names a body references (rule 4), and whether it samples a texture.
     static func referencedNames(in body: NodeBody, chosen: String?)
         -> (inputs: Set<String>, params: Set<String>, usesTexture: Bool) {
@@ -52,7 +61,8 @@ enum Emitter {
                      reserved: [UniformLayoutBuilder.Reserved] = UniformLayoutBuilder.standardReserved,
                      functions: [GroupID: GroupFunction] = [:],
                      viewInstance: (id: NodeID, function: GroupFunction)? = nil,
-                     layerFunctions: [GroupID: GroupFunction] = [:]) -> Output {
+                     layerFunctions: [GroupID: GroupFunction] = [:],
+                     shared: SharedBindings? = nil) -> Output {
         let doc = doc ?? { var d = ShaderDocument(); d.root = graph; return d }()
         func shape(_ inst: NodeInstance) -> NodeShape? { doc.shape(of: inst, in: path, registry: registry) }
         /// A pseudo-node's shape ends in the `+` socket, which is a gesture target rather than
@@ -78,8 +88,8 @@ enum Emitter {
             }
         }
         /// One slot per distinct asset, in first-use order; unassigned samples share the `nil` slot.
-        var textureSlots: [AssetID?: TextureSlot] = [:]
-        var textureOrder: [TextureSlot] = []
+        var textureSlots: [AssetID?: TextureSlot] = shared?.textures ?? [:]
+        var textureOrder: [TextureSlot] = shared?.order ?? []
         /// The slot each sampling node reads, so pass 2 need not re-scan bodies for `{tex.sample}`.
         var textureSlotOfNode: [NodeID: TextureSlot] = [:]
         @discardableResult func requestTexture(_ asset: AssetID?) -> TextureSlot {
@@ -117,7 +127,7 @@ enum Emitter {
                 break
             }
         }
-        var out = Output(layout: UniformLayoutBuilder.build(requests, reserved: reserved))
+        var out = Output(layout: shared?.layout ?? UniformLayoutBuilder.build(requests, reserved: reserved))
         out.uniformRequests = requests
         out.textureRequests = textureOrder
 
