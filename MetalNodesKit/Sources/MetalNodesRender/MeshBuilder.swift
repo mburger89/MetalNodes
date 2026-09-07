@@ -17,22 +17,30 @@ public enum MeshBuilder {
         }
     }
 
+    /// Parameterized by **latitude**, not colatitude: `lat` runs `-π/2…π/2`, south pole to north
+    /// pole, so `y = sin(lat)` increases as `j` increases — the same sense in which the plane's
+    /// `z` and the torus's `y` (via `sin φ`) increase as `j` increases. `gridIndices` has a single
+    /// winding contract (CCW when `j` increases "the way position increases"); colatitude
+    /// (`y = cos φ`, *decreasing* as `j` increases) violated that contract and wound every sphere
+    /// triangle backwards relative to its own outward normal. See
+    /// `MeshBuilderTests.triangleWindingMatchesVertexNormals`.
     private static func sphere(slices: Int, stacks: Int) -> ([MeshVertex], [UInt16]) {
         var v: [MeshVertex] = []
         for j in 0...stacks {
-            let phi = Float(j) / Float(stacks) * .pi          // 0…π, north to south
-            let sinPhi = sin(phi), cosPhi = cos(phi)
+            let lat = Float(j) / Float(stacks) * .pi - .pi / 2   // -π/2…π/2, south to north
+            let sinLat = sin(lat), cosLat = cos(lat)
             for i in 0...slices {
                 let theta = Float(i) / Float(slices) * 2 * .pi
                 let sinTheta = sin(theta), cosTheta = cos(theta)
-                let n = SIMD3<Float>(sinPhi * cosTheta, cosPhi, sinPhi * sinTheta)
-                // ∂p/∂θ, the direction u increases in — perpendicular to the normal by construction.
-                let t = SIMD3<Float>(-sinTheta, 0, cosTheta)
-                let tangent = simd_length(t) > 1e-4 ? simd_normalize(t) : SIMD3<Float>(1, 0, 0)
+                let n = SIMD3<Float>(cosLat * cosTheta, sinLat, cosLat * sinTheta)
+                // ∂p/∂θ, the direction u increases in — perpendicular to the normal by
+                // construction, and already unit length for every θ (no pole degeneracy: the
+                // degeneracy at the poles is in ∂p/∂lat, not ∂p/∂θ).
+                let tangent = SIMD3<Float>(-sinTheta, 0, cosTheta)
                 v.append(MeshVertex(position: n, normal: n,
                                     tangent: SIMD4<Float>(tangent, 1),
                                     uv: SIMD2<Float>(Float(i) / Float(slices),
-                                                     1 - Float(j) / Float(stacks))))
+                                                     Float(j) / Float(stacks))))
             }
         }
         return (v, gridIndices(columns: slices, rows: stacks))

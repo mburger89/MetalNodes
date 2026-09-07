@@ -45,6 +45,30 @@ import simd
         }
     }
 
+    /// A face's winding must agree with its own vertex normals, or the renderer's back-face
+    /// culling (counter-clockwise front-facing) makes the mesh render inside-out or vanish.
+    /// Skips zero-area (degenerate) triangles explicitly — e.g. the triangle fan collapsing at
+    /// a sphere's poles — rather than letting a near-zero cross product pass or fail by chance.
+    @Test(arguments: PreviewMesh.allCases)
+    func triangleWindingMatchesVertexNormals(_ mesh: PreviewMesh) {
+        let (vertices, indices) = MeshBuilder.build(mesh)
+        var nonDegenerateCount = 0
+        var i = 0
+        while i < indices.count {
+            let a = vertices[Int(indices[i])]
+            let b = vertices[Int(indices[i + 1])]
+            let c = vertices[Int(indices[i + 2])]
+            let faceNormal = simd_cross(b.position - a.position, c.position - a.position)
+            if simd_length(faceNormal) > 1e-6 {
+                nonDegenerateCount += 1
+                let averageNormal = a.normal + b.normal + c.normal
+                #expect(simd_dot(faceNormal, averageNormal) > 0, "\(mesh) triangle at indices[\(i)...]")
+            }
+            i += 3
+        }
+        #expect(nonDegenerateCount > 0, "\(mesh) had no non-degenerate triangles to check")
+    }
+
     @Test func buildingIsDeterministic() {
         let a = MeshBuilder.build(.sphere), b = MeshBuilder.build(.sphere)
         #expect(a.vertices == b.vertices)
