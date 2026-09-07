@@ -149,8 +149,7 @@ import Testing
     }
 }
 
-@Suite(.disabled("enabled by Task 9, which wires the .realityKit branch into ShaderGenerator"))
-struct MaterialExportSourceTests {
+@Suite struct MaterialExportSourceTests {
     /// One node wired to Base Color, one to Position Offset, one parameter to bake.
     private func document() -> ShaderDocument {
         var doc = ShaderDocument()

@@ -19,11 +19,21 @@ public struct GeneratedShader: Sendable, Hashable {
     /// The texture bindings this program declares, in slot order (spec §21.2). The renderer binds
     /// slot `i` with `setFragmentTexture(_:index: i)`.
     public let textures: [TextureSlot]
+    /// The exported `[[visible]]` function per stage, when `target` is `.realityKit` (spec §23.4).
+    /// Empty for every other target. A stage with nothing to do has no entry.
+    public let stageFunctionNames: [MaterialStage: String]
+    /// The vertex function the pipeline pairs with `fragmentFunctionName`. The static fullscreen
+    /// triangle for every 2D program; a generated one for the 3D preview (spec §23.5).
+    ///
+    /// `MetalNodesCore` cannot import `MetalNodesRender`, so the 2D default is the string literal
+    /// rather than `VertexStage.functionName`; a Render test asserts the two never drift.
+    public let vertexFunctionName: String
 
     public init(source: String, layout: UniformLayout, lineMap: LineMap, resolved: [NodeID: ResolvedNode],
                 fragmentFunctionName: String, target: OutputTarget, viewer: SocketRef? = nil,
                 viewerPath: [NodeID] = [], exportSource: String? = nil, functionName: String = "",
-                textures: [TextureSlot] = []) {
+                textures: [TextureSlot] = [], stageFunctionNames: [MaterialStage: String] = [:],
+                vertexFunctionName: String = "mn_fullscreenVertex") {
         self.source = source
         self.layout = layout
         self.lineMap = lineMap
@@ -35,6 +45,8 @@ public struct GeneratedShader: Sendable, Hashable {
         self.exportSource = exportSource
         self.functionName = functionName
         self.textures = textures
+        self.stageFunctionNames = stageFunctionNames
+        self.vertexFunctionName = vertexFunctionName
     }
 }
 
@@ -98,8 +110,10 @@ public enum ShaderGenerator {
         let (resolved, typeDiags) = TypeResolver.resolve(doc.root, path: .root, document: doc, registry: registry, order: order)
         if !typeDiags.isEmpty { throw .invalid(structural + typeDiags) }
 
-        // A viewer is a preview concept: always a fragment program (spec §19.3).
-        let effectiveTarget: OutputTarget = viewer == nil ? target : .fragment
+        // A viewer is a preview concept (spec §19.3): a 2D target previews it through the fragment
+        // program, and the 3D target renders it as unlit colour on the mesh (spec §23.5) — a
+        // fullscreen program has no terminal to run to under `.realityKit`.
+        let effectiveTarget: OutputTarget = viewer == nil || target == .realityKit ? target : .fragment
         switch effectiveTarget {
         case .fragment:
             return assembleFragment(doc, order: order, terminal: terminal, viewer: viewer, resolved: resolved, registry: registry,
@@ -108,10 +122,98 @@ public enum ShaderGenerator {
             return try assembleStitchable(doc, kind: kind, order: order, terminal: terminal, resolved: resolved, registry: registry,
                                           functions: functions, groupOrder: groupOrder, groupFunctions: groupFunctions)
         case .realityKit:
-            // Codegen for this target lands in a later M7 task; Task 1 only introduces the case
-            // so `OutputTarget` and `DocumentSettings` can round-trip it.
-            throw .invalid([Diagnostic(.error, "RealityKit material export is not implemented yet")])
+            // `order` and `resolved` are deliberately not passed: the whole-graph order the caller
+            // computed spans both stages at once, which is exactly what this target must not do.
+            return try assembleRealityKit(doc, terminal: terminal, viewer: viewer, registry: registry,
+                                          functions: functions, groupFunctions: groupFunctions)
         }
+    }
+
+    /// The RealityKit target (spec §23.4): two passes over one graph, one shared set of bindings,
+    /// two products — a 3D preview program in `source` and two `[[visible]]` functions in
+    /// `exportSource`.
+    private static func assembleRealityKit(_ doc: ShaderDocument, terminal: NodeID, viewer: SocketRef?,
+                                           registry: NodeRegistry,
+                                           functions: [GroupID: GroupFunction],
+                                           groupFunctions: [GroupFunction]) throws(GenerationError) -> GeneratedShader {
+        let name = StitchableCodegen.sanitizedName(doc.settings.exportName)
+        var orders: [MaterialStage: [NodeID]] = [
+            .surface: MaterialCodegen.stageOrder(graph: doc.root, terminal: terminal, stage: .surface),
+            .geometry: MaterialCodegen.stageOrder(graph: doc.root, terminal: terminal, stage: .geometry),
+        ]
+        if let v = viewer, doc.root.nodes[v.node] != nil {
+            // The viewed node may feed nothing; the surface pass must still compute it.
+            var surface = TopoSort.order(doc.root, from: v.node)
+            let existing = Set(surface)
+            surface += orders[.surface]!.filter { !existing.contains($0) }
+            orders[.surface] = surface
+        }
+        // A viewed socket is shown flat, whatever the document's model asks for (spec §23.5).
+        let lighting: MaterialLightingModel = viewer == nil ? doc.settings.lightingModel : .unlit
+        let reserved = viewer == nil ? UniformLayoutBuilder.standardReserved : UniformLayoutBuilder.viewerReserved
+
+        // Types are resolved once per stage and reused by all three passes over that stage.
+        // Node ids are unique document-wide, so the two maps cannot disagree where they overlap.
+        var types: [NodeID: ResolvedNode] = [:]
+        for stage in MaterialStage.allCases {
+            let (r, diags) = TypeResolver.resolve(doc.root, path: .root, document: doc,
+                                                  registry: registry, order: orders[stage]!)
+            if !diags.isEmpty { throw .invalid(diags) }
+            types.merge(r) { $1 }
+        }
+
+        /// One pass. `env` decides the accessors; `shared` imposes the union bindings.
+        func emit(_ stage: MaterialStage, env: EmitEnvironment, shared: Emitter.SharedBindings?) -> Emitter.Output {
+            Emitter.emit(order: orders[stage]!, graph: doc.root, path: .root, document: doc, registry: registry,
+                         resolved: types, env: env, reserved: reserved, functions: functions, shared: shared)
+        }
+
+        // Round 1: collect requests. Round 2: emit against their union, so both stages name the
+        // same uniform fields and the same texture slots (spec §23.4).
+        let probeSurface = emit(.surface, env: .realityKitSurface, shared: nil)
+        let probeGeometry = emit(.geometry, env: .realityKitGeometry, shared: nil)
+        let shared = MaterialCodegen.sharedBindings(surface: probeSurface, geometry: probeGeometry, reserved: reserved)
+
+        let previewSurface = emit(.surface, env: .realityKitSurface, shared: shared)
+        let previewGeometry = emit(.geometry, env: .realityKitGeometry, shared: shared)
+
+        // The export reads no uniform buffer: the same environments with a literal speller.
+        let baked = EmitEnvironment.bakedUniforms(layout: shared.layout, document: doc, registry: registry)
+        func bake(_ env: EmitEnvironment) -> EmitEnvironment {
+            EmitEnvironment(uniform: baked, sys: env.sys, textureSample: env.textureSample,
+                            textureName: env.textureName, usesLayer: env.usesLayer)
+        }
+        let exportSurface = emit(.surface, env: bake(.realityKitSurface), shared: shared)
+        let exportGeometry = emit(.geometry, env: bake(.realityKitGeometry), shared: shared)
+
+        let viewerExpression: String? = viewer.flatMap { v in
+            guard let variable = previewSurface.outputVars[v],
+                  let type = types[v.node]?.outputTypes[v.socket] else { return nil }
+            return ViewerWrap.expression(variable: variable, type: type)
+        }
+
+        let preview = MaterialPreviewCodegen.program(
+            surface: previewSurface, geometry: previewGeometry, groupFunctions: groupFunctions,
+            terminal: terminal, layout: shared.layout, lighting: lighting,
+            textures: shared.order, viewerExpression: viewerExpression)
+        // The export always uses the document's model, never the viewer's.
+        let export = MaterialCodegen.exportSource(
+            surface: exportSurface, geometry: exportGeometry, groupFunctions: groupFunctions,
+            terminal: terminal, lighting: doc.settings.lightingModel, exportName: doc.settings.exportName,
+            textures: shared.order)
+
+        let names = MaterialCodegen.functionNames(exportName: doc.settings.exportName)
+        var stageNames: [MaterialStage: String] = [.surface: names.surface]
+        if MaterialCodegen.hasGeometryWork(exportGeometry, terminal: terminal) {
+            stageNames[.geometry] = names.geometry
+        }
+
+        return GeneratedShader(source: preview.text, layout: shared.layout, lineMap: preview.map,
+                               resolved: merged(types, groupFunctions),
+                               fragmentFunctionName: fragmentFunctionName, target: .realityKit,
+                               viewer: viewer, exportSource: export, functionName: name,
+                               textures: shared.order, stageFunctionNames: stageNames,
+                               vertexFunctionName: MaterialPreviewCodegen.vertexFunctionName)
     }
 
     private static func assembleFragment(_ doc: ShaderDocument, order: [NodeID], terminal: NodeID, viewer: SocketRef?,

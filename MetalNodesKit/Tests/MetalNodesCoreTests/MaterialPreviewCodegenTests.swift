@@ -1,9 +1,9 @@
 import Testing
 @testable import MetalNodesCore
 
-@Suite(.disabled("enabled by Task 9, which wires the .realityKit branch into ShaderGenerator"))
-struct MaterialPreviewCodegenTests {
-    private func document(lighting: MaterialLightingModel = .lit, offset: Bool = true) -> ShaderDocument {
+@Suite struct MaterialPreviewCodegenTests {
+    private func document(lighting: MaterialLightingModel = .lit, offset: Bool = true,
+                          normal: Bool = false) -> ShaderDocument {
         var doc = ShaderDocument()
         doc.settings.target = .realityKit
         doc.settings.lightingModel = lighting
@@ -19,12 +19,38 @@ struct MaterialPreviewCodegenTests {
             g.nodes[v.id] = v
             g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(v.id, "out")
         }
+        if normal {
+            let n = NodeInstance(id: NodeID(), kind: .builtin("input.normal3d"), position: .zero)
+            g.nodes[n.id] = n
+            g.inputs[SocketRef(terminal.id, "normal")] = SocketRef(n.id, "normal")
+        }
         doc.root = g
         return doc
     }
 
     private func source(_ doc: ShaderDocument) throws -> String {
         try ShaderGenerator.generate(doc, target: .realityKit).source
+    }
+
+    /// The vertex function's text alone: from its signature up to the fragment function's.
+    private func vertexFunction(of doc: ShaderDocument) throws -> String {
+        let src = try source(doc)
+        let v = try #require(src.range(of: "vertex VertexOut mn_meshVertex("))
+        let f = try #require(src.range(of: "fragment float4 shaderMain("))
+        return String(src[v.lowerBound..<f.lowerBound])
+    }
+
+    /// What the statement beginning `prefix` assigns, up to its `;`.
+    private static func assigned(to prefix: String, in text: String) -> String? {
+        guard let r = text.range(of: prefix) else { return nil }
+        let rest = text[r.upperBound...]
+        return rest.firstIndex(of: ";").map { String(rest[..<$0]) }
+    }
+
+    /// `v0`, `v1`, … — an emitted node's SSA output variable, as opposed to a `u.…` slot read.
+    /// The whole point of both checks below: only a *wired* node produces one of these.
+    private static func isSSAVariable(_ s: String) -> Bool {
+        s.first == "v" && s.count > 1 && s.dropFirst().allSatisfy(\.isNumber)
     }
 
     @Test func theProgramHasBothStagesAndNoRealityKitHeader() throws {
@@ -45,13 +71,22 @@ struct MaterialPreviewCodegenTests {
         #expect(src.contains("constant CameraUniforms &cam [[buffer(1)]]"))
     }
 
+    /// `float3 offset = float3(0.0);` and the `offset = …;` assignment are both emitted whatever
+    /// the graph does, so neither substring tells a wired Position Offset from an unwired one. The
+    /// discriminator is what the assignment *reads*: the geometry pass's SSA variable when a node
+    /// feeds the socket, the terminal's own uniform slot when nothing does.
     @Test func theGeometryStageRunsInTheVertexFunction() throws {
-        let src = try source(document(offset: true))
-        let vertexRange = try #require(src.range(of: "vertex VertexOut mn_meshVertex("))
-        let fragmentRange = try #require(src.range(of: "fragment float4 shaderMain("))
-        let vertexBody = String(src[vertexRange.lowerBound..<fragmentRange.lowerBound])
-        #expect(vertexBody.contains("positionOffset") || vertexBody.contains("offset"))
-        #expect(vertexBody.contains("cam.viewToProjection"))
+        let wired = try vertexFunction(of: document(offset: true))
+        #expect(wired.contains("cam.viewToProjection"))
+        let assigned = try #require(Self.assigned(to: "\n    offset = ", in: wired))
+        #expect(Self.isSSAVariable(assigned), "offset reads \(assigned), not a wired node")
+        // The geometry pass declared that variable inside the vertex function, so the wired node's
+        // statements really ran here rather than in the fragment stage.
+        #expect(wired.contains("float3 \(assigned);"))
+
+        let bare = try vertexFunction(of: document(offset: false))
+        let bareAssigned = try #require(Self.assigned(to: "\n    offset = ", in: bare))
+        #expect(!Self.isSSAVariable(bareAssigned), "nothing is wired, yet offset reads \(bareAssigned)")
     }
 
     @Test func withoutAGeometryStageTheVertexFunctionStillExists() throws {
@@ -72,9 +107,24 @@ struct MaterialPreviewCodegenTests {
 
     /// The tangent-space normal socket must be resolved against the interpolated basis before it
     /// can shade — otherwise a wired Normal produces a lit sphere that ignores it.
+    ///
+    /// `float3x3(` and `tangent` both appear in the struct declarations and in the basis line
+    /// whatever the graph does, so the check is that the *wired* node's SSA variable is what
+    /// `tangentNormal` holds and that it reaches the shading normal through the basis.
     @Test func theNormalSocketIsResolvedThroughTheTangentBasis() throws {
-        let src = try source(document())
-        #expect(src.contains("float3x3(") && src.contains("tangent"))
+        let src = try source(document(normal: true))
+        let assigned = try #require(Self.assigned(to: "float3 tangentNormal = ", in: src))
+        #expect(Self.isSSAVariable(assigned), "tangentNormal reads \(assigned), not a wired node")
+        #expect(src.contains("float3 \(assigned);"))
+        #expect(src.contains("\(assigned) = params.geometry().normal();"))
+        #expect(src.contains("float3x3 basis = float3x3(normalize(in.tangent), normalize(in.bitangent), normalize(in.normal));"))
+        #expect(src.contains("float3 n = normalize(basis * normalize(tangentNormal));"))
+
+        // Unwired, the same lines carry the terminal's own slot instead — which is exactly why
+        // matching the basis text alone proved nothing.
+        let bare = try source(document(normal: false))
+        let bareAssigned = try #require(Self.assigned(to: "float3 tangentNormal = ", in: bare))
+        #expect(!Self.isSSAVariable(bareAssigned), "nothing is wired, yet tangentNormal reads \(bareAssigned)")
     }
 
     @Test func theStructsMatchTheirDeclaredLayout() throws {
@@ -87,5 +137,34 @@ struct MaterialPreviewCodegenTests {
     @Test func generationIsDeterministic() throws {
         let doc = document()
         #expect(try source(doc) == (try source(doc)))
+    }
+}
+
+@Suite struct MaterialViewerTests {
+    @Test func aViewedSocketRendersAsUnlitColourOnTheMesh() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        let noise = NodeInstance(id: NodeID(), kind: .builtin("noise.value"), position: .zero)
+        g.nodes[terminal.id] = terminal
+        g.nodes[noise.id] = noise
+        doc.root = g
+
+        let out = NodeRegistry.builtin["noise.value"]!.outputs.first!.name
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit, viewer: SocketRef(noise.id, out))
+        #expect(shader.target == .realityKit)
+        #expect(shader.viewer != nil)
+        // Unlit: the GGX helpers are not emitted, and the mesh vertex stage still is.
+        #expect(!shader.source.contains("mn_ggx_distribution"))
+        #expect(shader.source.contains("vertex VertexOut mn_meshVertex("))
+        // The viewer range fields exist, as they do for the 2D viewer path.
+        #expect(shader.layout.hasReserved("viewerMin"))
+        // The viewed value *is* the emissive term, widened by the same `ViewerWrap` rule the
+        // fragment path returns, and it is what the mesh shows.
+        let assignment = try #require(shader.source.range(of: "float4 emissive = "))
+        let emissive = shader.source[assignment.upperBound...].prefix { $0 != ";" }
+        #expect(emissive.contains("u.viewerMin") && emissive.contains("u.viewerMax"))
+        #expect(shader.source.contains("return float4(emissive.rgb, opacity);"))
     }
 }

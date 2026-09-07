@@ -167,7 +167,8 @@ extension MaterialPreviewCodegen {
                               "constant CameraUniforms &cam [[buffer(1)]]"]
         fragmentParams += textures.map { "texture2d<float> \($0.fragmentName) [[texture(\($0.index))]]" }
         b.add("fragment float4 \(ShaderGenerator.fragmentFunctionName)(" + fragmentParams.joined(separator: ",\n" + String(repeating: " ", count: 25)) + ") {")
-        for line in fragmentBody(surface: surface, terminal: terminal, lighting: lighting) {
+        for line in fragmentBody(surface: surface, terminal: terminal, lighting: lighting,
+                                 viewerExpression: viewerExpression) {
             b.add(line.line, owner: line.owner)
         }
         b.add("}")
@@ -175,8 +176,13 @@ extension MaterialPreviewCodegen {
     }
 
     /// The surface statements, the eight material values, then the shading.
+    ///
+    /// `viewerExpression` is the widened viewed value (spec §19.3). It replaces the emissive term
+    /// and arrives with `lighting` forced to `.unlit`, so the fragment stage returns the viewed
+    /// value flat on the mesh (spec §23.5).
     static func fragmentBody(surface: Emitter.Output, terminal: NodeID,
-                             lighting: MaterialLightingModel) -> [(line: String, owner: NodeID?)] {
+                             lighting: MaterialLightingModel,
+                             viewerExpression: String? = nil) -> [(line: String, owner: NodeID?)] {
         var out: [(String, NodeID?)] = []
         func add(_ l: String, _ o: NodeID? = nil) { out.append((l, o)) }
         // `params` in the surface environment is RealityKit's; here the same accessor names are
@@ -188,7 +194,7 @@ extension MaterialPreviewCodegen {
         let e = surface.inputExpressions[terminal] ?? [:]
         func value(_ socket: String, _ fallback: String) -> String { e[socket] ?? fallback }
         add("    float4 baseColor = \(value("baseColor", "float4(0.8, 0.8, 0.8, 1.0)"));", terminal)
-        add("    float4 emissive = \(value("emissive", "float4(0.0, 0.0, 0.0, 1.0)"));", terminal)
+        add("    float4 emissive = \(viewerExpression ?? value("emissive", "float4(0.0, 0.0, 0.0, 1.0)"));", terminal)
         add("    float opacity = \(value("opacity", "1.0"));", terminal)
         guard lighting == .lit else {
             add("    return float4(emissive.rgb, opacity);", terminal)

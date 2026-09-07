@@ -36,7 +36,12 @@ extension BuiltinNodes {
                 ],
                 // Never emitted: `MaterialCodegen` writes each stage's setter block itself,
                 // because one body cannot serve two stages with different setters (spec §23.2).
-                body: .template("")),
+                // `.custom` rather than an empty template because the emitter reads a template to
+                // decide which inputs are live: an empty one claims the terminal reads none of its
+                // nine sockets, so an unwired one would get no uniform slot, no baked literal and
+                // no setter — and spec §23.2 requires all eight surface setters, defaults included.
+                // `.custom` marks every input live and still contributes no statement of its own.
+                body: .custom { _ in [] }),
 
         NodeDef(id: "input.worldPosition", title: "World Position", category: .input,
                 outputs: [SocketDecl(name: "position", type: .concrete(.float3))],
