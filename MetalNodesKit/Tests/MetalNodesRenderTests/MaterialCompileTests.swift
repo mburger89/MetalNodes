@@ -47,36 +47,82 @@ import Metal
         #expect(pipeline.depthStencilState != nil)
     }
 
-    /// A graph reading every 3D input node in its legal stage must still compile — the shims'
-    /// accessor names are only right if the compiler agrees.
-    @Test func everyThreeDimensionalInputCompiles() async throws {
+    /// Every surface-legal 3D input node must genuinely reach the terminal and produce its own
+    /// accessor call — one graph per node, each wired *directly* into `baseColor`
+    /// (`TopoSort.order` walks upstream from the terminal only, so a node left unconnected is
+    /// eliminated before codegen and would prove nothing; see Fix round 1 below). Asserting the
+    /// exact accessor substring in `shader.source`, not just a successful compile, is what rules
+    /// out the previous vacuous version: a compile can succeed while silently reading the default
+    /// literal instead of the node under test.
+    @Test func everyThreeDimensionalSurfaceInputCompiles() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let compiler = try ShaderCompiler(device: device)
+        // (node id, expected accessor call in the generated surface-stage source).
+        let nodes: [(id: String, accessor: String)] = [
+            ("input.worldPosition", "params.geometry().world_position()"),
+            ("input.modelPosition", "params.geometry().model_position()"),
+            ("input.normal3d", "params.geometry().normal()"),
+            ("input.tangent", "params.geometry().tangent()"),
+            ("input.bitangent", "params.geometry().bitangent()"),
+            ("input.viewDirection", "params.geometry().view_direction()"),
+        ]
+        for (id, accessor) in nodes {
+            var doc = ShaderDocument()
+            doc.settings.target = .realityKit
+            var g = Graph()
+            let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+            let n = NodeInstance(id: NodeID(), kind: .builtin(id), position: .zero)
+            g.nodes[terminal.id] = terminal
+            g.nodes[n.id] = n
+            // float3 → color widens implicitly per `Conversion`, so the node's own output wires
+            // straight into `baseColor` with no combining node.
+            g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(n.id, NodeRegistry.builtin[id]!.outputs.first!.name)
+            doc.root = g
+
+            let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+            #expect(shader.source.contains(accessor), "\(id): expected `\(accessor)` in generated source")
+            if case .failure(let message, _, _) = await compiler.compile(shader, generation: 1) {
+                Issue.record("\(id) compile failed: \(message)")
+            }
+        }
+    }
+
+    /// The geometry-only mirror of the test above: Vertex ID is legal only in the geometry stage
+    /// (`stages: [.geometry]`), so it is wired into `positionOffset` — an `int` output widening to
+    /// `float3` per `Conversion` — rather than `baseColor`. Same proof shape: assert the accessor
+    /// substring, then compile.
+    @Test func vertexIDCompilesInTheGeometryStage() async throws {
         guard let device = MTLCreateSystemDefaultDevice() else { return }
         var doc = ShaderDocument()
         doc.settings.target = .realityKit
         var g = Graph()
         let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
-        g.nodes[terminal.id] = terminal
-        // Surface-legal 3D inputs, each read in turn (float3 → color widens implicitly per
-        // `Conversion`, so no separate combining node is needed).
-        var previous: SocketRef?
-        for id in ["input.worldPosition", "input.modelPosition", "input.normal3d",
-                   "input.tangent", "input.bitangent", "input.viewDirection"] {
-            let n = NodeInstance(id: NodeID(), kind: .builtin(id), position: .zero)
-            g.nodes[n.id] = n
-            previous = SocketRef(n.id, NodeRegistry.builtin[id]!.outputs.first!.name)
-        }
-        g.inputs[SocketRef(terminal.id, "baseColor")] = previous
-        // Vertex ID is geometry-only, and left unconnected here: only a node reachable from the
-        // terminal is stage-checked (`MaterialValidation.stageDiagnostics`), so an unwired
-        // geometry-only node in a surface-only graph must not fail generation or compilation.
         let vid = NodeInstance(id: NodeID(), kind: .builtin("input.vertexID"), position: .zero)
+        g.nodes[terminal.id] = terminal
         g.nodes[vid.id] = vid
+        g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(vid.id, "id")
         doc.root = g
 
         let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(shader.source.contains("geo.vertex_id()"), "expected `geo.vertex_id()` in generated source")
         let compiler = try ShaderCompiler(device: device)
         if case .failure(let message, _, _) = await compiler.compile(shader, generation: 1) {
-            Issue.record("compile failed: \(message)")
+            Issue.record("input.vertexID compile failed: \(message)")
         }
+    }
+
+    /// The mirror of `pipeline.depthStencilState != nil` above: the *fullscreen* path must not
+    /// grow one just because `.realityKit` did. Nothing else guards this — the depth attachment
+    /// is easy to attach unconditionally by accident, and a 2D pipeline built with one is a
+    /// contract break `MTKView.depthStencilPixelFormat` won't catch until draw time.
+    @Test func aTwoDimensionalProgramGetsNoDepthState() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { return }
+        let compiler = try ShaderCompiler(device: device)
+        let shader = try ShaderGenerator.generate(ShaderDocument.sample())
+        guard case .success(let pipeline) = await compiler.compile(shader, generation: 1) else {
+            Issue.record("expected success")
+            return
+        }
+        #expect(pipeline.depthStencilState == nil)
     }
 }
