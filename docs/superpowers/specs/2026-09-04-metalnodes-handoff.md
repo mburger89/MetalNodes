@@ -425,12 +425,36 @@ Worth recording, because each was invisible to a green suite:
 
 Two tests were caught passing for the wrong reason: a compile test that wired only the last of six nodes (the other five dead-code-eliminated before codegen), and a validation fixture whose node was never wired to the group output — masking the very bug it named.
 
-### 14.3 Owed to a human
+### 14.3 In-app check — run 2026-09-07, after the merge
 
-- **The in-app checklist has never been run.** The screen was locked for the whole session. Nobody has yet looked at the 3D preview: a sphere appearing, lit, orbiting under drag, changing colour from a wired Base Color, flattening under Unlit, deforming under a wired Position Offset, and the viewer flag showing flat colour. The 22-item list is in the plan's Task 15, Step 3, plus the macOS and iPad regression subsets.
+Run on macOS against the RealityKit Material sample. **Verified working:**
+
+1. The sample opens and reports "No problems"; a lit sphere renders with a correct specular highlight and falloff.
+2. Dragging the preview orbits the camera — the highlight tracks, and no jump on re-drag.
+3. Scroll dollies, both directions.
+4. Mesh picker: Sphere, Cube and Torus all render correctly. The torus reads properly — hole visible, far side occluded by depth, no inside-out faces, which is the sphere-winding fix confirmed visually.
+5. Lit ↔ Unlit round-trips: Unlit renders black, which is correct — the sample wires nothing into Emissive, and the unlit program returns `float4(emissive.rgb, opacity)`.
+6. The viewer flag renders the viewed value as flat unlit colour on the mesh, with the min/max range control beside it.
+7. Position Offset genuinely displaces geometry: raising the amplitude to 0.60 visibly deforms the silhouette; at 10.0 the vertices leave the frustum entirely.
+8. Undo/redo across a lighting-model change works and recompiles.
+9. The inspector carries the honest caption about the GGX approximation.
+
+**One defect found, fixed, and verified in the same session** — see §14.5.
+
+**Still not checked:** the Plane mesh; export through the UI (both files are gated by automated `xcrun metal -c` and `swiftc -typecheck` tests, so this is presentation only); save/close/reopen persistence of mesh and camera; and the macOS and iPad regression subsets. The full 22-item list is in the plan's Task 15, Step 3.
+
+### 14.4 Owed to a human
 - Everything M6 owed (handoff §13): macOS Finder→canvas drop, palette drag-in, iPad hardware-keyboard check 14, two-finger pan/pinch, Slide Over compact width.
 
-### 14.4 What M8 starts from
+### 14.5 The defect the in-app check found
+
+Switching Lighting between Lit and Unlit changed nothing on screen. `EditorModel.perform`'s `.setSettings` branch decides by hand which fields need a rebuild — it listed `fastMath`, `target` and a stitchable `exportName`, but not `lightingModel`. The codegen was always right (the two programs genuinely differ; the GGX helpers vanish under Unlit); the UI simply never asked for the new one.
+
+Fixed in `2e901b3`. The deeper problem is that nothing enforced the correspondence between that hand-maintained list and what actually reaches codegen, so `4f1df20` adds `everySettingThatReachesCodegenRecompiles`, which asserts both directions — every codegen-relevant setting rebuilds, every cosmetic one does not — and fails against the pre-fix code. Add a row whenever a setting starts or stops affecting the generated source.
+
+This is the same shape as the shim/`materialSys` correspondence in §14.6 item 1: two lists that must agree, with nothing checking that they do.
+
+### 14.6 What M8 starts from
 
 1. **Tie the shims to `materialSys`.** Three shim structs and two emit environments encode the same RealityKit vocabulary independently; a key added to one and missed in the other yields a comment marker in generated MSL. That is the shared cause of both new §23.7 rules. A single table, or a test asserting every `materialSys` key has a matching shim accessor, retires the class.
 2. **Stage/target legality lives in four places** — `NodeDef.stages`, `MaterialValidation.twoDimensionalOnly`, the derived `material3D` set, and each environment's implicit `sys` vocabulary. One predicate — "can node N be emitted in environment E" — asked at every emission site would have caught both late findings.
