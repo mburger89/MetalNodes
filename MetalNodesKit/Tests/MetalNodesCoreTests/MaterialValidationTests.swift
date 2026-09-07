@@ -149,18 +149,62 @@ enum MaterialFixture {
 
     // Rule 4 — one texture slot.
 
-    @Test func oneTextureSampleIsAllowedAndTwoAreNot() {
-        let one = MaterialFixture.document { g in MaterialFixture.wire("texture.sample", into: "baseColor", &g) }
-        #expect(errors(one).isEmpty)
-
-        let two = MaterialFixture.document { g in
-            MaterialFixture.wire("texture.sample", into: "baseColor", &g)
-            MaterialFixture.wire("texture.sample", into: "emissive", &g)
+    /// The limit is one texture **slot**, not one Texture Sample node (final review, Finding 6).
+    /// `Emitter.requestTexture` allocates one slot per distinct asset in first-use order, so two
+    /// nodes naming the same image both read `tex0` and export cleanly; two naming different images
+    /// would need two slots, and `params.textures().custom()` is the only one there is.
+    private func samplers(_ assets: [AssetID?]) -> ShaderDocument {
+        MaterialFixture.document { g in
+            let sockets = ["baseColor", "emissive", "normal"]
+            for (i, a) in assets.enumerated() {
+                let id = MaterialFixture.wire("texture.sample", into: sockets[i % sockets.count], &g)
+                g.nodes[id]!.params["asset"] = .asset(a)
+            }
         }
-        let diags = errors(two)
-        #expect(diags.contains { $0.message.contains("one texture slot") })
-        // Anchored on the extra sample, not on the first — the first is the one to keep.
-        #expect(diags.first { $0.message.contains("one texture slot") }?.node != nil)
+    }
+
+    @Test func oneTextureSlotIsAllowedAndTwoAreNot() {
+        let image = AssetID(), other = AssetID()
+        #expect(errors(samplers([image])).isEmpty)
+        // Two nodes, one asset: one slot, so this exports cleanly and must not be refused.
+        #expect(errors(samplers([image, image])).isEmpty)
+        // Two unassigned samples share the `nil` slot the same way.
+        #expect(errors(samplers([nil, nil])).isEmpty)
+
+        for pair in [[image, other], [nil, image], [image, nil]] {
+            let doc = samplers(pair)
+            let diags = errors(doc)
+            #expect(diags.contains { $0.message.contains("one texture slot") }, "\(pair)")
+            // Anchored on the sample that needs the second slot, not on the first — the first fits.
+            let flagged = diags.first { $0.message.contains("one texture slot") }?.node
+            let first = doc.root.nodes.values
+                .filter { $0.kind == .builtin("texture.sample") }
+                .min { $0.id.raw.uuidString < $1.id.raw.uuidString }
+            #expect(flagged != nil, "\(pair)")
+            #expect(flagged != first?.id, "\(pair)")
+        }
+        // Three nodes, two assets: what survives is one slot's worth, not one node's. Which asset
+        // keeps the slot follows the deterministic id order the rule sorts by, so the count of
+        // refused *nodes* is 1 or 2 — the invariant is that exactly one asset is left standing.
+        let three = samplers([image, image, other])
+        let flagged = Set(errors(three).filter { $0.message.contains("one texture slot") }.compactMap(\.node))
+        #expect(!flagged.isEmpty)
+        let survivors = three.root.nodes.values
+            .filter { $0.kind == .builtin("texture.sample") && !flagged.contains($0.id) }
+            .compactMap { inst -> AssetID? in
+                if case .asset(let a)? = inst.params["asset"] { return a }
+                return nil
+            }
+        #expect(Set(survivors).count == 1)
+    }
+
+    /// The consequence the rule used to get wrong: the emitter really does hand both nodes one
+    /// slot, so the document it refused is a legal one-slot program that exports cleanly.
+    @Test func twoSamplesOfOneAssetShareOneSlot() throws {
+        let image = AssetID()
+        let shader = try ShaderGenerator.generate(samplers([image, image]), target: .realityKit)
+        #expect(shader.textures.count == 1)
+        #expect(shader.textures.first?.asset == image)
     }
 
     @Test func aTextureSampleInsideAGroupIsRefused() throws {

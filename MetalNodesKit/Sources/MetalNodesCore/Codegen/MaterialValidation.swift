@@ -165,14 +165,28 @@ public enum MaterialValidation {
             }
         }
 
+        // The limit is one texture *slot*, not one Texture Sample node. `Emitter.requestTexture`
+        // allocates one slot per distinct asset in first-use order (unassigned samples sharing the
+        // `nil` slot), so two nodes sampling the same image both read `tex0` and export cleanly —
+        // counting nodes refused a document `params.textures().custom()` serves perfectly well.
+        // The first distinct asset the root names is the one that fits; every sample naming a
+        // different one is what has to go.
         let samples = doc.root.nodes.values
             .filter { $0.kind == .builtin("texture.sample") }
-            .map(\.id)
-            .sorted { $0.raw.uuidString < $1.raw.uuidString }
-        out += samples.dropFirst().map {
-            Diagnostic(.error, "A RealityKit material has one texture slot — remove the extra Texture Sample", node: $0)
+            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        if let first = samples.first.map(asset) {
+            out += samples.filter { asset($0) != first }.map {
+                Diagnostic(.error, "A RealityKit material has one texture slot — remove the extra Texture Sample", node: $0.id)
+            }
         }
         return out
+    }
+
+    /// The asset a Texture Sample names; `nil` when unset — which is itself a slot, exactly as
+    /// `Emitter.requestTexture` treats it.
+    private static func asset(_ inst: NodeInstance) -> AssetID? {
+        if case .asset(let a)? = inst.params["asset"] { return a }
+        return nil
     }
 
     // MARK: Rule 5 — lighting model
