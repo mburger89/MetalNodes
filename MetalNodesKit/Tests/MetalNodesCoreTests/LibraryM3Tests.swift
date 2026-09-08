@@ -152,7 +152,8 @@ import Foundation
     /// hardcoded one, so a document added here can never silently need a different target than
     /// the one it declares.
     @Test func everyLibraryDocumentValidatesAndGeneratesUnderItsOwnTarget() throws {
-        let docs: [ShaderDocument] = [.starter(), .sample(), .sampleWithGroup(), .textured(), .realityKitMaterial()]
+        let docs: [ShaderDocument] = [.starter(), .sample(), .sampleWithGroup(), .textured(),
+                                      .realityKitMaterial(), .customCodeSample()]
         for doc in docs {
             let diags = GraphValidator.validate(document: doc, registry: reg, target: doc.settings.target)
             #expect(diags.isEmpty, "\(doc.settings.target): \(diags)")
