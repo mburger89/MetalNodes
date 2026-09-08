@@ -34,10 +34,13 @@ extension BuiltinNodes {
                                default: .value(.float(1))),
                     SocketDecl(name: "specular", label: "Specular", type: .concrete(.float),
                                default: .value(.float(0.5))),
+                    // `range:` because both are 0…1 by definition — the preview saturates them and
+                    // RealityKit clamps them — and without it the slider spans the −10…10 default
+                    // (in-app checklist item 10, found 2026-09-08: one drag baked `clearcoat = -10`).
                     SocketDecl(name: "clearcoat", label: "Clearcoat", type: .concrete(.float),
-                               default: .value(.float(0))),
+                               default: .value(.float(0)), range: 0...1),
                     SocketDecl(name: "clearcoatRoughness", label: "Clearcoat Roughness", type: .concrete(.float),
-                               default: .value(.float(0))),
+                               default: .value(.float(0)), range: 0...1),
                     SocketDecl(name: "clearcoatNormal", label: "Clearcoat Normal", type: .concrete(.float3),
                                default: .value(.float3(.init(0, 0, 1)))),
                     SocketDecl(name: "positionOffset", label: "Position Offset", type: .concrete(.float3),

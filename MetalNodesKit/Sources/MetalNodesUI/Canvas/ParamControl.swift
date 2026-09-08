@@ -17,6 +17,10 @@ struct ParamControl: View {
     var onChooseImage: ((ImageSource) -> Void)? = nil
 
     @State private var draft = ""
+    /// True between `onEditing?(true)` and `onEditing?(false)`, so a teardown can tell whether
+    /// it still owes the close. Tracked separately from `focused` because `@FocusState` is
+    /// reset by SwiftUI when the field leaves the hierarchy, without `onChange` observing it.
+    @State private var editingSession = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -74,7 +78,22 @@ struct ParamControl: View {
                 // write would land as its own separate, untransacted step instead (Task 15 fix
                 // round 1, MUST-FIX 7).
                 if !now { commitDraft() }
+                editingSession = now
                 onEditing?(now)
+            }
+            .onDisappear {
+                // A focused field torn down with its row — the node was deselected, deleted,
+                // or the inspector switched to something else — loses focus without
+                // `onChange(of: focused)` ever firing, so the transaction opened on focus gain
+                // would stay open for the rest of the document's life: `EditorModel.undo()` is
+                // a no-op while one is open, and every later edit performs without registering,
+                // so ⌘Z is silently dead until a canvas drag's defensive reset happens to close
+                // it (in-app checklist item 29, found 2026-09-08). Close it here, committing the
+                // draft first, exactly as focus loss would have.
+                guard editingSession else { return }
+                editingSession = false
+                commitDraft()
+                onEditing?(false)
             }
             .focused($focused)
             .onAppear { draft = current }

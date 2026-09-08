@@ -544,9 +544,9 @@ Twenty-eight, exhaustive, each with what it would cost if wrong. Two were made b
 25. **Gate Exit Group *and* Undo/Redo on `canvasFocused || isEditingCode`. — REVERSED.** The reasoning was that ⌘Z inside the code editor never reached `model.undo()`. That is true, and it is *deliberate*: `EditorCommands` uses `CommandGroup(replacing: .undoRedo)`, which replaces AppKit's nil-targeted default, and a nil-targeted action is exactly what lets a focused `NSTextView`'s own undo manager win by routing down the responder chain. Once replaced by a fixed-action `Button`, an **enabled** item fires its key equivalent unconditionally and the field editor never gets a chance. The file's own pre-existing comment said so; it was misread as an oversight. The consequence of the ruling was a **live data-loss path** interacting with the same task's round-1 fix: ⌘Z while typing calls `model.undo()`, and if the popped step touches this definition's body, the watcher reseeds `draft` and drops focus, silently discarding uncommitted keystrokes. Worse than the problem it solved.
 26. **Ruling 25 reversed: Undo/Redo revert to `canvasFocused` only; Exit Group keeps the widened gate.** Inside the code editor ⌘Z is field-editor *text* undo, which is what a text editor should do; document undo stays reachable after clicking out, and ⌘↑ still exits. A comment now sits *at* the gate naming the `CommandGroup(replacing:)` mechanism and tracing the data-loss path — this reasoning has been got wrong twice, and a report will not stop the next person "fixing" it again. *Cost if wrong:* ⌘Z inside the editor does the wrong one of two undos; the comment is the guard.
 
-### 15.3 In-app checklist — NOT RUN
+### 15.3 In-app checklist — walked 2026-09-08 (results in §15.3.1)
 
-**This is owed to a human. Nothing in it was verified.** The machine's screen was locked (`CGSSessionScreenIsLocked=1`) for every UI task in this milestone and for Task 19; an agent may not unlock it, and did not attempt to. Task 17's fix round 1 is the *only* round in M8 with any live app verification at all, and it predates the `EditorCommands` gate that round 3 settled.
+**Written before the walk; the list itself is kept as the record of what was asked.** Originally: this is owed to a human, nothing in it was verified. The machine's screen was locked (`CGSSessionScreenIsLocked=1`) for every UI task in this milestone and for Task 19; an agent may not unlock it, and did not attempt to. Task 17's fix round 1 is the *only* round in M8 with any live app verification at all, and it predates the `EditorCommands` gate that round 3 settled.
 
 The list below — **41 items** — is assembled from five task reports and the ledger, deduplicated, in the order a person should walk it. **It is self-contained — no other file needs reading.** Nothing here is a claim; every line is a question.
 
@@ -610,6 +610,59 @@ The list below — **41 items** — is assembled from five task reports and the 
 40. **iPad: two-finger pan and pinch-zoom on the canvas**, in all three modes, pinching about the fingers with the LOD swap. Not drivable from a mouse.
 41. **iPad: Slide Over / Split View at compact width.** **Correct:** the inspector collapses and nothing becomes unreachable. Cannot be produced in the Simulator from an agent session.
 
+#### 15.3.1 Results — walked 2026-09-08 on macOS, by an agent driving the real app
+
+Run against `0ee1ded` plus the three fixes below, in the Debug build under Xcode 26.6, on a live screen. Driven with synthetic mouse/keyboard events: real drags worked (mouse-down, moves, mouse-up), palette-to-canvas and Finder drags did not, and a click immediately after another click sometimes failed to move focus — an automation artefact, not an app one. iPad items were not attempted (no device).
+
+| # | Result | What was seen |
+|---|---|---|
+| 1 | **pass** | `a * b + 0.5` → sockets `a`, `b`; wired, preview updates; generated code has `v1 = v0 * u.p0 + 0.5;` inline. |
+| 2 | **pass, item mis-stated** | `a * qq` is not an error — `qq` becomes a third socket, by design. The error path was reached by wiring a float2 into a float input: red message under the node in the inspector naming the assignment, node outlined red, preview kept the last good (white) frame. |
+| 3 | **pass after fix** | Back to `a * b`: `qq` socket and its wire gone; ⌘Z brought both back — **only after fix A below**. Before it, ⌘Z was dead (see 29). |
+| 4 | pass | ⌃⌘N: node with `A` / `Out`, preview still renders. |
+| 5 | pass | Editor replaces canvas; a typo on line 3 → problems list row `3  use of undeclared identifier 'in_q'; did you mean 'in_a'?` plus an "in generated code" note. |
+| 6 | pass | Output `out2` added (Return in the name field; the ⊕ click did not add it on the first try), assigned in code, wired to Color → preview carries 0.25 then 0.75. |
+| 7 | pass | Second instance from the palette; one definition edit changed both; generated code has the function once and two calls. |
+| 8 | pass | 100 000 000-iteration loop: no hang, editor shows the loop exactly as typed, generated code has `mn_loopGuard0` and `> 4096`. |
+| 9 | pass | `out = in_a; }` → `3  Custom Code: Unbalanced brace — the body must open and close every block it starts`; generated code marked stale. |
+| 10 | pass, defect found | Clearcoat lighting + Clearcoat wired: visible tighter sheen, approximation caption present. **The Clearcoat and Clearcoat Roughness sliders spanned −10…10** (no `range:`), and one drag baked `set_clearcoat(half(-10.0))` into the export — fix C. Roughness/Metallic/Opacity/Occlusion/Specular have the same −10…10 slider and predate M8 (§15.5). |
+| 11 | pass | Checker → Custom Attribute → Custom Attribute node → Base Color: checker written per vertex, visibly interpolated across the sphere. |
+| 12 | pass | Four floats marked live; export header lists `.x/.y/.z`, the `.metal` reads `params.uniforms().custom_parameter().x` etc., the Swift snippet seeds `material.custom.value`; `xcrun metal -c` compiles the export at `-mmacosx-version-min=14.0`. |
+| 13 | **pass with two findings** | The corpus fixtures opened in the M8 build: `sample`, `matGroup`, `textured` with zero errors and rendering (textured is black — the fixture carries no texture bytes), `matAspect` refused with the §24.10 message. Reverse direction, with the real `ddc6527` build: an M8 document produced the generic **"The document could not be opened."** — and so did the M8 build for a format-3 file. `ShaderFileDocument` passed `PackageError` straight through, and AppKit replaces any non-Cocoa error with that sentence; the "saved by a newer version" text had never been shown to anyone. Fix B. |
+| 14 | **fail (soft)** | ⌘Z mid-typing in the code editor does nothing: no text undo, but focus stays and no keystrokes are lost. The disabled Undo menu item swallows the key equivalent (ruling 26's trade-off); the native text undo does not fire. |
+| 15 | pass | Edit ▸ Undo is disabled while in the code editor (any focus). After ⌘↑ to the canvas, ⌘Z reverts the last body commit; a second ⌘Z the one before, and the problems list clears. |
+| 16 | pass | ⌘↑ exits the code editor. |
+| 17 | pass | After the canvas-side ⌘Z, re-entering the editor shows the reverted text and no error; it does not come back on the next click-out. |
+| 18 | pass (scripted) | 110 characters typed in one burst during live recompiles: nothing lost, no focus drop. Real typing timing not reproduced. |
+| 19 | pass | Three ⌃⌘N, then ⌘⇧N and a palette double-click after visiting the editor: a node every time. All land at the viewport centre, stacked. |
+| 20 | pass | A → B → A with unsaved edits in each: each body kept its own edit. |
+| 21 | pass | Live checkbox reads at `.caption`; `custom_parameter().x` label fits on one line. |
+| 22 | **pass** | Fifth Live click: the box reverted immediately (zoomed within the same second), no lag, no stick. |
+| 23 | pass | List shows `.x–.w` with `Material Output.roughness` etc.; Unmark on `.z` removed opacity and renumbered occlusion to `.z`. Reachability warning not exercised (all four were terminal sockets). |
+| 24 | pass | "A material exposes four live values; unmark one first" in the strip, gone within ~4 s. |
+| 25 | pass | Caption only under Clearcoat, beneath the Cook-Torrance caption. |
+| 26 | not run | iPad. |
+| 27 | pass | Fragment document: no Live toggles anywhere, no live-parameters section. |
+| 28 | pass | Label and field on one line at node width. |
+| 29 | **FAIL → fix A** | Click in, type, Return, click the empty canvas: Edit ▸ Undo showed the *previous* step, and ⌘Z was dead for the whole document afterwards. The focus-gain transaction never closed when deselection tore the field down. After the fix: exactly one "Change Value" step. |
+| 30 | **fail (soft)** | ⌘Z in the formula field mid-edit: no native text undo, no document undo, draft preserved. Undo/Redo menu items are disabled while the field is focused. |
+| 31 | pass | `return in_a; return in_a;` → two identical rows. |
+| 32 | pass | Formula row sits in one row; nothing overlaps. |
+| 33 | pass | Long compiler message wraps legibly in the inspector. |
+| 34 | pass | Reshape is clean. |
+| 35 | not run | Zoom is not drivable from this automation (⌘-scroll pans). |
+| 36 | not run | iPad. |
+| 37 | not run | Finder drag not deliverable by automation. |
+| 38 | not run | Palette drag not deliverable by automation (double-click places instead). |
+| 39–41 | not run | iPad. |
+
+**Also seen, not on the list:** the Material Output node's socket labels wrap badly at node width ("Clearcoa / t", "Clearcoa / t Rough- / ness") — cosmetic, M9 candidate; the unconditional `geo.set_custom_attribute(float4(0…))` in every RealityKit export is harmless but new.
+
+**Fixes made from this walk (all on `main`):**
+- **A.** `ParamControl`: a focused text field torn down with its row now closes the editing transaction it opened (`onDisappear`), committing the draft first. Verified live: item 29 then shows one step and item 3's ⌘Z works.
+- **B.** `ShaderFileDocument`: a `PackageError` is rewrapped as a Cocoa-domain error with the message as failure reason and a recovery suggestion, which is the only way through NSDocument's alert. Verified live on a format-3 file: the alert reads "The document “m9doc” could not be opened. This shader was saved by a newer version of MetalNodes. Update MetalNodes to open it.".
+- **C.** `clearcoat` / `clearcoatRoughness` declare `range: 0...1`.
+
 ### 15.4 Defects the reviews caught that the tests did not
 
 The most useful section of §14, kept. Each of these was invisible to a fully green suite.
@@ -649,6 +702,13 @@ The most useful section of §14, kept. Each of these was invisible to a fully gr
 4. **An M7-era document using aspect-mode UV under `.realityKit` now fails validation on open**, blocking preview *and* export, with a diagnostic that never mentions the fix (switch the mode picker to Normalized). This **reverses** a documented M7 decision — spec lines 1565 and 1649 justified the fill value as making `aspect` "degenerate to centred UV rather than nonsense". M8 found §23.10 internally inconsistent and picked the refusal side (§24.10). Either add the actionable hint to the diagnostic or revisit the reversal.
 5. **Preview/export divergence when a terminal geometry parameter is set but not wired.** The preview carries the edited value; the export's `hasGeometryWork` counts only non-terminal body lines, so no geometry function is emitted and the surface stage reads RealityKit's zero — while the exported header lists the value as baked. The mechanism predates M8 (`positionOffset` always had it), but Task 14 extended it to a channel where the symptom is a **wrong colour** rather than a silent geometry no-op. Fix candidates: have `hasGeometryWork` also fire when a geometry socket's baked value differs from its declared default, or add a validation warning.
 6. **`MSLScanner.tokenise` still has the CRLF defect.** `LoopHardening.hardened` normalises on entry, but the scanner does not, so `Violation.line` is **0** for every violation in a Windows-pasted body — and `CustomCodeValidation` works around it with its own local normalisation. Fix it at the source.
+
+**Found by the 2026-09-08 in-app walk (§15.3.1), not fixed.**
+
+7. **Every Material Output float slider spans −10…10** — Roughness, Metallic, Opacity, Ambient Occlusion, Specular declare no `range:`, so the slider and the baked export accept nonsense; the preview `saturate`s some of them, the export does not. Predates M8 (only the two clearcoat sockets were fixed, because M8 added them). One `range: 0...1` each.
+8. **Material Output socket labels wrap at node width** ("Clearcoa / t Rough- / ness"): the M8 labels are longer than the node body allows. Widen the node or shorten the labels.
+9. **⌘Z inside a text field or the code editor does nothing** — neither the native text undo nor the document undo fires, because the disabled Undo menu item swallows the key equivalent (ruling 26 chose this over a data-loss path). Items 14 and 30 fail softly. A real fix needs the menu item to yield the key to a focused text view rather than exist disabled.
+10. **A `.mnshader` whose texture bytes are missing opens silently black.** `ShaderPackage.missingTextures` is populated but nothing in the UI says so.
 
 **What M8 deferred by design.**
 
