@@ -239,17 +239,43 @@ public enum MaterialValidation {
 
     // MARK: Rule 5 — lighting model
 
+    /// Warns when something is wired into a surface socket the current lighting model silently
+    /// ignores — `MaterialCodegen.liveSurfaceSockets` is the one function that decides which
+    /// setters `exportSource` actually emits, so reading it here (instead of re-deriving "every
+    /// surface socket but Emissive" by hand, which is what this used to do and what a hard-coded
+    /// `== .unlit` check would have to keep doing for every future lighting model) is what caught
+    /// Task 13's own regression: `.lit` drops the three clearcoat sockets exactly the way `.unlit`
+    /// drops everything but Emissive, and wiring one under `.lit` produced no diagnostic at all
+    /// before this read the shared list. Only a *surface* socket matters — a geometry socket like
+    /// Position Offset moves vertices regardless of the lighting model, so wiring it is always
+    /// correct and must never warn.
     private static func lightingDiagnostics(_ doc: ShaderDocument, terminal: NodeID) -> [Diagnostic] {
-        guard doc.settings.lightingModel == .unlit else { return [] }
-        // Only a *surface* socket other than Emissive matters here — a geometry socket like
-        // Position Offset moves vertices regardless of the lighting model, so wiring it under
-        // `.unlit` is correct and must not warn.
-        let wired = BuiltinNodes.materialStages
-            .filter { $0.value == .surface && $0.key != "emissive" }
+        let lighting = doc.settings.lightingModel
+        let live = Set(MaterialCodegen.liveSurfaceSockets(lighting))
+        let dead = BuiltinNodes.materialStages
+            .filter { $0.value == .surface && !live.contains($0.key) }
             .keys
             .filter { doc.root.inputs[SocketRef(terminal, $0)] != nil }
-        guard !wired.isEmpty else { return [] }
-        return [Diagnostic(.warning, "Unlit materials render only Emissive", node: terminal)]
+        guard !dead.isEmpty else { return [] }
+        let message: String
+        switch lighting {
+        case .unlit: message = "Unlit materials render only Emissive"
+        // `.lit` is the only other model with a non-empty dead set today — `.clearcoat` renders
+        // every surface socket, so `live` always covers `dead` there and this branch is
+        // unreachable for it. A future lighting model that drops sockets neither `.unlit` nor
+        // `.lit` drop today would need its own case here, same as it would need one in
+        // `liveSurfaceSockets` itself.
+        default:
+            let labels = dead.sorted().map { socketLabel(for: $0) }.joined(separator: ", ")
+            message = "\(lighting.title) ignores \(labels) — wiring it has no effect unless Lighting Model is Clearcoat"
+        }
+        return [Diagnostic(.warning, message, node: terminal)]
+    }
+
+    /// The Material Output socket's own label (`materialStages`' keys are socket *names*, not the
+    /// label a diagnostic should show the reader).
+    private static func socketLabel(for socket: String) -> String {
+        NodeRegistry.builtin["output.material"]?.input(named: socket)?.label ?? socket
     }
 
     // MARK: Rule 6 — live parameters

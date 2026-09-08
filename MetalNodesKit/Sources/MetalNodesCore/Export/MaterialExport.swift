@@ -84,7 +84,13 @@ public enum MaterialExport {
             lines += clearcoatNormalAvailabilityNote.map { "// \($0)" }
         }
         lines.append("//")
-        lines.append("// Baked parameters:")
+        // The terminal's every socket is evaluated regardless of lighting model — it is a `.custom`
+        // body that marks all twelve live so an unwired one still gets a baked default (spec §23.2)
+        // — so the list below still names sockets this model ignores, e.g. the three clearcoat
+        // sockets under Lit/Unlit. Their setter is simply never emitted; baking their value costs
+        // nothing and re-deriving "which sockets this model actually reads" here would be a second
+        // spelling of `MaterialCodegen.liveSurfaceSockets` to keep in sync.
+        lines.append("// Baked parameters (every terminal socket, whether or not this model reads it):")
         var any = false
         for f in shader.layout.fields {
             guard let path = f.path, !live.contains(where: { $0.path == path }) else { continue }

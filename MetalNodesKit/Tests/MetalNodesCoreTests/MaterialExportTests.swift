@@ -167,6 +167,15 @@ import Testing
         clearcoatDoc.root = ccg
         try expectMetalCompiles(clearcoatDoc)
 
+        // Fix round 1: this is the trap turned into a real gate, not just a comment. Before this
+        // task's fix, `set_clearcoat_normal` was emitted unconditionally under `.clearcoat` — even
+        // completely unwired — and the header's macro is `__attribute__((availability(macos,
+        // introduced=15.0, strict)))`: `strict` makes referencing it below the floor a hard
+        // *compile* error, not a warning. `clearcoatDoc` above never wires Clearcoat Normal, so
+        // compiling it with an explicit macOS 14 floor is exactly the scenario that used to fail —
+        // it must now succeed, because the unwired setter call is skipped entirely.
+        try expectMetalCompiles(clearcoatDoc, extraArgs: ["-mmacosx-version-min=14.0"])
+
         var clearcoatNormalDoc = ShaderDocument()
         clearcoatNormalDoc.settings.target = .realityKit
         clearcoatNormalDoc.settings.exportName = "clearcoatNormalCompileCheck"
@@ -182,8 +191,10 @@ import Testing
     }
 
     /// Writes `doc`'s exported `.metal` to a temp file and runs `xcrun -sdk macosx metal -c` over
-    /// it, failing the current test with the compiler's stderr on a nonzero exit.
-    private func expectMetalCompiles(_ doc: ShaderDocument) throws {
+    /// it, failing the current test with the compiler's stderr on a nonzero exit. `extraArgs` is
+    /// spliced in ahead of `-c` — e.g. `-mmacosx-version-min=…`, to pin a real deployment floor
+    /// rather than the toolchain's own default.
+    private func expectMetalCompiles(_ doc: ShaderDocument, extraArgs: [String] = []) throws {
         let file = try #require(ShaderExport.files(for: doc).first { $0.name.hasSuffix(".metal") })
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-materialexport-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -191,11 +202,13 @@ import Testing
         try file.contents.write(to: url, atomically: true, encoding: .utf8)
         let metal = Process()
         metal.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        metal.arguments = ["-sdk", "macosx", "metal", "-c", url.path, "-o", dir.appendingPathComponent("out.air").path]
+        metal.arguments = ["-sdk", "macosx", "metal"] + extraArgs
+            + ["-c", url.path, "-o", dir.appendingPathComponent("out.air").path]
         let err = Pipe(); metal.standardError = err; metal.standardOutput = FileHandle.nullDevice
         try metal.run(); metal.waitUntilExit()
         let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        #expect(metal.terminationStatus == 0, "\(doc.settings.exportName): \(log)")
+        #expect(metal.terminationStatus == 0,
+               "\(doc.settings.exportName)\(extraArgs.isEmpty ? "" : " \(extraArgs.joined(separator: " "))"): \(log)")
     }
 }
 

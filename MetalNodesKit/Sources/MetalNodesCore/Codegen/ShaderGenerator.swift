@@ -232,7 +232,8 @@ public enum ShaderGenerator {
         let export = MaterialCodegen.exportSource(
             surface: exportSurface, geometry: exportGeometry, groupFunctions: groupFunctions,
             terminal: terminal, lighting: doc.settings.lightingModel, exportName: doc.settings.exportName,
-            textures: shared.order)
+            textures: shared.order,
+            clearcoatNormalWired: doc.root.inputs[SocketRef(terminal, "clearcoatNormal")] != nil)
 
         let names = MaterialCodegen.functionNames(exportName: doc.settings.exportName)
         var stageNames: [MaterialStage: String] = [.surface: names.surface]

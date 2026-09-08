@@ -71,4 +71,27 @@ import Testing
         let lit = try ShaderGenerator.generate(document(.lit), target: .realityKit).source
         #expect(!lit.contains("mn_clearcoat"))
     }
+
+    /// Fix round 1: `set_clearcoat_normal` is the one setter whose *call*, not just the
+    /// availability note about it, is gated on wiring — calling it with the baked default would
+    /// still raise the deployment floor for a setter nobody asked for (spec §24.7 fix round 1). The
+    /// other two clearcoat setters have no such trap and are unconditional, same as the eight base
+    /// ones — `clearcoatKeepsTheEightBaseSetters`/`theSettersAreEmittedOnlyUnderClearcoat` above
+    /// already cover those.
+    @Test func theClearcoatNormalSetterIsEmittedOnlyWhenWired() throws {
+        let bare = try #require(ShaderGenerator.generate(document(.clearcoat), target: .realityKit).exportSource)
+        #expect(!bare.contains("set_clearcoat_normal("))
+
+        let wired = try #require(ShaderGenerator.generate(document(.clearcoat, wireClearcoatNormal: true), target: .realityKit).exportSource)
+        #expect(wired.contains("set_clearcoat_normal(half3("))
+    }
+
+    /// Fix round 1 (MINOR 4): `direct` carries a `* 3.0` key-light-intensity factor
+    /// (`MaterialPreviewCodegen.fragmentBody`) and the clearcoat lobe must carry the same one —
+    /// otherwise Clearcoat at full strength/zero roughness renders visibly *weaker* than the base
+    /// specular it sits over, reading as a bug rather than an approximation.
+    @Test func thePreviewClearcoatLobeMatchesTheKeyLightIntensity() throws {
+        let cc = try ShaderGenerator.generate(document(.clearcoat), target: .realityKit).source
+        #expect(cc.contains("mn_clearcoatLobe(nc, v, l, mnClearcoatStrength, mnClearcoatRoughness) * ndotl * 3.0"))
+    }
 }

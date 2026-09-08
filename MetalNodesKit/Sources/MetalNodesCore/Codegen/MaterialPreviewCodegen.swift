@@ -281,11 +281,20 @@ extension MaterialPreviewCodegen {
         }
         // The crudest part of the approximation: a second, tighter GGX lobe over the base response,
         // lit by the same key light and shaped by its own strength/roughness/normal (spec §24.7).
+        // Two more approximations are deliberate, not oversights: the lobe is attenuated by the
+        // *base* normal's `ndotl`, not the coat normal's own (a wired Clearcoat Normal bends the
+        // highlight's shape but not how much of the key light reaches it), and there is no
+        // `(1 - F_coat)` term darkening the base layer underneath, which a physically layered
+        // coat would apply. Both are within "crude but recognisable" for a preview; the exported
+        // `.metal` calls RealityKit's own `set_clearcoat*` and is unaffected either way.
         add("    float mnClearcoatStrength = saturate(\(value("clearcoat", "0.0")));", terminal)
         add("    float mnClearcoatRoughness = clamp(\(value("clearcoatRoughness", "0.0")), 0.03, 1.0);", terminal)
         add("    float3 mnClearcoatTangentNormal = \(value("clearcoatNormal", "float3(0.0, 0.0, 1.0)"));", terminal)
         add("    float3 nc = normalize(basis * normalize(mnClearcoatTangentNormal));")
-        add("    float3 clearcoatColor = mn_clearcoatLobe(nc, v, l, mnClearcoatStrength, mnClearcoatRoughness) * ndotl;")
+        // `* 3.0` matches `direct`'s own key-light intensity (line above) — without it, Clearcoat at
+        // 1.0/roughness 0 renders visibly *weaker* than the base specular it sits over, which reads
+        // as a bug rather than an approximation (spec §24.7 fix round 1).
+        add("    float3 clearcoatColor = mn_clearcoatLobe(nc, v, l, mnClearcoatStrength, mnClearcoatRoughness) * ndotl * 3.0;")
         add("    return float4(direct + ambient + clearcoatColor + emissive.rgb, opacity);", terminal)
         return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
     }

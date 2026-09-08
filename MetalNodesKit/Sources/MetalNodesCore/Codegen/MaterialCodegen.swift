@@ -106,10 +106,18 @@ extension MaterialCodegen {
     /// `surface` and `geometry` are `Emitter.Output`s produced with `EmitEnvironment
     /// .realityKitSurface`/`.realityKitGeometry` whose `uniform` closure was replaced by
     /// `EmitEnvironment.bakedUniforms`, so no statement here reads a uniform buffer.
+    ///
+    /// `clearcoatNormalWired` is the one deliberate exception to "every live socket gets a setter,
+    /// defaults included": unlike the other setters, `set_clearcoat_normal` is iOS 18 / macOS 15+
+    /// (`RealityKitSurfaceShader.h`), so calling it with the baked default normal — semantically a
+    /// no-op, since `(0,0,1)` tangent-space *is* the unperturbed surface normal — would still raise
+    /// every clearcoat document's deployment floor for nothing. Skipping the call when nothing is
+    /// wired changes nothing rendered and keeps the setter's emission and `MaterialExport`'s
+    /// availability note reading the *same* condition (spec §24.7 fix round 1).
     static func exportSource(surface: Emitter.Output, geometry: Emitter.Output,
                              groupFunctions: [GroupFunction], terminal: NodeID,
                              lighting: MaterialLightingModel, exportName: String,
-                             textures: [TextureSlot]) -> String {
+                             textures: [TextureSlot], clearcoatNormalWired: Bool = false) -> String {
         let names = functionNames(exportName: exportName)
         var b = SourceBuilder()
         b.add("#include <metal_stdlib>")
@@ -138,7 +146,7 @@ extension MaterialCodegen {
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
             b.add(bodyLine: "    " + line, owner: surface.lineOwners[i], origin: surface.lineOrigins[i])
         }
-        for socket in liveSurfaceSockets(lighting) {
+        for socket in liveSurfaceSockets(lighting) where socket != "clearcoatNormal" || clearcoatNormalWired {
             guard let e = surface.inputExpressions[terminal]?[socket],
                   let statement = setterStatement(socket: socket, expression: e) else { continue }
             b.add("    " + statement, owner: terminal)

@@ -253,9 +253,33 @@ enum MaterialFixture {
         #expect(warnings(doc).isEmpty)
     }
 
-    @Test func litNeverWarnsAboutSockets() {
+    @Test func litDoesNotWarnAboutSocketsItRenders() {
         let doc = MaterialFixture.document(lighting: .lit) { g in
             MaterialFixture.wire("input.color", into: "baseColor", &g)
+        }
+        #expect(warnings(doc).isEmpty)
+    }
+
+    /// Fix round 1: Rule 5 used to hard-code `== .unlit`, so wiring Clearcoat under `.lit` — a
+    /// silent no-op, since `.lit`'s `liveSurfaceSockets` drops all three clearcoat sockets and the
+    /// preview's `.lit` guard returns before the second lobe runs — produced no diagnostic at all.
+    /// Reading `MaterialCodegen.liveSurfaceSockets` generally (rather than re-deriving `.unlit`'s
+    /// dead set by hand) is what makes this warn without a second, model-specific rule.
+    @Test func litWarnsWhenAClearcoatSocketIsWired() {
+        let doc = MaterialFixture.document(lighting: .lit) { g in
+            MaterialFixture.wire("input.float", into: "clearcoat", &g)
+        }
+        #expect(warnings(doc).contains { $0.message.contains("Clearcoat") })
+        #expect(errors(doc).isEmpty)   // a warning, never an error
+    }
+
+    /// The mirror of `unlitIsSilentWhenOnlyEmissiveIsWired` above: `.clearcoat` renders every
+    /// surface socket (`liveSurfaceSockets(.clearcoat)` covers all eleven), so nothing wired to a
+    /// surface socket is ever dead under it and Rule 5 must stay silent.
+    @Test func clearcoatNeverWarnsAboutSurfaceSockets() {
+        let doc = MaterialFixture.document(lighting: .clearcoat) { g in
+            MaterialFixture.wire("input.float", into: "clearcoat", &g)
+            MaterialFixture.wire("input.normal3d", into: "clearcoatNormal", &g)
         }
         #expect(warnings(doc).isEmpty)
     }

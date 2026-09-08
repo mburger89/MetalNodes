@@ -47,8 +47,17 @@ extension BuiltinNodes {
                 // `.custom` rather than an empty template because the emitter reads a template to
                 // decide which inputs are live: an empty one claims the terminal reads none of its
                 // twelve sockets, so an unwired one would get no uniform slot, no baked literal and
-                // no setter — and spec §23.2 requires all eight surface setters, defaults included.
-                // `.custom` marks every input live and still contributes no statement of its own.
+                // no setter — and spec §23.2 requires all eight base surface setters, defaults
+                // included. `.custom` marks every input live and still contributes no statement of
+                // its own.
+                //
+                // The one deliberate exception is Clearcoat Normal: `set_clearcoat_normal` is iOS 18
+                // / macOS 15+ (unlike the rest of the surface API), so `MaterialCodegen.exportSource`
+                // skips its call — and only its call — when the socket is unwired, rather than
+                // baking its default like every other setter here. That default, `(0,0,1)` tangent
+                // space, is the unperturbed surface normal, so skipping the call changes nothing
+                // rendered; it only avoids raising every clearcoat document's deployment floor for a
+                // setter nobody asked for (spec §24.7 fix round 1).
                 body: .custom { _ in [] }),
 
         NodeDef(id: "input.worldPosition", title: "World Position", category: .input,
