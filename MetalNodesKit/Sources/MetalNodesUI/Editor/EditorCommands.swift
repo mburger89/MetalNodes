@@ -83,6 +83,12 @@ public struct EditorCommands: Commands {
             Button("Group") { model?.groupSelection() }
                 .keyboardShortcut("g", modifiers: .command)
                 .disabled(!canvasFocused || (model?.editableSelection.isEmpty ?? true))
+            // A Custom MSL node (spec §24.3): unlike Group, it needs no selection to come from —
+            // it starts empty and the user writes into it. Routed through `requestCanvas`, like
+            // Paste and Add Sticky Note, so it lands at the viewport's centre.
+            Button("New Custom Code Node") { model?.requestCanvas(.newCustomCode) }
+                .keyboardShortcut("n", modifiers: [.control, .command])
+                .disabled(!canvasFocused)
             Button("Ungroup") { model?.ungroupSelection() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(!canvasFocused || model?.selectedInstance == nil)

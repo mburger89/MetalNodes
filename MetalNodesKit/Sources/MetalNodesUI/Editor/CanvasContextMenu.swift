@@ -29,6 +29,16 @@ struct CanvasContextMenu: View {
         return pressed
     }
 
+    /// "New Custom Code Node" only makes sense with nothing under the press — a node, socket,
+    /// comment or wire already has its own menu of things to act on it. The same "empty canvas"
+    /// reading `adoptedNode` gives `nil` for (spec §24.3).
+    nonisolated static func showsNewCustomCodeNode(hit: CanvasHit?) -> Bool {
+        switch hit {
+        case nil, .empty?: true
+        default: false
+        }
+    }
+
     private var adopted: NodeID? { Self.adoptedNode(hit: hit, selection: model.selection) }
 
     /// The selection the items enable against — the one `act` will have installed by the time the
@@ -84,6 +94,9 @@ struct CanvasContextMenu: View {
         Button("Frame Selection") { act { model.frameSelection() } }
             .disabled(selection.isEmpty)
         Button("Add Sticky Note") { act { model.addSticky(centredAt: canvasPoint) } }
+        if Self.showsNewCustomCodeNode(hit: hit) {
+            Button("New Custom Code Node") { act { model.newCustomCodeDefinition(at: canvasPoint) } }
+        }
         if let ref = viewerSocket {
             Divider()
             Button(model.viewer == ref ? "Clear Viewer" : "Set Viewer") { act { model.toggleViewer(ref) } }

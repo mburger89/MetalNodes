@@ -22,4 +22,15 @@ import MetalNodesCore
         #expect(CanvasContextMenu.adoptedNode(hit: .empty, selection: [b]) == nil)
         #expect(CanvasContextMenu.adoptedNode(hit: nil, selection: [b]) == nil)
     }
+
+    /// "New Custom Code Node" (Task 16) belongs to the empty-canvas section: it has no selection
+    /// to act on, so it only makes sense with nothing under the press.
+    @Test func newCustomCodeNodeAppearsOnlyOnTheEmptyCanvas() {
+        #expect(CanvasContextMenu.showsNewCustomCodeNode(hit: nil))
+        #expect(CanvasContextMenu.showsNewCustomCodeNode(hit: .empty))
+        #expect(!CanvasContextMenu.showsNewCustomCodeNode(hit: .node(a)))
+        #expect(!CanvasContextMenu.showsNewCustomCodeNode(hit: .socket(SocketRef(a, "out"), isInput: false)))
+        #expect(!CanvasContextMenu.showsNewCustomCodeNode(hit: .comment(.sticky(StickyID()))))
+        #expect(!CanvasContextMenu.showsNewCustomCodeNode(hit: .wire(SocketRef(a, "out"))))
+    }
 }

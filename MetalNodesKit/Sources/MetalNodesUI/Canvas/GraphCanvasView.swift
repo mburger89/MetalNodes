@@ -301,6 +301,11 @@ public struct GraphCanvasView: View {
                 guard viewport != .zero else { return }
                 openChooser(atScreen: CGPoint(x: viewport.width / 2, y: viewport.height / 2), wire: nil)
                 return
+            case .newCustomCode:
+                // Node ▸ New Custom Code Node (⌃⌘N): the viewport's centre, same as Paste.
+                guard viewport != .zero else { return }
+                model.newCustomCodeDefinition(at: transform.toCanvas(CGPoint(x: viewport.width / 2, y: viewport.height / 2)))
+                return
             case .fitAll: rect = model.contentBounds
             case .fitSelection: rect = model.selectionBounds ?? model.contentBounds
             }

@@ -59,4 +59,36 @@ import Metal
         let result = await compiler.compile(shader, generation: 1)
         guard case .success = result else { Issue.record("compile failed: \(result)"); return }
     }
+
+    /// `EditorModel.customCodeStarter` (Task 16): a brand-new Custom Code node's body, unedited,
+    /// must actually compile — it references its declared input as `in_a`, not `a`, since that is
+    /// the only spelling `GroupCodegen` puts in scope inside the emitted function.
+    @Test func theStarterBodyCompiles() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        var doc = ShaderDocument()
+        var def = GroupDefinition(name: "Custom Code")
+        def.inputs = [SocketDecl(name: "a", label: "A", type: .concrete(.float), default: .value(.float(0)))]
+        def.outputs = [SocketDecl(name: "out", label: "Out", type: .concrete(.float))]
+        def.body = .msl("""
+        // Your code runs inside a function. Inputs are parameters; assign to the outputs.
+        out = in_a * 2.0;
+        """)
+        doc.definitions[def.id] = def
+
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.fragment"), position: .zero)
+        let inst = NodeInstance(id: NodeID(), kind: .group(def.id), position: .zero)
+        g.nodes[terminal.id] = terminal
+        g.nodes[inst.id] = inst
+        g.inputs[SocketRef(terminal.id, "color")] = SocketRef(inst.id, "out")
+        doc.root = g
+
+        let shader = try ShaderGenerator.generate(doc, target: .fragment)
+        let compiler = try ShaderCompiler(device: device)
+        let result = await compiler.compile(shader, generation: 1)
+        guard case .success = result else { Issue.record("compile failed: \(result)"); return }
+    }
 }

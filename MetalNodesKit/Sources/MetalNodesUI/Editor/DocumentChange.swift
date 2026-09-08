@@ -23,6 +23,11 @@ public enum DocumentChange: Sendable {
                 stickies: [StickyNote] = [], frames: [CommentFrame] = [])
     case setSettings(DocumentSettings)
 
+    /// Adds a definition with no instance — the graph-definition half of Task 16's test fixture.
+    /// A Custom MSL node's own creation goes through `.insert` instead, so its definition and its
+    /// one instance land as a single undo step (spec §24.3, `EditorModel+Groups.swift`).
+    case addDefinition(GroupDefinition)
+
     // MARK: Groups (spec §20.6)
 
     /// Folds the given nodes of the active graph into a fresh definition and its one instance.
@@ -64,7 +69,35 @@ public enum DocumentChange: Sendable {
              .moveComments, .resizeComment, .removeComments: .cosmetic
         case .setParam(_, _, let v): v.isUniformable ? .parameter : .topology
         case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore, .groupSelection, .ungroup,
-             .makeUnique, .renameDefinition, .addSocket, .renameSocket, .removeSocket, .deleteDefinition: .topology
+             .makeUnique, .renameDefinition, .addSocket, .renameSocket, .removeSocket, .deleteDefinition,
+             .addDefinition: .topology
+        }
+    }
+
+    /// Whether this change writes into the *active graph*'s own content — nodes, wires, comments
+    /// — as opposed to a document- or definition-scoped edit (renaming, sockets, settings) that
+    /// never touches `path`. `GroupDefinition.graph`'s setter already drops a `.graph`-content
+    /// write silently when the active definition is `.msl` (spec — its own doc comment), but
+    /// `.insert` also carries `definitions`/`assets` that land regardless of the active graph's
+    /// body, so that drop alone is not enough to keep a `.msl` definition's "canvas" inert.
+    /// `EditorModel.apply` uses this to refuse the whole change outright instead (Task 16's HARD
+    /// REQUIREMENT).
+    var touchesActiveGraph: Bool {
+        switch self {
+        // `.groupSelection`/`.ungroup`/`.makeUnique` read and rewrite `path`'s own nodes
+        // (`GroupOperations`), same as the plain node edits above; unreachable in practice against
+        // a `.msl` definition today (its graph is always empty, so the selection they require is
+        // always empty too — `EditorModel+Groups.swift`'s own wrappers already refuse before
+        // calling `apply`), but the honest classification is "touches the active graph" regardless.
+        case .moveNodes, .setParam, .setTitle, .connect, .disconnect, .addNode, .removeNodes, .insert,
+             .addSticky, .updateSticky, .addFrame, .updateFrame, .moveComments, .resizeComment, .removeComments,
+             .groupSelection, .ungroup, .makeUnique:
+            true
+        // Definition- and document-scoped: never read or write `path`, so still legal while the
+        // active graph is a `.msl` definition's inert canvas.
+        case .setSettings, .addDefinition, .renameDefinition, .setDefinitionAccent, .addSocket,
+             .renameSocket, .removeSocket, .deleteDefinition, .restore:
+            false
         }
     }
 
@@ -80,6 +113,7 @@ public enum DocumentChange: Sendable {
         case .removeNodes: "Delete"
         case .insert: "Paste"
         case .setSettings: "Change Settings"
+        case .addDefinition: "Add Node"
         case .restore: "Restore"
         case .groupSelection: "Group"
         case .ungroup: "Ungroup"

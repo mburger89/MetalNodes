@@ -23,6 +23,33 @@ extension EditorModel {
         return created
     }
 
+    /// A Custom MSL node is born empty — unlike a group, which is born from a selection (spec
+    /// §24.3). It arrives with a working one-in/one-out body so it compiles before its first edit.
+    /// The input is only in scope inside the emitted function as `in_a` (`GroupCodegen.systemParams`
+    /// spells every declared input `in_<name>`), which is why the body reads `in_a`, not `a`.
+    public static let customCodeStarter = """
+    // Your code runs inside a function. Inputs are parameters; assign to the outputs.
+    out = in_a * 2.0;
+    """
+
+    /// Creates a Custom MSL definition and places one instance of it, as a single undo step. `nil`
+    /// — the active graph is itself a `.msl` definition's inert "canvas" (Task 16's HARD
+    /// REQUIREMENT; `apply` refuses the whole change before either half lands) — when the document
+    /// could not take the new definition and its instance together.
+    @discardableResult
+    public func newCustomCodeDefinition(at point: CGPoint) -> GroupID? {
+        var def = GroupDefinition(name: GroupOperations.uniqueDefinitionName("Custom Code", in: document))
+        def.inputs = [SocketDecl(name: "a", label: "A", type: .concrete(.float), default: .value(.float(0)))]
+        def.outputs = [SocketDecl(name: "out", label: "Out", type: .concrete(.float))]
+        def.body = .msl(Self.customCodeStarter)
+        let instance = NodeInstance(kind: .group(def.id), position: point)
+        // One change, so one undo step covers the definition and its instance together.
+        apply(.insert(nodes: [instance], edges: [], definitions: [def]))
+        guard document.definitions[def.id] != nil else { return nil }
+        select(instance.id)
+        return def.id
+    }
+
     public func ungroupSelection() {
         guard let id = selectedInstance else { return }
         apply(.ungroup(id))
@@ -72,6 +99,15 @@ extension EditorModel {
             viewState.editingStack = Array(viewState.editingStack.prefix(max(0, level - levelBase)))
         }
         clearSelection()
+    }
+
+    /// True when the editor is inside a definition whose body is text rather than a graph — the
+    /// canvas is replaced by the code editor (Task 17), and until it is, `apply` refuses any
+    /// change that would touch the (inert) active graph (Task 16's HARD REQUIREMENT).
+    public var isEditingCode: Bool {
+        guard case .definition(let id) = activePath else { return false }
+        if case .msl = document.definitions[id]?.body { return true }
+        return false
     }
 
     /// "Edit" in the palette: a definition with no instance to dive through (spec §20.6).

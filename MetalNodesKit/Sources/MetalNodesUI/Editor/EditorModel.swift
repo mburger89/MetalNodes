@@ -21,6 +21,9 @@ public enum CanvasRequest: Equatable, Sendable {
     case paste
     /// Open the node chooser at the viewport's centre — the toolbar's ✛ (spec §22.3).
     case openChooser
+    /// Node ▸ New Custom Code Node (⌃⌘N): a Custom MSL definition and its one instance, born at
+    /// the viewport's centre — only the canvas knows where that is (spec §24.3).
+    case newCustomCode
 }
 
 @MainActor
@@ -305,6 +308,15 @@ public final class EditorModel {
             perform(change)
             return
         }
+        // HARD REQUIREMENT (Task 16): a `.msl` definition's "canvas" is empty by construction
+        // (`GroupDefinition.graph`'s getter) and its setter silently drops any write back into it
+        // — deliberately, so a gesture can never clobber the user's code. That alone absorbs most
+        // canvas edits into no-ops, but `.insert` also carries `definitions`/`assets` that land
+        // regardless of the active graph's body, so a change reaching the active graph while it is
+        // a `.msl` definition is refused outright here rather than leaning on that drop. Gated on
+        // `isEditingCode`, not on the canvas view existing, so this holds even before Task 17's
+        // code editor replaces it.
+        if isEditingCode && change.touchesActiveGraph { return }
         if transactionSnapshot != nil {
             perform(change)
         } else {
@@ -394,6 +406,8 @@ public final class EditorModel {
         case .deleteDefinition(let id):
             document = GroupOperations.deleteDefinition(id, in: document) ?? document
             pruneAfterRemoval()
+        case .addDefinition(let def):
+            document.definitions[def.id] = def
         case .setSettings(let s):
             // Spec §18.2: settings are cosmetic unless `fastMath` or `target` flips — both are
             // part of what gets compiled, so they need a rebuild; preview size and time mode do not.
