@@ -23,6 +23,18 @@ public struct EditorCommands: Commands {
     /// the menu's key equivalents stay out of the field editor's way (see the note below).
     private var canvasFocused: Bool { model?.canvasHasFocus ?? false }
 
+    /// `canvasFocused`, extended to the code editor (Task 17 fix round 2). `canvasHasFocus` is
+    /// correctly `false` there — `GraphCanvasView` really is unmounted while a `.msl` definition
+    /// is open (fix round 1's Critical 2 fix) — but two items on `canvasFocused` alone need a
+    /// keyboard path from inside the code editor too: Exit Group (⌘↑), the only keyboard way out
+    /// once the canvas that would otherwise hold focus is gone, and Undo/Redo (⌘Z/⇧⌘Z), which the
+    /// code editor needs for the same reason a node's canvas edits do. Undo/Redo's own key
+    /// equivalent still only fires when `TextEditor`'s own field editor is *not* first responder —
+    /// AppKit gives a focused text view's own local undo first crack at ⌘Z, so document undo and
+    /// in-progress-typo undo never fight over the same keystroke; this only widens which state
+    /// the *menu item* is enabled in, not which one wins when both could claim the key.
+    private var canvasFocusedOrEditingCode: Bool { canvasFocused || (model?.isEditingCode ?? false) }
+
     public var body: some Commands {
         CommandGroup(after: .saveItem) {
             Button("Export Shader…") { model?.requestExport() }
@@ -39,10 +51,10 @@ public struct EditorCommands: Commands {
         CommandGroup(replacing: .undoRedo) {
             Button(model?.undoManager.undoMenuItemTitle ?? "Undo") { model?.undo() }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(!((model?.canUndo ?? false) && canvasFocused))
+                .disabled(!((model?.canUndo ?? false) && canvasFocusedOrEditingCode))
             Button(model?.undoManager.redoMenuItemTitle ?? "Redo") { model?.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(!((model?.canRedo ?? false) && canvasFocused))
+                .disabled(!((model?.canRedo ?? false) && canvasFocusedOrEditingCode))
         }
         // iPad's Edit ▸ Cut / Copy / Paste / Delete / Select All (spec §22.5, and the ruling in the
         // M6 plan's Task 9: SwiftUI Commands, not a UIKit responder). macOS keeps the responder
@@ -93,7 +105,7 @@ public struct EditorCommands: Commands {
                 .disabled(!canvasFocused || model?.selectedInstance == nil)
             Button("Exit Group") { model?.exitGroup() }
                 .keyboardShortcut(.upArrow, modifiers: .command)
-                .disabled(!canvasFocused || !(model?.canExitGroup ?? false))
+                .disabled(!canvasFocusedOrEditingCode || !(model?.canExitGroup ?? false))
             Divider()
             // A Custom MSL node (spec §24.3): unlike Group, it needs no selection to come from —
             // it starts empty and the user writes into it. Routed through `requestCanvas`, like

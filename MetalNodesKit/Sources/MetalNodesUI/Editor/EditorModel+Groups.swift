@@ -217,8 +217,19 @@ extension EditorModel {
         let uniqued = GroupOperations.uniqueSocketName(decl.name, among: existing)
         apply(.addSocket(id, kind, decl))
         let after = kind == .input ? document.definitions[id]?.inputs : document.definitions[id]?.outputs
+        // Named, not assumed (fix round 2): `mslNameCollides` is the only refusal reason
+        // `GroupOperations.addSocket` can still reach here — texture is pre-checked above, and
+        // `existing`/`def` already proved the definition exists — so reporting it as "reserved"
+        // unconditionally happens to be exact today. But that is the same one-message-for-every-
+        // reason shape `renameSocket` was split out of for M4, and this branch would go quietly
+        // wrong the next time `GroupOperations.addSocket` grows a second refusal reason. Splitting
+        // it the same way costs nothing today and stays correct when that changes.
         guard let after, after.count == existing.count + 1 else {
-            showNotice(reservedSocketNotice(uniqued, kind: kind))
+            if GroupOperations.mslReservedSocketName(uniqued, kind: kind, in: def) {
+                showNotice(reservedSocketNotice(uniqued, kind: kind))
+            } else {
+                showNotice("That socket couldn't be added right now")
+            }
             return nil
         }
         return after.last?.name
