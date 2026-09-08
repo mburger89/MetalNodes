@@ -117,11 +117,18 @@ import Testing
     /// `materialSys`/shim correspondence test (`MaterialCompileTests.swift`,
     /// `everyMaterialSysSpellingResolvesAgainstItsShim`).
     ///
-    /// The graph below reaches all three accessors the generator currently emits per stage
-    /// (`params.textures().custom()`, `params.surface()`, `params.geometry()`), by wiring a real
-    /// Texture Sample node into each stage. Both samples name the *same* asset — a RealityKit
-    /// material has one texture slot (`MaterialValidation`'s Rule 4), and two nodes reading the
-    /// same image both resolve to that one slot and export cleanly.
+    /// The graph below reaches all four accessors the generator currently emits per stage
+    /// (`params.textures().custom()`, `params.surface()`, `params.geometry()`, and — Task 14 —
+    /// `params.geometry().custom_attribute()`), by wiring a real Texture Sample node into each
+    /// stage plus `input.customAttribute` into a second surface socket. Both texture samples name
+    /// the *same* asset — a RealityKit material has one texture slot (`MaterialValidation`'s Rule
+    /// 4), and two nodes reading the same image both resolve to that one slot and export cleanly.
+    ///
+    /// Wiring `input.customAttribute` here is not optional decoration: without a node that
+    /// actually *reads* it, nothing in the generated surface body ever spells
+    /// `params.geometry().custom_attribute()`, and the guard-the-guard assertion below exists
+    /// precisely to keep that coverage honest (fix round 1 caught this fixture claiming coverage
+    /// it did not have).
     @Test func everyAccessorTheGeneratorEmitsIsAllowedUnderItsOwnStage() throws {
         var doc = ShaderDocument()
         doc.settings.target = .realityKit
@@ -132,9 +139,11 @@ import Testing
         surfaceSample.params["asset"] = .asset(asset)
         var geometrySample = NodeInstance(id: NodeID(), kind: .builtin("texture.sample"), position: .zero)
         geometrySample.params["asset"] = .asset(asset)
-        for n in [terminal, surfaceSample, geometrySample] { g.nodes[n.id] = n }
+        let customAttributeRead = NodeInstance(id: NodeID(), kind: .builtin("input.customAttribute"), position: .zero)
+        for n in [terminal, surfaceSample, geometrySample, customAttributeRead] { g.nodes[n.id] = n }
         g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(surfaceSample.id, "color")
         g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(geometrySample.id, "color")
+        g.inputs[SocketRef(terminal.id, "emissive")] = SocketRef(customAttributeRead.id, "value")
         doc.root = g
 
         let shader = try ShaderGenerator.generate(doc, target: .realityKit)
@@ -150,6 +159,7 @@ import Testing
         // empty chain list would make the loops below pass vacuously.
         #expect(surfaceChains.contains("params.textures().custom()"))
         #expect(geometryChains.contains("params.textures().custom()"))
+        #expect(surfaceChains.contains("params.geometry().custom_attribute()"))
 
         for chain in surfaceChains {
             #expect(EmitEnvironment.realityKitSurface.canEmit(mslText: chain) == .allowed,
@@ -252,14 +262,17 @@ import Testing
     /// three tables above plus this loop cover the whole library, not a sample of it.
     @Test func everyOtherBuiltinWasDeclaredBothStagesAndStillDerivesBoth() {
         // Guard the guard: this is a loop over a registry, so an empty or shrunken one would pass
-        // it vacuously and the migration's whole-library claim would quietly stop being true. The
-        // library held 55 builtins when the derivation landed, 43 of them outside the two tables
-        // (measured, not computed); the floor only has to be tight enough that "the loop ran over
-        // the real library" stays a fact rather than an assumption.
+        // it vacuously and the migration's whole-library claim would quietly stop being true. An
+        // inequality floor here would stop guarding anything once enough entries accumulate in the
+        // three exclusion tables (fix round 1: a `>= 40` floor sat unnoticed 3 below the real 43
+        // the moment `addedAfterMigration` was introduced) — so this asserts the *exact*
+        // complement instead: every builtin not named in one of the three tables above, and
+        // nothing else, must land in `checked`.
         let checked = NodeRegistry.builtin.all
             .filter { Self.declared[$0.id] == nil && Self.declarationWasWrong[$0.id] == nil
                      && !Self.addedAfterMigration.contains($0.id) }
-        #expect(checked.count >= 40)
+        #expect(checked.count == NodeRegistry.builtin.all.count
+                - (Self.declared.count + Self.declarationWasWrong.count + Self.addedAfterMigration.count))
         // …and all three tables name real nodes, so a renamed id cannot silently empty them either.
         for id in Self.declared.keys { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }
         for id in Self.declarationWasWrong.keys { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }

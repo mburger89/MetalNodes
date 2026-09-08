@@ -30,16 +30,26 @@ import Testing
         #expect(d?.stages == [.surface])
     }
 
+    /// Asserts the *argument*, not just the call shape: `document()` wires a known red
+    /// (`(1, 0, 0, 1)`) into `customAttribute`, so the setter must carry that node's own SSA
+    /// variable, and the variable itself must be the literal that node emits — not just some call
+    /// named `set_custom_attribute` with anything inside the parens. A body that always exported
+    /// `geo.set_custom_attribute(float4(0.0));` (every wired custom attribute rendering black)
+    /// would still satisfy a substring check on the call name alone; it fails these two.
     @Test func theExportWritesInGeometryAndReadsInSurface() throws {
         let src = try #require(ShaderGenerator.generate(document(), target: .realityKit).exportSource)
-        #expect(src.contains("geo.set_custom_attribute("))
+        #expect(src.contains("v0 = float4(1.0, 0.0, 0.0, 1.0);"))
+        #expect(src.contains("geo.set_custom_attribute(v0)"))
         #expect(src.contains("params.geometry().custom_attribute()"))
     }
 
+    /// Same discrimination as above, for the preview: `o.customAttribute = v0;` must name the real
+    /// variable the geometry stage's own statements produced, not a fixed `float4(0.0)` that would
+    /// render every wired document black regardless of what was wired.
     @Test func thePreviewCarriesItAsAnInterpolant() throws {
         let src = try ShaderGenerator.generate(document(), target: .realityKit).source
         #expect(src.contains("float4 customAttribute;"))
-        #expect(src.contains("o.customAttribute ="))
+        #expect(src.contains("o.customAttribute = v0;"))
         #expect(src.contains("in.customAttribute"))
     }
 
