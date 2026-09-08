@@ -155,62 +155,16 @@ public enum LoopHardening {
         let wrapCloseOffset: Int?
     }
 
-    /// Mirrors `MSLScanner`'s own (private) loop-opener detection — a `do`'s closing `while` is
-    /// tracked by a brace-depth stack so it is never counted as a second, spurious opener — but
-    /// additionally records the exact character offsets hardening needs to splice at.
-    ///
-    /// `MSLScanner.loopSites(in:)` only reports which *line* each opener is on. That is not
-    /// enough here: every test in this suite, and the spec's own examples, write a loop's header
-    /// and body on one physical line (`for (...) { body; }`), and a hardener that merely inserts
-    /// a new line after that whole line would place its `break` *outside* the loop — which is not
-    /// just a wrong cap, it is invalid MSL (`break` outside a loop or `switch` fails to compile).
-    /// So this walks tokens itself rather than reusing that line-only API. `MSLScanner.swift`
-    /// belongs to a different task in this milestone and is not modified here.
+    /// The scanner's own loop openers — the same `do`/`while` pairing `scopeBreakers` and
+    /// `loopSites` use, so the two can never disagree about where a loop is — narrowed to braced
+    /// bodies and resolved to the character offsets hardening splices at. Before M9 this file
+    /// carried a private mirror of that walk (spec §25.3, handoff §15.5 item 13).
     private static func loopBraceSites(in source: String) -> [Site] {
-        struct DoFrame { var closeDepth: Int; var satisfied: Bool }
         let tokens = MSLScanner.tokenise(source)
-        var out: [Site] = []
-        var depth = 0
-        var doStack: [DoFrame] = []
-        var i = 0
-        while i < tokens.count {
-            let t = tokens[i]
-            if t.kind == .punctuation {
-                if t.text == "{" {
-                    depth += 1
-                } else if t.text == "}" {
-                    depth -= 1
-                    if let top = doStack.last, !top.satisfied, depth == top.closeDepth {
-                        doStack[doStack.count - 1].satisfied = true
-                    }
-                }
-                i += 1
-                continue
-            }
-            guard t.kind == .identifier, !t.afterDot else { i += 1; continue }
-            switch t.text {
-            case "for":
-                if let braceIndex = bracedHeaderBraceIndex(tokens, headerStart: i + 1) {
-                    out.append(makeSite(tokens, keywordIndex: i, braceIndex: braceIndex, isDo: false))
-                }
-            case "do":
-                let braced = i + 1 < tokens.count && tokens[i + 1].kind == .punctuation
-                    && tokens[i + 1].text == "{"
-                doStack.append(DoFrame(closeDepth: depth, satisfied: !braced))
-                if braced {
-                    out.append(makeSite(tokens, keywordIndex: i, braceIndex: i + 1, isDo: true))
-                }
-            case "while":
-                if let top = doStack.last, top.satisfied {
-                    doStack.removeLast()
-                } else if let braceIndex = bracedHeaderBraceIndex(tokens, headerStart: i + 1) {
-                    out.append(makeSite(tokens, keywordIndex: i, braceIndex: braceIndex, isDo: false))
-                }
-            default: break
-            }
-            i += 1
+        return MSLScanner.loopOpeners(tokens).compactMap { opener in
+            guard let braceIndex = opener.braceIndex else { return nil }
+            return makeSite(tokens, keywordIndex: opener.keywordIndex, braceIndex: braceIndex, isDo: opener.isDo)
         }
-        return out
     }
 
     /// Builds one `Site`, resolving `wrapCloseOffset` only when the loop keyword needs wrapping
@@ -296,36 +250,5 @@ public enum LoopHardening {
             return tokens[i].start + 1
         }
         return fallback
-    }
-
-    /// The character offset of the `{` that follows a parenthesized `(…)` header starting at
-    /// `tokens[headerStart]` (tracking nested parens, so a call like `length(v)` inside the
-    /// condition doesn't close the header early), or `nil` if none follows. An unbraced loop body
-    /// never reaches here in practice — `scopeBreakers` refuses it before codegen runs — but this
-    /// returns `nil` rather than guessing if it ever were.
-    private static func bracedHeaderBraceIndex(_ tokens: [MSLScanner.Token], headerStart: Int) -> Int? {
-        guard headerStart < tokens.count, tokens[headerStart].kind == .punctuation,
-              tokens[headerStart].text == "(" else { return nil }
-        var depth = 0
-        var i = headerStart
-        while i < tokens.count {
-            let t = tokens[i]
-            if t.kind == .punctuation {
-                if t.text == "(" {
-                    depth += 1
-                } else if t.text == ")" {
-                    depth -= 1
-                    if depth == 0 {
-                        let next = i + 1
-                        if next < tokens.count, tokens[next].kind == .punctuation, tokens[next].text == "{" {
-                            return next
-                        }
-                        return nil
-                    }
-                }
-            }
-            i += 1
-        }
-        return nil
     }
 }

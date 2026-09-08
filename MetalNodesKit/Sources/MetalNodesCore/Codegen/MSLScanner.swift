@@ -223,15 +223,20 @@ public enum MSLScanner {
         return out.sorted { $0.line < $1.line }
     }
 
-    /// A `for`, non-closing `while`, or `do` that opens a loop, and whether its body is a braced
-    /// `{ … }` block.
-    private struct LoopOpener {
+    /// A `for`, non-closing `while`, or `do` that opens a loop: its line, its keyword's index in
+    /// the token array, and the index of the `{` opening its body — `nil` for an unbraced body.
+    /// Internal so `LoopHardening` splices by these indices instead of re-deriving them (spec
+    /// §25.3, handoff §15.5 item 13).
+    struct LoopOpener {
         let line: Int
-        let isBraced: Bool
+        let keywordIndex: Int
+        let braceIndex: Int?
+        let isDo: Bool
+        var isBraced: Bool { braceIndex != nil }
     }
 
     /// Every loop-opening `for`/`while`/`do` in `tokens`, in the order encountered, alongside
-    /// whether each one's body is braced. A `do`'s own closing `while` is excluded: it is
+    /// where each one's body brace is. A `do`'s own closing `while` is excluded: it is
     /// recognised by brace depth, not by simple order — each `do` that opens a `{ … }` body is
     /// paired with the `while` that follows once that block's closing `}` has brought the brace
     /// depth back down to where the `do` was seen. That is what keeps a *nested*
@@ -244,7 +249,7 @@ public enum MSLScanner {
     /// not chased further, because doing so turns a token scanner into a parser (spec §24.4); it
     /// is closed instead by `scopeBreakers` refusing every unbraced loop body outright — see
     /// `loopSites`.
-    private static func loopOpeners(_ tokens: [Token]) -> [LoopOpener] {
+    static func loopOpeners(_ tokens: [Token]) -> [LoopOpener] {
         struct DoFrame { var closeDepth: Int; var satisfied: Bool }
         var out: [LoopOpener] = []
         var depth = 0
@@ -264,19 +269,19 @@ public enum MSLScanner {
             guard t.kind == .identifier, !t.afterDot else { continue }
             switch t.text {
             case "for":
-                let braced = isBracedAfterParenthesizedHeader(tokens, headerStart: i + 1)
-                out.append(LoopOpener(line: t.line, isBraced: braced))
+                out.append(LoopOpener(line: t.line, keywordIndex: i,
+                                      braceIndex: bracedHeaderBraceIndex(tokens, headerStart: i + 1), isDo: false))
             case "do":
                 let braced = i + 1 < tokens.count && tokens[i + 1].kind == .punctuation
                     && tokens[i + 1].text == "{"
                 doStack.append(DoFrame(closeDepth: depth, satisfied: !braced))
-                out.append(LoopOpener(line: t.line, isBraced: braced))
+                out.append(LoopOpener(line: t.line, keywordIndex: i, braceIndex: braced ? i + 1 : nil, isDo: true))
             case "while":
                 if let top = doStack.last, top.satisfied {
                     doStack.removeLast()
                 } else {
-                    let braced = isBracedAfterParenthesizedHeader(tokens, headerStart: i + 1)
-                    out.append(LoopOpener(line: t.line, isBraced: braced))
+                    out.append(LoopOpener(line: t.line, keywordIndex: i,
+                                          braceIndex: bracedHeaderBraceIndex(tokens, headerStart: i + 1), isDo: false))
                 }
             default: break
             }
@@ -284,12 +289,12 @@ public enum MSLScanner {
         return out
     }
 
-    /// True when `tokens[headerStart]` opens a `( … )` clause (tracking nested parens, so a call
-    /// like `length(v)` inside a `for`'s condition doesn't close it early) and the token right
-    /// after its matching `)` is `{`.
-    private static func isBracedAfterParenthesizedHeader(_ tokens: [Token], headerStart: Int) -> Bool {
+    /// The token index of the `{` that follows a parenthesized `( … )` header starting at
+    /// `tokens[headerStart]` (tracking nested parens, so a call like `length(v)` inside a `for`'s
+    /// condition doesn't close it early), or `nil` when the header is missing or unbraced.
+    static func bracedHeaderBraceIndex(_ tokens: [Token], headerStart: Int) -> Int? {
         guard headerStart < tokens.count, tokens[headerStart].kind == .punctuation,
-              tokens[headerStart].text == "(" else { return false }
+              tokens[headerStart].text == "(" else { return nil }
         var depth = 0
         var i = headerStart
         while i < tokens.count {
@@ -301,14 +306,16 @@ public enum MSLScanner {
                     depth -= 1
                     if depth == 0 {
                         let next = i + 1
-                        return next < tokens.count && tokens[next].kind == .punctuation
-                            && tokens[next].text == "{"
+                        if next < tokens.count, tokens[next].kind == .punctuation, tokens[next].text == "{" {
+                            return next
+                        }
+                        return nil
                     }
                 }
             }
             i += 1
         }
-        return false
+        return nil
     }
 
     /// The 0-based line of every `for`, `while` or `do` that opens a loop. A `while` that closes a

@@ -205,4 +205,43 @@ import Foundation
         let out = LoopHardening.harden("for (int i = 0; i < 4; i++) {\n  for (int j = 0; j < 4; j++) {\n    s += 1.0;\n  }\n}")
         #expect(out.contains("\n  for (int j = 0; j < 4; j++) {"))
     }
+
+    /// Byte-for-byte goldens of the pre-M9 hardener over the shapes that matter (spec §25.3,
+    /// handoff §15.5 item 13): the gate for folding `loopBraceSites` into `MSLScanner`.
+    @Test func hardeningOutputIsUnchangedByTheScannerFold() {
+        let cases: [(body: String, text: String, lines: [Int?])] = [
+            ("for (int i = 0; i < 4; i++) { s += 1.0; }",
+             "int mn_loopGuard0 = 0;\nfor (int i = 0; i < 4; i++) {\n    if (++mn_loopGuard0 > 4096) { break; }\n s += 1.0; }",
+             [nil, 0, nil, 0]),
+            ("while (a > 0.0) { a -= 1.0; }",
+             "int mn_loopGuard0 = 0;\nwhile (a > 0.0) {\n    if (++mn_loopGuard0 > 4096) { break; }\n a -= 1.0; }",
+             [nil, 0, nil, 0]),
+            ("do { s += 1.0; } while (s < 4.0);",
+             "int mn_loopGuard0 = 0;\ndo {\n    if (++mn_loopGuard0 > 4096) { break; }\n s += 1.0; } while (s < 4.0);",
+             [nil, 0, nil, 0]),
+            ("if (a > 0.0) for (int i = 0; i < 4; i++) { s += 1.0; }",
+             "if (a > 0.0) \n{\nint mn_loopGuard0 = 0;\nfor (int i = 0; i < 4; i++) {\n    if (++mn_loopGuard0 > 4096) { break; }\n s += 1.0; }\n}",
+             [0, nil, nil, 0, nil, 0, nil]),
+            ("if (a > 0.0) { s = 1.0; } else while (s > 0.0) { s -= 1.0; }",
+             "if (a > 0.0) { s = 1.0; } else \n{\nint mn_loopGuard0 = 0;\nwhile (s > 0.0) {\n    if (++mn_loopGuard0 > 4096) { break; }\n s -= 1.0; }\n}",
+             [0, nil, nil, 0, nil, 0, nil]),
+            ("switch (int(a)) { case 1: for (int i = 0; i < 4; i++) { s += 1.0; } break; default: break; }",
+             "switch (int(a)) { case 1: \n{\nint mn_loopGuard0 = 0;\nfor (int i = 0; i < 4; i++) {\n    if (++mn_loopGuard0 > 4096) { break; }\n s += 1.0; }\n}\n break; default: break; }",
+             [0, nil, nil, 0, nil, 0, nil, 0]),
+            ("if (a > 0.0) for (int i = 0; i < 4; i++) { for (int j = 0; j < 4; j++) { s += 1.0; } }",
+             "if (a > 0.0) \n{\nint mn_loopGuard0 = 0;\nfor (int i = 0; i < 4; i++) {\n    if (++mn_loopGuard0 > 4096) { break; }\nint mn_loopGuard1 = 0;\n for (int j = 0; j < 4; j++) {\n    if (++mn_loopGuard1 > 4096) { break; }\n s += 1.0; } }\n}",
+             [0, nil, nil, 0, nil, nil, 0, nil, 0, nil]),
+            ("for (int i = 0; i < 4; i++)\n{\n    s += 1.0;\n}",
+             "int mn_loopGuard0 = 0;\nfor (int i = 0; i < 4; i++)\n{\n    if (++mn_loopGuard0 > 4096) { break; }\n    s += 1.0;\n}",
+             [nil, 0, 1, nil, 2, 3]),
+            ("do { do { s += 1.0; } while (a > 1.0); } while (a > 2.0);",
+             "int mn_loopGuard0 = 0;\ndo {\n    if (++mn_loopGuard0 > 4096) { break; }\nint mn_loopGuard1 = 0;\n do {\n    if (++mn_loopGuard1 > 4096) { break; }\n s += 1.0; } while (a > 1.0); } while (a > 2.0);",
+             [nil, 0, nil, nil, 0, nil, 0]),
+        ]
+        for c in cases {
+            let h = LoopHardening.hardened(c.body)
+            #expect(h.text == c.text, Comment(rawValue: c.body))
+            #expect(h.userLines == c.lines, Comment(rawValue: c.body))
+        }
+    }
 }
