@@ -99,7 +99,7 @@ import Testing
         let diags = GraphValidator.validate(document: doc, registry: .builtin, target: .realityKit)
         #expect(diags.count == 1)
         #expect(diags.first?.severity == .error)
-        #expect(diags.first?.message == "UV reads resolution, which the RealityKit Material target does not provide — this node needs the Fragment (preview) or SwiftUI target")
+        #expect(diags.first?.message == "UV reads resolution, which the RealityKit Material target does not provide — this node needs the Fragment (preview) or SwiftUI target, or switch this node's Mode to Normalized")
         #expect(diags.first?.node != nil)
         #expect(try Self.goldens(prefix: "\(name).").isEmpty, "a refused document has no goldens")
     }

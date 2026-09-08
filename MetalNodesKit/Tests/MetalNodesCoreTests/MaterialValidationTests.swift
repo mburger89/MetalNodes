@@ -139,6 +139,23 @@ enum MaterialFixture {
         }
     }
 
+    /// Spec §25.2 (handoff §15.5 item 4): the refusal stands, and its message now says what to do.
+    @Test func anAspectModeUVUnderRealityKitNamesTheModeSwitch() {
+        let doc = MaterialFixture.document { g in
+            let uv = MaterialFixture.wire("input.uv", into: "baseColor", &g)
+            g.nodes[uv]!.params["mode"] = .enumCase("aspect")
+        }
+        let messages = errors(doc).map(\.message)
+        #expect(messages.count == 1)
+        #expect(messages.first?.hasSuffix(", or switch this node's Mode to Normalized") == true, "\(messages)")
+    }
+
+    /// Only the UV node carries the hint — a Mouse node has no mode to switch.
+    @Test func theModeHintIsNotAddedToOtherRefusals() {
+        let doc = MaterialFixture.document { g in MaterialFixture.wire("input.mouse", into: "baseColor", &g) }
+        #expect(errors(doc).allSatisfy { !$0.message.contains("Mode to Normalized") })
+    }
+
     @Test func aThreeDimensionalNodeIsRefusedUnderTheFragmentTarget() {
         var doc = ShaderDocument()
         doc.settings.target = .fragment

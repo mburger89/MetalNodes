@@ -131,10 +131,15 @@ public enum MaterialValidation {
             }
             guard let missing else { return nil }
             let problem = "\(title(inst, doc, registry)) reads \(missing), which the \(target.title) target does not provide"
+            // A UV node in aspect mode is the one refusal a user can fix in place — §24.10 kept the
+            // refusal, §25.2 makes the message say so. Keyed on the def and the chosen case rather
+            // than on the missing name, so a future node that also reads `resolution` does not
+            // inherit advice about a mode it does not have.
+            let modeHint = (id == "input.uv" && chosen == "aspect") ? ", or switch this node's Mode to Normalized" : ""
             guard let fix = alternativeTargets(for: def.body, chosen: chosen, excluding: target) else {
-                return Diagnostic(.error, problem, node: inst.id)
+                return Diagnostic(.error, problem + modeHint, node: inst.id)
             }
-            return Diagnostic(.error, problem + " — this node needs the \(fix) target", node: inst.id)
+            return Diagnostic(.error, problem + " — this node needs the \(fix) target" + modeHint, node: inst.id)
         }
     }
 
