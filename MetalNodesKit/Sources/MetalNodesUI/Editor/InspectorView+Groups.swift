@@ -20,6 +20,10 @@ struct InstancePane: View {
     @ViewBuilder
     private func content(_ node: NodeInstance, _ def: GroupDefinition) -> some View {
         let resolved = model.resolvedTypes[id]
+        // Mirrors `ShaderDocument.shape(of:)`'s `.group` case: the instance's shape is its
+        // definition's exposed sockets, which is all `labelColumnWidth(for:)` below needs.
+        let shape = NodeShape(title: def.name, category: .group, accent: def.accent,
+                              inputs: def.inputs, outputs: def.outputs)
         HStack {
             Text(node.customTitle ?? def.name).font(.headline)
             Spacer()
@@ -58,7 +62,8 @@ struct InstancePane: View {
                     ParamControl(label: decl.label, kind: .value(type, range: decl.range),
                                  value: node.params[decl.name] ?? dflt,
                                  onChange: { model.apply(.setParam(id, decl.name, $0)) },
-                                 onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
+                                 onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
+                                 labelWidth: NodeGeometry.labelColumnWidth(for: shape))
                 } else {
                     HStack {
                         Text(decl.label).font(.caption)

@@ -8,7 +8,17 @@ import MetalNodesCore
 /// lay out exactly like a builtin, from their exposed sockets. Callers pass a `shapes` closure —
 /// in the app `EditorModel.shape(of:)`, which knows the active graph's path.
 enum NodeGeometry {
-    static let width: CGFloat = 190
+    /// A node's width with the narrowest label column. Canvas placement (`GraphCanvasView`)
+    /// centres new nodes on this; a node's real width is `width(for:)`.
+    static let baseWidth: CGFloat = 190
+    static var width: CGFloat { baseWidth }
+    /// The label column every one-line body row shares: `ParamControl`'s `frame(width:)`.
+    static let minLabelColumn: CGFloat = 46
+    /// Wide enough for "Clearcoat Roughness" at `.caption` size; nothing in the library is longer.
+    static let maxLabelColumn: CGFloat = 120
+    /// An estimate of `.caption`'s average advance, rounded up so it errs wide: a label that
+    /// wraps is the defect (handoff §15.3.1), a column a few points too wide is not.
+    static let captionPointsPerCharacter: CGFloat = 6.4
     static let headerHeight: CGFloat = 26
     /// Row pitch: `NodeView`'s 16 pt of row content plus the body `VStack`'s 6 pt spacing.
     static let rowHeight: CGFloat = 22
@@ -38,9 +48,23 @@ enum NodeGeometry {
         shape.inputs.count + paramRows(shape) + shape.outputs.count
     }
 
+    /// The label column for `shape`'s body rows — inputs and body params, the two row kinds that
+    /// draw a leading label — from its longest label. One function, two readers: `NodeView`
+    /// passes it to every `ParamControl`, and `estimatedSize` widens the node by the same amount,
+    /// so the estimate and the drawing cannot disagree (spec §25.2, handoff §15.5 item 8).
+    static func labelColumnWidth(for shape: NodeShape) -> CGFloat {
+        let labels = shape.inputs.map(\.label) + shape.params.filter(\.showsInBody).map(\.label)
+        let longest = labels.map(\.count).max() ?? 0
+        return min(maxLabelColumn, max(minLabelColumn, (CGFloat(longest) * captionPointsPerCharacter).rounded(.up)))
+    }
+
+    static func width(for shape: NodeShape) -> CGFloat {
+        shape.style == .dot ? dotSize : baseWidth + labelColumnWidth(for: shape) - minLabelColumn
+    }
+
     static func estimatedSize(for shape: NodeShape) -> CGSize {
         if shape.style == .dot { return CGSize(width: dotSize, height: dotSize) }
-        return CGSize(width: width, height: headerHeight + bodyPadding + CGFloat(bodyRows(shape)) * rowHeight)
+        return CGSize(width: width(for: shape), height: headerHeight + bodyPadding + CGFloat(bodyRows(shape)) * rowHeight)
     }
 
     static func frame(for node: NodeInstance, shape: NodeShape) -> CGRect {
@@ -83,7 +107,7 @@ enum NodeGeometry {
         }
         if let i = shape.outputs.firstIndex(where: { $0.name == ref.socket }) {
             let above = shape.inputs.count + paramRows(shape)
-            return CGPoint(x: node.position.x + width, y: centreY(row: above + i))
+            return CGPoint(x: node.position.x + width(for: shape), y: centreY(row: above + i))
         }
         return nil
     }

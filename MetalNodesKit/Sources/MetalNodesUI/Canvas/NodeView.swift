@@ -30,7 +30,6 @@ struct NodeView: View {
     /// Last header click, for synthesising the double-click that dives in: `headerDrag` claims
     /// single clicks with `minimumDistance: 0`, so a `TapGesture(count: 2)` never fires (M2 lesson).
     @State private var lastHeaderClick: (time: Date, point: CGPoint)?
-    static let width: CGFloat = NodeGeometry.width
 
     var body: some View {
         Group {
@@ -75,7 +74,8 @@ struct NodeView: View {
                             ParamControl(label: param.label, kind: param.kind,
                                          value: node.params[param.name] ?? param.defaultValue,
                                          onChange: { onChange(.setParam(node.id, param.name, $0)) },
-                                         onEditing: onEditing)
+                                         onEditing: onEditing,
+                                         labelWidth: NodeGeometry.labelColumnWidth(for: shape))
                                 .interactiveRect()
                         }
                     }
@@ -84,7 +84,7 @@ struct NodeView: View {
                 .padding(8)
             }
         }
-        .frame(width: Self.width)
+        .frame(width: NodeGeometry.width(for: shape))
         .background(RoundedRectangle(cornerRadius: 8).fill(DraculaToken.surface.color))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(outlineColor, lineWidth: outlineWidth))
         // Doubled border: a group instance reads as "this is a function" (spec §12, §20.2). The
@@ -285,7 +285,8 @@ struct NodeView: View {
                 ParamControl(label: decl.label, kind: .value(type, range: decl.range),
                              value: coerced(node.params[decl.name] ?? dflt, to: type),
                              onChange: { onChange(.setParam(node.id, decl.name, $0)) },
-                             onEditing: onEditing)
+                             onEditing: onEditing,
+                             labelWidth: NodeGeometry.labelColumnWidth(for: shape))
                     .interactiveRect()
             } else {
                 Text(decl.label).font(.caption)

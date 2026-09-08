@@ -91,9 +91,11 @@ import MetalNodesCore
         #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "v"), in: doc.root, shapes: shapes) == CGPoint(x: 220, y: 42))
         #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "y"), in: doc.root, shapes: shapes) == CGPoint(x: 410, y: 86))
         // Math at (220, 200): inputs a/b are rows 0…1, the "op" param is row 2, output "out" is row 3.
+        // Its label column widens for "Operation" (9 chars): ceil(9 × 6.4) = 58, so the node is
+        // 190 + 58 - 46 = 202 wide, not the base 190 (Task 9, spec §25.2).
         let mul = doc.root.nodes.values.first { $0.kind == .builtin("math.math") && $0.params["op"] == .enumCase("multiply") }!
         #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "b"), in: doc.root, shapes: shapes) == CGPoint(x: 220, y: 264))
-        #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "out"), in: doc.root, shapes: shapes) == CGPoint(x: 410, y: 308))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "out"), in: doc.root, shapes: shapes) == CGPoint(x: 422, y: 308))
         #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "nope"), in: doc.root, shapes: shapes) == nil)
         #expect(NodeGeometry.socketAnchor(for: SocketRef(NodeID(), "v"), in: doc.root, shapes: shapes) == nil)
     }
@@ -212,5 +214,40 @@ import MetalNodesCore
                                             margin: 200, onTop: [uv.id])
         #expect(vis.last?.id == uv.id)
         #expect(vis.count == doc.root.nodes.count)
+    }
+
+    /// Spec §25.2 (handoff §15.5 item 8): the label column is derived per shape from its longest
+    /// row label, and the node widens by the same amount, so "Roughness" and "Clearcoat
+    /// Roughness" sit on one line and a row never grows taller than its one allotted row.
+    @Test func theLabelColumnGrowsWithTheLongestRowLabel() throws {
+        let float = try #require(reg["input.float"])
+        #expect(NodeGeometry.labelColumnWidth(for: NodeShape(def: float)) == NodeGeometry.minLabelColumn)
+        let material = try #require(reg["output.material"])
+        let column = NodeGeometry.labelColumnWidth(for: NodeShape(def: material))
+        #expect(column > NodeGeometry.minLabelColumn)
+        #expect(column <= NodeGeometry.maxLabelColumn)
+        #expect(column >= CGFloat("Clearcoat Roughness".count) * 5.5, "wide enough for the longest label at caption size")
+    }
+
+    @Test func theNodeWidensByExactlyTheExtraColumn() throws {
+        let material = NodeShape(def: try #require(reg["output.material"]))
+        let column = NodeGeometry.labelColumnWidth(for: material)
+        #expect(NodeGeometry.estimatedSize(for: material).width == NodeGeometry.baseWidth + column - NodeGeometry.minLabelColumn)
+        #expect(NodeGeometry.estimatedSize(for: material).height
+                == NodeGeometry.headerHeight + NodeGeometry.bodyPadding + CGFloat(NodeGeometry.bodyRows(material)) * NodeGeometry.rowHeight)
+    }
+
+    @Test func outputAnchorsSitOnTheWidenedRightEdge() throws {
+        let sep = try #require(reg["vector.separate"])
+        let material = try #require(reg["output.material"])
+        var g = Graph()
+        let m = NodeInstance(kind: .builtin(material.id), position: CGPoint(x: 10, y: 20))
+        let s = NodeInstance(kind: .builtin(sep.id), position: CGPoint(x: 300, y: 20))
+        g.nodes[m.id] = m; g.nodes[s.id] = s
+        let doc = document(root: g)
+        let sepOut = try #require(NodeGeometry.socketAnchor(for: SocketRef(s.id, "x"), in: g, shapes: rootShapes(doc)))
+        #expect(sepOut.x == 300 + NodeGeometry.width(for: NodeShape(def: sep)))
+        #expect(NodeGeometry.width(for: NodeShape(def: sep)) == NodeGeometry.baseWidth)
+        #expect(NodeGeometry.width(for: NodeShape(def: material)) > NodeGeometry.baseWidth)
     }
 }

@@ -15,6 +15,9 @@ struct ParamControl: View {
     /// What the well's chooser buttons run, with the source the button stands for. Nil where there
     /// is no chooser at all (the node body's compact well), which hides them.
     var onChooseImage: ((ImageSource) -> Void)? = nil
+    /// The leading label column's width, derived per node shape (`NodeGeometry.labelColumnWidth`)
+    /// so a long label like "Clearcoat Roughness" sits on one line instead of wrapping (spec §25.2).
+    var labelWidth: CGFloat = NodeGeometry.minLabelColumn
 
     @State private var draft = ""
     /// True between `onEditing?(true)` and `onEditing?(false)`, so a teardown can tell whether
@@ -110,7 +113,7 @@ struct ParamControl: View {
             // separate caption line above the field, as the multiline case has room for, would
             // silently understate the node's real height (Task 15 fix round 1, MUST-FIX 3).
             HStack(spacing: 4) {
-                Text(label).font(.caption).frame(width: 46, alignment: .leading)
+                Text(label).font(.caption).frame(width: labelWidth, alignment: .leading)
                 field
             }
         }
@@ -172,7 +175,7 @@ struct ParamControl: View {
         case .float:
             let f: Float = { if case .float(let x) = value { return x } else { return 0 } }()
             HStack(spacing: 4) {
-                Text(label).font(.caption).frame(width: 46, alignment: .leading)
+                Text(label).font(.caption).frame(width: labelWidth, alignment: .leading)
                 Slider(value: Binding(get: { f }, set: { onChange(.float($0)) }), in: range ?? -10...10,
                        onEditingChanged: { onEditing?($0) })
                     .controlSize(.mini)
@@ -215,7 +218,7 @@ struct ParamControl: View {
             }()
             let n = type.componentCount ?? 3
             HStack(spacing: 2) {
-                Text(label).font(.caption).frame(width: 46, alignment: .leading)
+                Text(label).font(.caption).frame(width: labelWidth, alignment: .leading)
                 ForEach(0..<n, id: \.self) { i in
                     TextField("", value: Binding(
                         get: { i < comps.count ? comps[i] : 0 },

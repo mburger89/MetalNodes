@@ -108,7 +108,8 @@ public struct InspectorView: View {
                 ParamControl(label: decl.label, kind: .value(type, range: decl.range),
                              value: node.params[decl.name] ?? dflt,
                              onChange: { model.apply(.setParam(id, decl.name, $0)) },
-                             onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
+                             onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
+                             labelWidth: NodeGeometry.labelColumnWidth(for: shape))
                 if model.document.settings.target == .realityKit, EditorModel.isLiveable(decl, resolvedType: resolvedType) {
                     let path = ParamPath(node: id, param: decl.name)
                     let index = model.liveParameterIndex(of: path)
@@ -122,7 +123,8 @@ public struct InspectorView: View {
                          onChange: { model.apply(.setParam(id, p.name, $0)) },
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
                          image: model.assetThumbnail(for: value),
-                         onChooseImage: { source in chooseImage(id, p.name, source) })
+                         onChooseImage: { source in chooseImage(id, p.name, source) },
+                         labelWidth: NodeGeometry.labelColumnWidth(for: shape))
             if model.document.settings.target == .realityKit, EditorModel.isLiveable(p) {
                 let path = ParamPath(node: id, param: p.name)
                 let index = model.liveParameterIndex(of: path)
