@@ -28,6 +28,7 @@ enum MetalCompiler {
     static func compile(_ source: String, fileName: String = "test.metal", extraArgs: [String] = []) throws -> Result {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-metal-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent(fileName)
         try source.write(to: url, atomically: true, encoding: .utf8)
         let p = Process()
