@@ -470,3 +470,252 @@ This is the same shape as the shim/`materialSys` correspondence in §14.6 item 1
 8. Consider `MTL_DEBUG_LAYER=1` on CI's test step — the suite passes under it today, and it would make the "every pass carries depth" invariant self-enforcing.
 9. Migrate the dolly's source-text test to the `MetalNodesAppUITests` target, which can drive real scroll and pinch.
 10. Then the two milestones already sequenced with the user: custom code / expression nodes, and a cross-document node library.
+
+## 15. M8 execution record — custom code and expression nodes (2026-09-07)
+
+Branch `m8-custom-code` off `main` @ `ddc6527`. **47 commits** (45 across Tasks 1–18, plus Task 19's sample document and this record). **919 package tests in 118 suites** — Core 531 / Render 77 / UI 311 — up from **667 in 86 suites** at the branch point (Core 337 / Render 70 / UI 260). Warning-free. Spec §24; amendments in §24.10. Nineteen tasks, subagent-driven, with worktrees for the disjoint ones and five parallel waves.
+
+**Four builds, all green, all run on this branch at `f13ea75`:**
+
+| Build | Result |
+|---|---|
+| `swift build --package-path MetalNodesKit` (clean, `.build` removed) | **0** lines matching `warning:` |
+| `swift test --package-path MetalNodesKit` | 311 UI / 77 Render / 531 Core, **all pass** |
+| `xcodebuild -scheme MetalNodes -destination 'platform=macOS'` under **Xcode 26.6 (17F113)** | **BUILD SUCCEEDED** |
+| `xcodebuild -scheme MetalNodes -destination 'generic/platform=iOS'` under **Xcode 26.6** | **BUILD SUCCEEDED** |
+
+The two `xcodebuild` runs are the first in this milestone to compile the **app target** — every prior task built only the package. The iOS build succeeds with five pre-existing deployment-target warnings (`IPHONEOS_DEPLOYMENT_TARGET` is 27.0; Xcode 26.6 supports up to 26.5.99). They come from `MetalNodesKit/Package.swift` and the project file, both set at `2d02436` when the package was created, and they appear on Xcode Cloud too. Not introduced by M8, and not fixed by it.
+
+`MetalNodes.xcodeproj/project.pbxproj` was **not** rewritten by either build and is not in any commit; `git status` was checked after each.
+
+### 15.1 What shipped
+
+**Two new node kinds.**
+
+- **The Expression node** (`utility.expression`, spec §24.2). A one-line formula whose *input sockets are the free identifiers it names* — `a * b + 0.5` grows sockets `a` and `b`, each with its own generic `T0…Tn`, so a `float2` and a `float` can meet in one expression. The output type is a picker. The formula is instance data, not a definition, so two Expression nodes are independent. It emits as a single inlined statement, never a function call. Identifier substitution goes through `MSLScanner.tokenise`, which is why `col.rgb` survives (a `\b`-bounded regex never matches `col` there at all — `.` between letters is not a Unicode word break) and `a + b.a` does not become `{in.a} + {in.b}.{in.a}`.
+- **The Custom MSL definition** (spec §24.3). `GroupDefinition.body` became a `DefinitionBody` enum — `.graph(Graph)` or `.msl(String)` — so a definition is either a subgraph or hand-written Metal, editable in place via ⌃⌘N and a dive-in code editor. One function per definition no matter how many instances. Inputs reach the body only as `in_<name>`; outputs are assigned by their declared names, and the user's text is never rewritten. Hand-written bodies are guarded by `MSLScanner` (scope breakers, preprocessor directives, unbraced loop bodies) and `LoopHardening` (a per-loop iteration budget spliced at a character offset, with brace-wrapping where the loop sits in an unbraced statement slot). Compile errors map back to the **user's own line** through `LineMap`.
+
+**The legality seam, retired.** M7 left "can node N be emitted in environment E" answered in four independent places — `NodeDef.stages`, `MaterialValidation.twoDimensionalOnly`, a derived `material3D` set, and each environment's implicit `sys` vocabulary (§14.6 item 2). M8 replaced them with **one predicate**, `EmitEnvironment.canEmit`, keyed off `SysValue.readable`, with `NodeDef.stages` now *derived* rather than declared. The migration test earned its keep immediately: `input.mouse` and `input.resolution` **declared** `MaterialStage.all` and **derive** `[]` — the declaration had been wrong all along, and only a separate rule-3 list had been preventing a Mouse node under RealityKit from emitting `v0 = float2(0.0, 0.0);`, a plausible-looking constant rather than a compile error. One deleted line from a silent wrong value.
+
+**Three RealityKit follow-ups** (§14.6 items 4–6).
+
+- **Live material parameters** (§24.6): up to four exposed floats map onto `params.uniforms().custom_parameter().x/.y/.z/.w`, so an exported material animates from Swift without re-export. Both the marking predicate and the export both go through one `UniformLayout.liveField(for:)`.
+- **Clearcoat** (§24.7): a third lighting model with three sockets and a second specular lobe in the preview. `set_clearcoat_normal` is emitted **only when its socket is wired** — the SDK marks it `availability(macos, introduced=15.0, strict)`, and `strict` makes it a hard compile error, so an unwired clearcoat export at `-mmacosx-version-min=14.0` would have broken the user's own Xcode build.
+- **`set_custom_attribute`** (§24.8): the one channel from the geometry stage to the surface stage, as a terminal socket and a reader node, interpolated in the preview.
+
+**A sample document.** `ShaderDocument.customCodeSample()` — a RealityKit material whose roughness is an Expression (`clamp(uv.x, 0.05, 0.95)`) and whose base colour passes through a Custom MSL definition. It joins the library sweep, and its export is compiled with real `xcrun metal` on both a material and a fragment termination.
+
+### 15.2 Rulings taken during execution
+
+Twenty-eight, exhaustive, each with what it would cost if wrong. Two were made before any task ran (pre-flight conflict scan); **P1 was withdrawn and ruling 25 was reversed**, both said plainly below.
+
+**Pre-flight.**
+
+- **P1 — WITHDRAWN.** Task 9's Expression call site should assert `precondition(lines.count == 1)`, so the "one template line = one user line" assumption fails loudly. *Withdrawn:* a legal one-line formula containing a braced loop expands to several lines once Task 8 hardens it, so the precondition would have **crashed on input the milestone accepts** — demonstrated with `for(int i=0;i<4;i++){x+=1.0;}`, which yields four lines. Crashing on user text contradicts this milestone's own "never refuse legal code" principle. The assumption needed a graceful guard, not a trap. *Cost had it stood:* a hard crash in codegen on a formula a user is allowed to type.
+- **P2.** Task 12 must *also* extend `EditorModel`'s `.setSettings` recompile condition and the `everySettingThatReachesCodegenRecompiles` matrix with `liveParameters` — the plan attributed this to Task 12 but omitted it from Task 12's file list. *Cost if wrong:* nothing; it adds a row to a test that already exists. (That matrix is M7's §14.5 guard, working as designed.)
+
+**During execution.**
+
+1. **Fix both the preprocessor miss and the do/while overcount inside `MSLScanner`**, in Task 2, rather than deferring them to Tasks 7 and 8. `/* c */ #include <x>` passed the scan, and C strips comments in translation phase 3 *before* directive recognition in phase 4 — a genuine `#include` reaching codegen unrefused. The do/while overcount was called "safe (extra bound-checks)"; it is not, once Task 8 lands, because the spurious site is the `} while (b);` closing test and the inserted `break` would land in the **enclosing** scope. *Cost if wrong:* a comment-stripping pass could over-strip a `//` inside a string literal; MSL has no string type.
+2. **`float a, b;` binds only `a`, leaking `b` as a free identifier — real, deferred, not fixed.** `identifiers(in:)` has one consumer, and an Expression formula is a single expression with no declarations. *Cost if wrong:* a bogus input socket on an Expression node, visible and harmless.
+3. **Keep the unrequested public `Violation.init(kind:line:)`.** A public struct's synthesized memberwise init is internal-only, so later tasks' tests could not construct an expected `Violation` without it. *Cost if wrong:* one extra public initializer.
+4. **Close the unbraced-loop-body class by refusing it**, as a fourth scope-breaker kind, rather than patching the pairing heuristic. Chasing it in the pairing logic turns a token scanner into a parser, which §24.4 rules out by name. It also retires Task 8's own admitted "one shape this misses". *Cost if wrong:* users must brace loop bodies they could leave bare — visible, immediate, one-line workaround, and no correct program becomes unwritable.
+5. **Make `loopSites`' braced-opener guarantee unconditional**, not transitively true for a caller that ran `scopeBreakers` first. A guarantee resting on an uncodified call-order convention is the same "two things that must agree with nothing checking they do" pattern that caused two M7 defects. *Cost if wrong:* nil in practice.
+6. **`ExpressionNode.template(for:)` belongs to Task 4, not Task 3** — the implementer was right to decline it; the dispatch note, not the brief, was the source of the ambiguity. *Cost if wrong:* one function in the wrong commit.
+7. **Fix whole-token replacement via `MSLScanner.tokenise` (adding a source offset to `Token`), not by switching the regex to `wordBoundaryKind(.simple)`.** `.simple` fixes `col.rgb` but introduces the mirror bug — `a + b.a` becomes `{in.a} + {in.b}.{in.a}` — because the regex has no notion of `afterDot` while the scanner deliberately does. Verified by running the rejected route side by side. *Cost if wrong:* a two-line addition to an internal type.
+8. **Bump `currentFormatVersion` 1 → 2.** M8 encodes `body` and never `graph`, so every M0–M7 build now fails to decode an M8 document — but with the gate still at 1, `VersionProbe`'s "newer version" branch never fires and the user sees "The shader could not be read". Rejected dual-writing `graph` beside `body`: real compatibility, but a redundant key forever, in a pre-1.0 single-app project. *Cost if wrong:* an M7 build refuses an M8 document it could technically have read, with a correct message.
+9. **An unknown `DefinitionBody` kind must THROW, not degrade to an empty graph.** Failing the decode is recoverable — the bytes are untouched. Degrading is *un*recoverable — the user opens a newer document on an older build, sees a broken group, saves, and the code is gone. Rejected `case unknown(kind:raw:)`: most correct in isolation, but it taxes every future switch for a scenario the version gate exists to prevent. *Cost if wrong:* a hypothetical future same-version body kind fails a document that could have been partially opened; the file is intact either way.
+10. **Leave `GraphClipboard.currentFormatVersion` at 1.** Bumping it would be *inert*: `paste()`'s version check runs only after a successful decode, and the nested `GroupDefinition` decode already throws on M7 bytes before the check is reached. *Cost if wrong:* a cross-version paste silently does nothing, same machine, no bytes at risk.
+11. **Refuse a `.msl` output socket named `uv`/`time`/`size`/`mouse`/`in_<input>`, rather than mangling it.** A local in the function's outermost block is the *same* scope as the parameters, so it redeclares rather than shadows — verified: `redefinition of 'uv' with a different type`. Renaming the parameters takes `uv` away from the user's body; renaming the outputs is forbidden, since the contract is that the body assigns to outputs by their declared names. *Cost if wrong:* a user cannot name a socket `uv`, with a stated reason at the point of choosing it.
+12. **Surface that refusal in Task 17, not Task 6.** The message belongs in `EditorModel`/`InspectorView+Groups` — Task 17's own files, and Task 17 is the task that first makes the path reachable. *Cost if wrong:* a silent refusal survives one more task, on a path nothing can hit yet.
+13. **Derive `mslSystemParamNames` from `GroupCodegen.systemParams`.** They duplicated one vocabulary with no mechanical tie — the *third* instance in this milestone of the pattern §14.6 blames for two M7 defects. The failure mode is quiet in the worst way: a fifth system parameter breaks the signature goldens loudly, someone updates them, and the refusal set is left one name short. Proven by mutation: adding a fifth entry made both the signature *and* the refusal move with one edit. *Cost if wrong:* one indirection.
+14. **Do not fix `MSLScanner.scopeBreakers`' scaling mid-milestone.** Measured, not guessed: ~600 ns/character; ~7.6 ms at 200 lines; fifty 200-line definitions ≈ 386 ms, re-paid on every 150 ms-debounced edit, including unreachable definitions. Real but bounded, invisible below ~10 substantial definitions, and the right fix — caching per body hash — is a clean standalone change with its own tests. *Cost if wrong:* diagnostics lag on a document full of drafts; it runs off the main actor, so frames are not dropped.
+15. **Fix the legality predicate's three defects in Task 10, not in Task 11.** Task 10 owns the predicate; shipping one that refuses the generator's own output and calling it the consumer's problem inverts the dependency. A false refusal of *valid* code is also the expensive direction — it blocks work with a confidently wrong message. *Cost if wrong:* the predicate accepts a chain it should refuse, and the Metal compiler catches it one layer later.
+16. **Derive accessor roots as a UNION across environments, not per-environment.** Per-environment derivation yields the empty set for `fragment` (whose spellings are not dotted call chains), which would silently disable accessor checking there. Rejected a positive rule ("any dotted call chain must be a known accessor"): it would refuse a user's own helper-struct calls. *Cost if wrong:* a typo'd accessor root stays with the Metal compiler.
+17. **Make `MaterialCodegen` read the shared `materialTextureAccessor` constant.** Shipping the predicate's own accessor knowledge as a second independent spelling of a string the generator emits would recreate the §14.6 defect *inside the fix for it*. A shared constant makes disagreement impossible by construction, which beats a correspondence test that only detects it. *Cost if wrong:* a one-line indirection; the goldens catch any text change.
+18. **Fix `knownAccessors`' *membership* drift too, and add the correspondence test.** Round 2's shared constant closed spelling drift for one string but not membership: `params.surface()` and `params.geometry()` were both emitted by the generator and both refused. The test runs the real `ShaderGenerator → MaterialCodegen` path, brace-matches each stage's `[[visible]]` body out of the generated text, and scans *that* — the same shape as the M7 shim correspondence tests (`f0722c0`, `646e631`). *Cost if wrong:* the predicate accepts two more chains the generator genuinely emits.
+19. **Harden loops by WRAPPING the loop statement in braces, not by extending the refusal.** This differs from ruling 4 deliberately: there, correctness genuinely required parsing, so refusal was the only honest answer; here hardening *can* be made correct — the guard declaration merely needs a scope. Refusal would take away valid MSL for implementation convenience. It was also the only option contained to this task's own file. *Cost if wrong:* an extra brace pair in generated source.
+20. **Close the Expression user-line mapping now rather than tracking it.** `Emitter.swift` was freed when Task 11 landed, which was the only reason it was deferred. Shipping half a feature whose other half is provably untested is worse than one more round. *Cost if wrong:* one extra fix round.
+21. **Promote `CustomCodeValidation`'s dropped line number from Minor to a fix.** It held `Violation.line` and discarded it, so the task's own headline — "errors land on the user's line" — was true only for post-compile diagnostics. *Cost if wrong:* one field threaded through.
+22. **Park `Emitter.swift:239`'s release-build `precondition`.** It looks like the trap withdrawn in P1, and the principle is the same, but the kind differs: P1's would have fired on input the milestone *accepts today*; this one is provably unreachable, since every substitute replacement is a single-line expression. Live vs hypothetical. *Cost if wrong:* a crash instead of a diagnostic on a path nothing can currently reach.
+23. **Extract a single `UniformLayout.liveField(for:)` predicate.** This ruling was made for the *fourth* time in this milestone (after `systemParamNames`, `materialTextureAccessor`, and the `knownAccessors` correspondence test). Accepting comment-asserted agreement here after rejecting it three times would have made those rulings arbitrary. Verified mechanically: `grep "type == .float"` over `Sources/MetalNodesCore` now returns exactly one code hit. *Cost if wrong:* one indirection through a layout method.
+24. **Gate the clearcoat *setter emission* on the socket being wired, not just the availability note.** Rejected the alternative (warn whenever `.clearcoat`): it documents the defect instead of fixing it and leaves every clearcoat user with a raised OS floor, and the note's advice ("remove that socket's wiring") is unactionable when there is no wiring. Semantically safe — RealityKit's default clearcoat normal is the unperturbed surface normal, exactly what the socket's `(0,0,1)` default encodes. Turned into a gate with a `-mmacosx-version-min=14.0` compile pass. *Cost if wrong:* two lines and one amended rule.
+25. **Gate Exit Group *and* Undo/Redo on `canvasFocused || isEditingCode`. — REVERSED.** The reasoning was that ⌘Z inside the code editor never reached `model.undo()`. That is true, and it is *deliberate*: `EditorCommands` uses `CommandGroup(replacing: .undoRedo)`, which replaces AppKit's nil-targeted default, and a nil-targeted action is exactly what lets a focused `NSTextView`'s own undo manager win by routing down the responder chain. Once replaced by a fixed-action `Button`, an **enabled** item fires its key equivalent unconditionally and the field editor never gets a chance. The file's own pre-existing comment said so; it was misread as an oversight. The consequence of the ruling was a **live data-loss path** interacting with the same task's round-1 fix: ⌘Z while typing calls `model.undo()`, and if the popped step touches this definition's body, the watcher reseeds `draft` and drops focus, silently discarding uncommitted keystrokes. Worse than the problem it solved.
+26. **Ruling 25 reversed: Undo/Redo revert to `canvasFocused` only; Exit Group keeps the widened gate.** Inside the code editor ⌘Z is field-editor *text* undo, which is what a text editor should do; document undo stays reachable after clicking out, and ⌘↑ still exits. A comment now sits *at* the gate naming the `CommandGroup(replacing:)` mechanism and tracing the data-loss path — this reasoning has been got wrong twice, and a report will not stop the next person "fixing" it again. *Cost if wrong:* ⌘Z inside the editor does the wrong one of two undos; the comment is the guard.
+
+### 15.3 In-app checklist — NOT RUN
+
+**This is owed to a human. Nothing in it was verified.** The machine's screen was locked (`CGSSessionScreenIsLocked=1`) for every UI task in this milestone and for Task 19; an agent may not unlock it, and did not attempt to. Task 17's fix round 1 is the *only* round in M8 with any live app verification at all, and it predates the `EditorCommands` gate that round 3 settled.
+
+The list below is assembled from five task reports and the ledger, deduplicated, in the order a person should walk it. **It is self-contained — no other file needs reading.** Nothing here is a claim; every line is a question.
+
+#### A. The M8 feature checklist (13 items — plan Task 19 Step 3)
+
+1. **Expression, happy path.** New document → add an Expression node → type `a * b + 0.5`. **Correct:** two sockets appear, named `a` and `b`; wiring two floats in and the output to the Fragment Output makes the preview update, and the generated-code panel shows the formula inlined (no function call). *(Task 19)*
+2. **Expression, error path.** Change the formula to `a * qq`. **Correct:** a red message appears under the field naming `qq`, and the preview keeps its **last good frame** rather than going black. *(Task 19)*
+3. **Expression, reshape.** Change it back to `a * b`. **Correct:** the `qq` socket disappears, the wire that fed it is gone, and ⌘Z brings **both** back. *(Task 19)*
+4. **Custom Code, creation.** ⌃⌘N. **Correct:** a node appears with one input and one output, and the preview still renders. *(Task 19)*
+5. **Custom Code, editing.** Dive in. **Correct:** the canvas is replaced by the code editor showing the starter body; changing line 3 to something with a deliberate typo and clicking out makes the list beneath say **3** and name the identifier. *(Task 19)*
+6. **Custom Code, sockets.** With the definition open, add an output in the inspector, assign to it in the code, wire it up on the parent canvas. **Correct:** it carries a value. *(Task 19)*
+7. **Custom Code, instances.** Place a second instance from the palette; edit the definition once. **Correct:** both instances change, and the generated code contains the function **exactly once**. *(Task 19)*
+8. **Loop cap.** Write `for (int i = 0; i < 100000000; ++i) { out += a * 0.0000001; }`. **Correct:** the app does not hang; the editor still shows the loop **exactly as typed**; the generated-code panel shows the capped form. *(Task 19)*
+9. **Scope breaker.** Write `out = a; }`. **Correct:** the guard refuses it with a message naming the problem, rather than emitting broken MSL. *(Task 19)*
+10. **Clearcoat.** RealityKit target, lighting model Clearcoat, wire Clearcoat to `0.8`. **Correct:** the preview gains a visible sheen, and the caption about the approximation is present. *(Task 19)*
+11. **Custom attribute.** Wire a colour into Custom Attribute and read it back through the Custom Attribute node into Base Color. **Correct:** the preview shows the colour, interpolated across the mesh. *(Task 19)*
+12. **Live parameters.** Mark two floats live. **Correct:** the settings section lists them as `.x` and `.y`; on export the header names them and the `.metal` reads `custom_parameter()`. *(Task 19)*
+13. **Migration.** Open the recovered `Test.mnshader` and one M6-era document. **Correct:** both open, render, and their generated MSL is unchanged from before this milestone. *(Task 19)* — see §15.5 on why this one carries more weight than it looks.
+
+#### B. Checks the code editor's own review left owed (Task 17)
+
+14. **⌘Z mid-typing, inside the editor.** **Correct:** the *text* undoes locally; focus does **not** drop; uncommitted keystrokes do **not** vanish. This is ruling 26's whole subject and has never been observed. *(Task 17, fix round 3)*
+15. **⌘Z after clicking out.** **Correct:** the *document* undo fires — the body edit reverts and the problems list updates. *(Task 17, fix round 3)*
+16. **⌘↑ inside the code editor exits it.** The C2 fix silently removed the only keyboard exit; the re-widened Exit Group gate is supposed to have restored it, and that is structural reasoning, not an observation. *(Task 17, fix round 2)*
+17. **Error persistence after undo.** Type lines ending `out = zz;`, click away, confirm the error appears. Click back in, ⌘Z. **Correct:** the text visibly reverts, and after clicking elsewhere the error does **not** come back. Repeat with File ▸ Revert To Saved. *(Task 17, fix round 2)*
+18. **Continuous typing under a live recompile.** Type for ~5 s without pause while recompiles fire. **Correct:** no lost characters, no focus drop. Never attempted in any round — scripted keystrokes do not reproduce real typing timing. *(Task 17, fix round 2)*
+19. **⌃⌘N after visiting the code editor, three times.** Then ⌘⇧N and a palette double-click. **Correct:** a node appears every time. This is the C2 latch — before the fix, every `requestCanvas`-routed command was dead for the rest of the session. *(Task 17, fix round 2)*
+20. **Definition A → B → A with unsaved edits in each.** **Correct:** each definition's own body is preserved; B's text never lands in A. Structurally settled by a headless SwiftUI probe (handlers fire in declared order); not seen. *(Task 17, fix round 2)*
+
+#### C. Checks the live-parameter and formula UI left owed (Tasks 15, 18)
+
+21. **The Live toggle's appearance next to a float param**, under a RealityKit document. **Correct:** the checkbox reads clearly at `.caption` size; the `custom_parameter().x` label wraps or truncates acceptably; toggling flips it visually and immediately. *(Task 18)*
+22. **Refusing the fifth mark.** With four params already live, tap a fifth "Live" checkbox. **Correct:** the checkbox reverts. **This is the one control in M8 that can visibly lie**, and it cannot be settled from source: the binding's `set:` ignores its argument and calls `toggleLiveParameter`, which on refusal shows a notice and returns `false` *without* touching `document` — and `InspectorView` never reads `model.notice`, so nothing invalidates the body. Whether `Toggle` reconciles get-after-set internally is private AppKit-bridging behaviour. Watch whether it snaps back, lags, or **sticks**. *(Task 18)*
+23. **The document-settings "Live parameters" list.** **Correct:** correct ordering, correct component letters, correct node/param labels; "Unmark" removes the right row (including with a hand-edited duplicate path, now that rows key on offset); the reachability warning appears and disappears as a param's wiring to the terminal changes. *(Task 18)*
+24. **The refusal notice text** — "A material exposes four live values; unmark one first" — appears in the preview pane's diagnostics strip for ~3 s and clears itself. *(Task 18)*
+25. **The clearcoat caption** renders under the segmented Lighting picker **only** when Clearcoat is selected, and reads sensibly alongside the existing Cook-Torrance caption. *(Task 18, carried from Task 13)*
+26. **iPadOS Live toggle.** The `#if os(macOS)` guard means no explicit `.toggleStyle` there. **Correct:** the platform default (likely a switch) does not look out of place at `.caption` next to a slider row, including on unwired-input rows. *(Task 18)*
+27. **Non-RealityKit regression.** On a fragment or stitchable document: **no** Live toggle and **no** live-parameters section appear anywhere, including on the newly-added unwired-input rows. Verified only by reading the `s.target == .realityKit` gate. *(Task 18)*
+28. **The formula field's layout** at 190 pt node width. **Correct:** the 46 pt label and the field fit on one line without truncating either, and `a + b * sin(t)` is legible. *(Task 15)*
+29. **One undo step per formula edit.** Click in, type, click away (or Return). **Correct:** Edit ▸ Undo shows exactly **one** step, not the two some focus sequences could produce. *(Task 15)*
+30. **Duplicate diagnostics render as two rows.** Produce two byte-identical errors (e.g. `return a; return b;` in a Custom MSL body). **Correct:** two rows, not one — `ForEach(id: \.self)` over a `Hashable` `Diagnostic` collides, and *being* `Hashable` is what makes the collision possible. *(Task 15, review finding)*
+31. **Formula error text legibility.** The red/yellow `Label` at `.caption2` against the Dracula surface, with a long compiler message. **Correct:** legible, and it does not overflow the inspector's width. *(Task 15)*
+32. **Node reshape has no visual glitch.** Editing a formula and committing produces a visibly different node — new/removed sockets, resized — cleanly. Confirmed only at the data level. *(Task 15)*
+33. **Socket anchors on a multiline text param.** Zoom out until a node with a formula error is culled, pan back. **Correct:** its wire lands on the socket dot, not 44 pt off. Only manifests for a *multiline* text param, which Task 17's code editor is the first to declare. *(Task 15)*
+34. **iPad autocorrect/autocapitalisation suppression** for a formula like `float3(1,0,0)`. `.autocorrectionDisabled()` and `.textInputAutocapitalization(.never)` are the right calls; only a device confirms iPadOS honours them. **Smart quotes and smart dashes are NOT suppressed** — no SwiftUI API exists (see §15.5); confirm whether iPadOS actually substitutes inside a monospaced field in practice. *(Task 15)*
+
+#### D. Still owed from M6 — and unclosed by M7 and M8 (handoff §13, §14.4)
+
+35. **macOS: drag an image file from Finder onto the canvas.** **Correct:** it becomes a Texture Sample node with that image assigned. Not deliverable by automation.
+36. **macOS: drag a node from the palette onto the canvas.** **Correct:** it lands where it was dropped. XCUITest cannot start an AppKit `NSDraggingSession` (M6 R13).
+37. **iPad with a hardware keyboard — M6 check 14**, the shortcut sweep: ⌘Z / ⇧⌘Z, ⌘C / ⌘V at the viewport centre, ⌘A, ⌫, arrow nudges, ⇧A, Escape, and ⌫ inside a focused parameter field. The Simulator drops synthetic keys in capture mode and routes ⌘ keys to Simulator.app.
+38. **iPad: two-finger pan and pinch-zoom on the canvas**, in all three modes, pinching about the fingers with the LOD swap. Not drivable from a mouse.
+39. **iPad: Slide Over / Split View at compact width.** **Correct:** the inspector collapses and nothing becomes unreachable. Cannot be produced in the Simulator from an agent session.
+
+### 15.4 Defects the reviews caught that the tests did not
+
+The most useful section of §14, kept. Each of these was invisible to a fully green suite.
+
+- **A hardener that emitted `break` outside the loop.** The plan's prose said the guard is "inserted as the first statement of the loop body"; its reference *code* appended a whole new line **after** the loop's source line — which for the common one-physical-line shape `while (a) { x += 1; }` puts the `break` outside the braces. Compiling a 14-shape matrix: 8 of 14 naive outputs fail with `'break' statement not in loop or switch statement`, **including the plan's own GPU test body**. Worse, for a loop whose `{` is on the next line, the naive version inserts the check *between header and brace* — which **compiles clean** and then runs the body exactly once, unconditionally, after an empty loop. Silent wrong pixels, no diagnostic.
+- **An availability macro that made an unwired socket a hard build error.** `set_clearcoat_normal` carries `availability(macos, introduced=15.0, strict)`, and `strict` is an error, not a warning. Emitting it unconditionally under `.clearcoat` meant that picking the Clearcoat lighting model and never touching the Clearcoat Normal socket produced a `.metal` that **fails to compile in the user's own Xcode project** at `-mmacosx-version-min=14.0` — with the export saying nothing, and the availability note (gated on the socket being *wired*) never firing. When the note did fire, its advice — "remove that socket's wiring" — was unactionable, because there was no wiring.
+- **A crash on opening a five-live-parameter document.** A Swift **exclusivity-of-access** runtime trap while pruning dangling live parameters: `document.settings.liveParameters` was mutated while a closure read `document` for lookups. A crash class, not a logic bug, and no test reached it.
+- **⌘Z silently reverting itself in the code editor.** `draft` was seeded only on appear, so document undo fired invisibly and then the focus-loss commit wrote the **stale draft back**. Found by building and driving the real app; no test in this package renders a SwiftUI view.
+- **A canvas command dead for the rest of the session.** The canvas swap latched `canvasRequest`: `canvasHasFocus` was never cleared on unmount, so after one visit to the code editor **every** `requestCanvas`-routed command — ⌃⌘N, ⌘⇧N, zoom, palette double-click, iPad ⌘V — stopped working until an unrelated command happened to clear the latch.
+- **A definition's output named `uv` was a hard Metal error, and the first report dismissed it.** The claim was that C++ shadowing makes it legal. It does not: a local in the function's outermost block is the *same* scope as the parameters. Verified: `redefinition of 'uv' with a different type: 'float' vs 'float2'`.
+- **The plan's own starter body did not compile.** `out = a * 2.0;` — `use of undeclared identifier 'a'`, because a `.msl` definition's inputs are in scope only as `in_<name>`. The validator reports **zero** errors for it; only a real `xcrun metal` compile catches it. This exact defect appeared **three times** in this plan (the Task 8 GPU test body, the Task 16 starter body, and the Task 19 sample body).
+- **A brace-less `do` whose single statement is itself a loop** (`do while (x) { y += 1.0; } while (a);`) swallowed the inner loop entirely — it escaped hardening (unguarded) *and* produced a spurious site at the closing `while (a)`.
+- **Hardening turned valid accepted code into a compile error** where a loop sat in an unbraced `if`/`else`/`case` slot: the spliced guard declaration stole the statement slot, yielding `use of undeclared identifier 'mn_loopGuard0'` — naming a symbol that appears nowhere the user wrote.
+- **The legality predicate refused the generator's own output.** `params.geometry()` and `params.surface()` are both emitted by `MaterialCodegen` and both were `.missing`; `geo.vertex_id()` had **no** legal spelling at all, because it is stored as the expression `int(geo.vertex_id())`; and `.variants` **failed open** when the chosen enum case was nil, making a node legal that reads a missing key in every variant.
+- **`Emitter` dropped `readable` when handing `sys` to a `.custom` body** (`mapValues(\.spelling)`). A body reading `ctx.sys["mouse"]` under RealityKit would have silently received the fill-only literal `float2(0.0, 0.0)` **as data**, while `canEmit` said `.allowed` — a silent wrong value, not the crash the plan assumed.
+- **CRLF collapsed the user-line mapping.** Swift treats `\r\n` as one grapheme, so a Windows-pasted body was seen as a *single* line and every diagnostic reported line 0. Latent for emitted MSL; fatal for the error mapping that is half of this milestone's point.
+- **`GraphValidator` applied pseudo-node rules to a `.msl` body**, and `ShaderGenerator.bake(_:)` rebuilds an `EmitEnvironment` **without** `knownAccessors`, silently defaulting to `[]` — the same "lose a field on rebuild" shape as the `mapValues` bug above.
+- **A new `float4` socket renumbered every uniform slot.** The report claimed "additive-only, no renumbering"; `UniformLayoutBuilder.build` stable-sorts by **alignment descending**, so the new `float4` lands in the float4 group: `p4` changes type, `u.p8 → u.p12`, `u.p5 → u.p7`. Textual only — nothing binds by slot name — but the record would have been false.
+
+**And the reversal.** Ruling 25 was itself a defect the review caught: a fix that would have opened a live data-loss path. See §15.2 rulings 25–26.
+
+### 15.5 M9 starting list
+
+**Gates that do not exist.**
+
+1. **There is no automated backward-compatibility gate, and there never has been.** Confirmed at Task 14: no document fixture exists anywhere in the repo, and `Package.swift` declares no `resources:` on any test target, so one could not be loaded even if written. Pre-M8 documents were verified **by hand** twice — at Task 5 and Task 14, by building detached worktrees at the old commits, writing documents with the old encoder, and decoding them with the new one (all opened; MSL byte-identical by FNV-1a hash). Neither run committed a fixture or a test. **Tasks 6 through 17 had no gate at all**, and M8 is the first milestone with a genuinely breaking format change (`currentFormatVersion` 1 → 2). Commit a fixture corpus and a decode test; it is the highest-value single item on this list.
+2. **Checklist item 13 (migration) is the only thing standing in for that gate right now** — and it has not been run.
+3. Consider `MTL_DEBUG_LAYER=1` on CI's test step (carried unclosed from §14.6 item 8).
+
+**Known behaviour changes M8 shipped that a user may report as bugs.**
+
+4. **An M7-era document using aspect-mode UV under `.realityKit` now fails validation on open**, blocking preview *and* export, with a diagnostic that never mentions the fix (switch the mode picker to Normalized). This **reverses** a documented M7 decision — spec lines 1565 and 1649 justified the fill value as making `aspect` "degenerate to centred UV rather than nonsense". M8 found §23.10 internally inconsistent and picked the refusal side (§24.10). Either add the actionable hint to the diagnostic or revisit the reversal.
+5. **Preview/export divergence when a terminal geometry parameter is set but not wired.** The preview carries the edited value; the export's `hasGeometryWork` counts only non-terminal body lines, so no geometry function is emitted and the surface stage reads RealityKit's zero — while the exported header lists the value as baked. The mechanism predates M8 (`positionOffset` always had it), but Task 14 extended it to a channel where the symptom is a **wrong colour** rather than a silent geometry no-op. Fix candidates: have `hasGeometryWork` also fire when a geometry socket's baked value differs from its declared default, or add a validation warning.
+6. **`MSLScanner.tokenise` still has the CRLF defect.** `LoopHardening.hardened` normalises on entry, but the scanner does not, so `Violation.line` is **0** for every violation in a Windows-pasted body — and `CustomCodeValidation` works around it with its own local normalisation. Fix it at the source.
+
+**What M8 deferred by design.**
+
+7. The code editor's **gutter decoration** (error markers in the margin).
+8. **A second open definition at once** — the editor holds one.
+9. **`#include` of user files** — refused outright today.
+10. **Smart quote / smart dash substitution cannot be suppressed** in a SwiftUI `TextField`: no modifier exists on either platform (verified against both `SwiftUI.swiftinterface` files). It is an `NSTextView`/`UITextView` property, so suppressing it needs a representable. Real limitation, not a bug.
+
+**Performance, measured not guessed.**
+
+11. **Cache `MSLScanner.scopeBreakers` per body hash.** ~600 ns/character over three linear passes plus grapheme segmentation: ~1.85 ms at 50 lines, ~7.6 ms at 200, ~39 ms at 1000. Ten 200-line definitions ≈ 76 ms per recompile; fifty ≈ 386 ms — re-paid on every 150 ms-debounced edit *anywhere* in the document, and `CustomCodeValidation` scans every **authored** definition, not just reachable ones. Off the main actor, so it delays diagnostics rather than dropping frames.
+12. `GraphValidator` rescans every definition body on each debounced recompile, not just the edited one.
+
+**Duplication that will drift.**
+
+13. **`LoopHardening` duplicates ~60 lines of `MSLScanner.loopOpeners`** (`loopBraceSites`/`bracedHeaderBrace`), because offsets were needed while a concurrent task owned the scanner. That constraint is gone, and the duplication **grew** with the brace-wrapping fix (do/while close indices, case-boundary lookahead). Fold `keywordStart`/`braceEnd`/`closeIndex` into the scanner's own opener struct.
+14. `stripComments` and `tokenise` each reimplement `//`-and-`/* */` skipping — equivalent today, verified, duplicated. Pre-existing.
+15. The `xcrun metal --version` probe plus `Process`/`Pipe` boilerplate is copy-pasted across **seven** test files (Task 19 added the seventh). A shared `metalCompiles(_:)` helper removes ~30 lines per site.
+
+**Smaller deferred items, per task.**
+
+- **T2:** `float a, b;` binds only `a`, leaking `b` as a free identifier (ruling 2 — unreachable from an Expression formula).
+- **T3:** `LibraryM3Tests.everyNodeGeneratesAsAOneNodeGraph` gives Expression **zero** coverage — the registry def has no outputs, so the sweep never wires it. `ExpressionEmissionTests` is the only end-to-end coverage of Expression emission.
+- **T4:** `MSLScanner.swift:82-83`'s doc comment says "bound" where it means "free"; no test pins repeated-occurrence substitution (`a * a`), verified working but unasserted.
+- **T5:** `GraphClipboard.currentFormatVersion` left at 1 (ruling 10 — inert either way; revisit together with a paste-failed notice, which does not exist).
+- **T6:** `mslNameCollides`' `.input` branch is the only branch with no test; the `.msl` branch's `layer` handling is dead code (were it live, an output named `layer`, `position` or exactly `<outStruct>` would collide unguarded); `GroupCodegen.systemParamNames` is `internal`.
+- **T8:** `cuts.sorted(by:)`'s tie-break is unstable where two cuts share a column (both orderings emit valid MSL, verified byte-identical across runs — unspecified rather than wrong); `CustomCodeCompileTests` proves "compiles and links", not §24.9's "returns" — no pipeline is dispatched and nothing is read back.
+- **T9:** `Emitter.swift:239`'s `precondition` traps in **release** builds too (ruling 22 — provably unreachable today; a `guard … else { .generated }` softening is the fix); `LoopHardening.harden(_:)` has no production caller; `CustomCodeValidation` scans the **untrimmed** formula while codegen maps the **trimmed** one, so a formula with leading newlines would report line numbers one path apart (unreachable while the field is `.text(multiline: false)`).
+- **T10:** `EmitEnvironment.swift:230` uses `table[c]!` — safe, but iterating pairs removes the force-unwrap.
+- **T11:** `ShaderGenerator.bake(_:)` rebuilds an `EmitEnvironment` without `knownAccessors`, silently defaulting to `[]`.
+- **T14:** the `v0` SSA-name assertions are correctness-fragile (`varCounter` resets per stage and the fixture's colour node happens to land on `v0`); `MaterialCompileTests.swift:119` still asserts only `shader.source.contains("o.customAttribute =")` — the call-shape-only pattern that Task 14's own Critical flagged.
+
+**Build configuration.**
+
+16. `IPHONEOS_DEPLOYMENT_TARGET` is **27.0** in both `MetalNodesKit/Package.swift` and the project, while Xcode Cloud's Xcode 26.6 supports up to 26.5.99. The iOS build succeeds with five warnings on that toolchain. Pre-existing since `2d02436`; adopt the iOS 27 SDK properly or lower the floor, but do it deliberately.
+
+### 15.6 The plan's own defect rate — the transferable lesson
+
+This is a section the handoff has never had, and it is the most portable thing M8 produced.
+
+**Nineteen defects were found in this plan's own briefs.** The ledger's running counter reached fifteen at Task 18; Task 19 found four more in its own brief. They are not typos — each one, followed literally, would have shipped broken code or a test that could never pass:
+
+| # | Task | The brief said | Reality |
+|---|---|---|---|
+| 1 | 2 | three under-approximations in the reference scanner | `/* c */ #include <x>` passed the scan; comments are stripped in phase 3, directives recognised in phase 4 |
+| 2 | 4 | Step 3's emission path was sufficient | `Emitter` read socket decls from the **registry** def, empty by design for Expression, so the output variable was never declared and unwired identifiers emitted `/* ?in.x */` |
+| 3 | 4 | `\bcol\b` matches `col` in `col.rgb` | `\b` is a **Unicode** word boundary and `.` between letters does not break there — it never matches at all |
+| 4 | 5 | three test assertions about the wire format | `EntityID` encodes as a bare UUID string, `Graph` writes arrays, and delete has never cascaded |
+| 5 | 6 | the starter body names the definition's output `out` | the shared epilogue already declares a local `out` — a Metal redeclaration error for the most obvious possible body |
+| 6 | 7 | `Violation.Kind` has three cases | ruling 4 had already added a fourth |
+| 7 | 8 | prose: "inserted as the first statement of the loop body" | its own reference **code** appended a line after the loop — `break` outside the braces, 8 of 14 shapes failing |
+| 8 | 8 | the GPU test body reads `a` | a `.msl` definition's inputs are `in_a` |
+| 9 | 11 | Step 5: use `environment(for: target)` | a `.msl` definition emits as a **group function**, so `params`/`geo` are out of scope under every target — the brief would have declared `params.geometry().normal()` legal and shipped a `.metal` that cannot compile |
+| 10 | 12 | `thePreviewIsUnchangedByMarkingAParameterLive` | compared two **structurally different graphs** (1 vs 2 wired nodes) — it would have failed regardless of correctness |
+| 11 | 13 | the `liveSurfaceSockets` snippet emits the setter unconditionally | the availability note is gated on the socket being wired — the two disagreed, and `strict` availability made it a build error |
+| 12 | 16 | the starter body `out = a * 2.0;` | `use of undeclared identifier 'a'` |
+| 13 | 16 | `aNewDefinitionValidatesClean` | a bare `ShaderDocument()` always lacks a Fragment Output node — it could **never** pass |
+| 14 | 17 | `EditorModel.diagnostics` is `internal(set)` | it was `private(set)` |
+| 15 | 17 | `DefinitionPane` has an add-socket button | it builds an `AddSocketRow` |
+| 16 | 15 | call `.smartQuotesDisabled()` and `.smartDashesDisabled()` | **these SwiftUI modifiers do not exist** on either platform — the implementer grepped both `SwiftUI.swiftinterface` files, found zero matches, and documented the gap rather than fabricating a call |
+| 17 | 19 | modify `Tests/MetalNodesCoreTests/SampleDocumentTests.swift` | no such file exists; the sample assertions live in `LibraryM3Tests` |
+| 18 | 19 | the sample's Custom MSL body `out = c * float3(…)` | `use of undeclared identifier 'c'` — the **third** appearance of defect #8/#12 in one plan |
+| 19 | 19 | the sample "generates for `.realityKit` **and** `.fragment`" | impossible for one document: validation requires the target's own terminal and refuses the other. Asserted instead of the sample's *content*, re-terminated on a Fragment Output |
+
+Three of the nineteen (#1, #7, #9) would have shipped generated Metal that does not compile. Two more (#10, #13) were tests that could never pass. One (#16) instructed the implementer to call an API that does not exist — and the right response, which the implementer gave, was to grep the platform interface and report the gap.
+
+**Eight tests shipped passing regardless of correctness**, each caught only by *mutation* — deliberately breaking the production code and checking that something fails:
+
+| Task | The test | The mutation that left it green |
+|---|---|---|
+| 4 | `twoExpressionsEmitTwoStatements` | its first Expression was orphaned, so `TopoSort`'s dead-code elimination dropped it before codegen ran |
+| 6 | the whole redeclaration fix | reverting **the entire fix** left 409/409 green |
+| 10 | `.variants` legality | fail-open on a nil enum case, untested in **either** direction |
+| 12 | `thePreviewIsUnchangedByMarkingAParameterLive` | (see #10 above — it compared different graphs) |
+| 13 | `thePreviewCarriesASecondLobeUnderClearcoat` | greps the substring `mn_clearcoat`, so it catches a missing **call** but not a missing **definition** |
+| 14 | both halves of the custom-attribute channel | setting the export setter *and* the preview write to `float4(0.0)` each left 875/875 passing — every wired custom attribute would export and preview **black** |
+| 15 | the socket-pruning scope | dropping `$0.key.node != id` — which deletes essentially every wire in the document — left all six new tests green, because the fixture had exactly one wire |
+| 15 / 17 | `bodyRows`; `.setDefinitionBody`'s change classification | `bodyRows` was entirely untested; changing `.topology` to `.cosmetic` (which would mean editing a body **never recompiles**) left 858/858 passing |
+
+**The practice that caught them.** Every review in this milestone was required to *run* something rather than read it: revert the fix and watch the suite; inject a fake and watch it pass unnoticed; compile the generated MSL with real `xcrun metal`; build a detached worktree at the old commit and diff real bytes. Concretely, that is:
+
+1. **Mutate before believing.** A test that does not fail against deliberately broken code is not evidence. The reviewer that added a fifth entry to `systemParamNames` and confirmed *both* the emitted signature and the socket refusal moved with one edit is the pattern; the reviewer that ran the test unmodified and reported "still passes" as coverage is the anti-pattern (Task 14, I1).
+2. **Compile the output, do not grep it.** Six of these defects produce syntactically plausible text. `xcrun metal` found them; substring assertions did not.
+3. **Prefer derivation to a correspondence test, and a correspondence test to a comment.** Four separate rulings in this milestone (13, 17, 18, 23) reduce to the same finding: two lists that must agree with nothing checking that they do is *the* recurring defect shape in this codebase, named in §14.6 as the shared cause of two M7 defects. Deriving one from the other makes disagreement impossible; a correspondence test only makes it detectable; a comment makes it nothing.
+4. **Report what was not run.** Task 17's reviewer found the screen locked, said so three times in three rounds rather than reasoning and calling it verified, and that honesty is why §15.3 above is a usable list instead of a false one.
