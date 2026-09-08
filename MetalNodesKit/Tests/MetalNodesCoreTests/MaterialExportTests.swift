@@ -204,6 +204,37 @@ import Testing
         try expectMetalCompiles(customAttributeDoc)
     }
 
+    /// Spec §25.2 (handoff §15.5 item 5): the preview applies an edited-but-unwired Position
+    /// Offset; the export used to list it as baked and then emit no geometry stage at all.
+    @Test func anEditedUnwiredPositionOffsetEmitsTheGeometryStage() throws {
+        var doc = MaterialFixture.document()
+        let terminal = try #require(doc.root.nodes.values.first { $0.kind == .builtin("output.material") }).id
+        doc.root.nodes[terminal]!.params["positionOffset"] = .float3(.init(0, 1, 0))
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        let src = try #require(shader.exportSource)
+        #expect(src.contains("realitykit::geometry_parameters params"))
+        #expect(src.contains("geo.set_model_position_offset(float3(0.0, 1.0, 0.0));"))
+        #expect(shader.stageFunctionNames[.geometry] != nil)
+        try MetalCompiler.expectCompiles(src, extraArgs: ["-mmacosx-version-min=14.0"], "edited positionOffset")
+    }
+
+    @Test func anEditedUnwiredCustomAttributeEmitsTheGeometryStage() throws {
+        var doc = MaterialFixture.document()
+        let terminal = try #require(doc.root.nodes.values.first { $0.kind == .builtin("output.material") }).id
+        doc.root.nodes[terminal]!.params["customAttribute"] = .float4(.init(0.25, 0.5, 0.75, 1))
+        let src = try #require(ShaderGenerator.generate(doc, target: .realityKit).exportSource)
+        #expect(src.contains("geo.set_custom_attribute(float4(0.25, 0.5, 0.75, 1.0));"))
+    }
+
+    /// The other direction is unchanged: a terminal at its defaults still emits no geometry stage,
+    /// which is what keeps every corpus golden where it is.
+    @Test func aDefaultUnwiredGeometrySocketStillEmitsNoGeometryStage() throws {
+        let doc = MaterialFixture.document()
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(shader.exportSource?.contains("realitykit::geometry_parameters") == false)
+        #expect(shader.stageFunctionNames[.geometry] == nil)
+    }
+
     /// Writes `doc`'s exported `.metal` to a temp file and runs `xcrun -sdk macosx metal -c` over
     /// it, failing the current test with the compiler's stderr on a nonzero exit. `extraArgs` is
     /// spliced in ahead of `-c` — e.g. `-mmacosx-version-min=…`, to pin a real deployment floor

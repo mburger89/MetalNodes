@@ -125,7 +125,8 @@ extension MaterialCodegen {
     static func exportSource(surface: Emitter.Output, geometry: Emitter.Output,
                              groupFunctions: [GroupFunction], terminal: NodeID,
                              lighting: MaterialLightingModel, exportName: String,
-                             textures: [TextureSlot], clearcoatNormalWired: Bool = false) -> String {
+                             textures: [TextureSlot], clearcoatNormalWired: Bool = false,
+                             emitsGeometry: Bool) -> String {
         let names = functionNames(exportName: exportName)
         var b = SourceBuilder()
         b.add("#include <metal_stdlib>")
@@ -162,7 +163,7 @@ extension MaterialCodegen {
         b.add("}")
 
         // Geometry — omitted entirely when nothing reaches Position Offset.
-        if hasGeometryWork(geometry, terminal: terminal) {
+        if emitsGeometry {
             b.add("")
             b.add("[[visible]]")
             b.add("void \(names.geometry)(realitykit::geometry_parameters params) {")
@@ -184,11 +185,22 @@ extension MaterialCodegen {
     }
 
     /// True when the geometry stage does anything but restate its defaults: some node reaches
-    /// Position Offset or Custom Attribute. An offset left at its slot default moves nothing, and
-    /// emitting a modifier that adds a constant zero (and writes an all-zero custom attribute
-    /// nothing reads) would cost the caller a `boundsMargin` conversation for nothing.
-    static func hasGeometryWork(_ geometry: Emitter.Output, terminal: NodeID) -> Bool {
-        geometry.lineOwners.contains { $0 != nil && $0 != terminal }
+    /// Position Offset or Custom Attribute, **or** the terminal's own unwired value for one of
+    /// them has been edited away from its declared default. The preview always applies the
+    /// terminal's value (`MaterialPreviewCodegen.vertexFunction` reads the same
+    /// `inputExpressions`), so the export must too, or the header lists a value the shader never
+    /// applies (spec §25.2, handoff §15.5 item 5). One predicate, read by the export text and by
+    /// `stageFunctionNames`, so they cannot disagree.
+    static func hasGeometryWork(_ geometry: Emitter.Output, terminal: NodeID,
+                                terminalNode: NodeInstance?, registry: NodeRegistry) -> Bool {
+        if geometry.lineOwners.contains(where: { $0 != nil && $0 != terminal }) { return true }
+        guard let terminalNode, case .builtin(let id) = terminalNode.kind, let def = registry[id] else { return false }
+        return liveGeometrySockets.contains { name in
+            guard let decl = def.inputs.first(where: { $0.name == name }),
+                  case .value(let dflt) = decl.default,
+                  let edited = terminalNode.params[name] else { return false }
+            return edited != dflt
+        }
     }
 
     /// True when some statement this stage actually emits names `slot` (`tex0`, `tex1`, …) — the

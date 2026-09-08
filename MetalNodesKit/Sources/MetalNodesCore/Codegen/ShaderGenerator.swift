@@ -229,15 +229,18 @@ public enum ShaderGenerator {
             terminal: terminal, layout: shared.layout, lighting: lighting,
             textures: shared.order, viewerExpression: viewerExpression)
         // The export always uses the document's model, never the viewer's.
+        let emitsGeometry = MaterialCodegen.hasGeometryWork(exportGeometry, terminal: terminal,
+                                                            terminalNode: doc.root.nodes[terminal], registry: registry)
         let export = MaterialCodegen.exportSource(
             surface: exportSurface, geometry: exportGeometry, groupFunctions: groupFunctions,
             terminal: terminal, lighting: doc.settings.lightingModel, exportName: doc.settings.exportName,
             textures: shared.order,
-            clearcoatNormalWired: doc.root.inputs[SocketRef(terminal, "clearcoatNormal")] != nil)
+            clearcoatNormalWired: doc.root.inputs[SocketRef(terminal, "clearcoatNormal")] != nil,
+            emitsGeometry: emitsGeometry)
 
         let names = MaterialCodegen.functionNames(exportName: doc.settings.exportName)
         var stageNames: [MaterialStage: String] = [.surface: names.surface]
-        if MaterialCodegen.hasGeometryWork(exportGeometry, terminal: terminal) {
+        if emitsGeometry {
             stageNames[.geometry] = names.geometry
         }
 
