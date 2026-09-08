@@ -255,14 +255,23 @@ public enum MaterialValidation {
     // MARK: Rule 6 — live parameters
 
     /// A `CustomMaterial` exposes exactly one `float4` (spec §24.6), so `settings.liveParameters`
-    /// may hold at most four entries, and every one of them must itself be a float — a live vector
-    /// or texture path has nowhere to go in that single `float4`. The inspector never offers either
-    /// mistake, but a hand-edited or migrated document can carry one anyway.
+    /// may hold at most four entries, no path may repeat (a duplicate would silently drop one
+    /// component's worth of animation — the header and the Swift snippet would both list and seed
+    /// two components from the same value), and every one of them must itself be a float — a live
+    /// vector or texture path has nowhere to go in that single `float4`. Nothing in this build's
+    /// editor can produce any of the three mistakes yet — the inspector has no Live affordance
+    /// until a later task — but a hand-edited or migrated document can carry one anyway, and this
+    /// rule is what stands between that document and a `.metal` export that fails to compile
+    /// (`length(params.uniforms().custom_parameter().x)` is ambiguous MSL for a float — see
+    /// `fieldType` below).
     ///
     /// A path naming a node the document no longer has is *not* this rule's problem: `EditorModel`
     /// prunes a dangling live parameter the moment its node is deleted
     /// (`EditorModel.pruneLiveParameters`, called from `pruneAfterRemoval`), the same way it prunes
-    /// a dangling viewer or selection. This rule only judges paths that still resolve.
+    /// a dangling viewer or selection. This rule only judges paths that still resolve. (A dangling
+    /// path would not by itself break the export either way — `bakedUniforms` only substitutes for
+    /// a path with a matching `UniformLayout` field, and a path nothing requests has none — but
+    /// leaving the setting to point at nothing is still stale data worth pruning.)
     private static func liveParameterDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry) -> [Diagnostic] {
         let live = doc.settings.liveParameters
         guard !live.isEmpty else { return [] }
@@ -270,6 +279,9 @@ public enum MaterialValidation {
         if live.count > 4 {
             out.append(Diagnostic(.error,
                 "A RealityKit material exposes one float4 — at most four parameters can be live"))
+        }
+        if Set(live).count != live.count {
+            out.append(Diagnostic(.error, "The same parameter is marked live more than once"))
         }
         for path in live {
             guard let type = fieldType(for: path, in: doc, registry: registry), type != .float else { continue }
@@ -280,15 +292,19 @@ public enum MaterialValidation {
         return out
     }
 
-    /// The type a live parameter's path names, resolved the same way `ParamValues.value` finds the
-    /// instance: a declared value param first, then an input socket's own (necessarily concrete —
-    /// nothing wired into it — type). `nil` when the path resolves to neither, which leaves the
-    /// path unjudged rather than wrongly flagged.
+    /// The type a live parameter's path names. Tries the two shapes a `ParamPath` the app itself
+    /// constructs can have — a declared value param, then an unwired input socket's own *concrete*
+    /// type — the same order `ParamValues.value` resolves in. Neither branch answers for a
+    /// **generic** input (`vector.length`'s `v: .generic("T")`, defaulting to `.float2`): its
+    /// declared type is a type variable, not a `SocketType`, so this falls back to the value
+    /// `ParamValues.value` itself would bake there — the same lookup `bakedUniforms` uses — whose
+    /// `.socketType` is concrete. Only truly unresolvable paths (an id nothing in the document owns)
+    /// come back `nil`, left unjudged rather than wrongly flagged.
     private static func fieldType(for path: ParamPath, in doc: ShaderDocument, registry: NodeRegistry) -> SocketType? {
         guard let nodeID = path.instancePath.first, let (inst, gpath) = doc.node(nodeID),
               let shape = doc.shape(of: inst, in: gpath, registry: registry) else { return nil }
         if let p = shape.param(named: path.param), case .value(let t, _) = p.kind { return t }
         if let decl = shape.input(named: path.param), case .concrete(let t) = decl.type { return t }
-        return nil
+        return ParamValues.value(for: path, in: doc, registry: registry)?.socketType
     }
 }

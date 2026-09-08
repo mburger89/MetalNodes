@@ -81,9 +81,65 @@ import Testing
         #expect(errs.contains { $0.message.lowercased().contains("float") })
     }
 
+    /// `vector.length`'s `v` is declared `.generic("T")`, defaulting to `.float2` — its declared
+    /// type has no concrete answer on its own, unlike `input.color`'s `value` above. Before
+    /// `MaterialValidation.fieldType` fell back to `ParamValues.value(...).socketType`, this path
+    /// resolved to `nil` and slipped through unjudged: `GraphValidator.validate` reported zero
+    /// diagnostics, and the export emitted `length(params.uniforms().custom_parameter().x)`, which
+    /// `xcrun -sdk macosx metal -c` refuses — "call to 'length' is ambiguous" — with nothing in the
+    /// editor having said why.
+    @Test func aGenericVectorLiveParameterIsRefused() {
+        var doc = document(live: 0)
+        let length = NodeInstance(kind: .builtin("vector.length"), position: .zero)
+        doc.root.nodes[length.id] = length
+        doc.settings.liveParameters = [ParamPath(node: length.id, param: "v")]
+        let errs = GraphValidator.validate(document: doc, registry: .builtin, target: .realityKit)
+            .filter { $0.severity == .error }
+        #expect(errs.contains { $0.message.lowercased().contains("float") })
+    }
+
+    @Test func duplicateLiveParametersAreRefused() {
+        var doc = document(live: 1)
+        doc.settings.liveParameters = [doc.settings.liveParameters[0], doc.settings.liveParameters[0]]
+        let errs = GraphValidator.validate(document: doc, registry: .builtin, target: .realityKit)
+            .filter { $0.severity == .error }
+        #expect(errs.contains { $0.message.lowercased().contains("more than once") })
+    }
+
+    /// Pins the actual seeded values (and their order), not just the substring "custom.value" —
+    /// that substring alone is satisfied by this task's own doc comment above the setter
+    /// ("`material.custom.value` carries the live parameters below"), so a version of this test
+    /// that only checked `contains("custom.value")` passed even when the setter emission itself was
+    /// deleted entirely. Verified against that mutation while fixing this: replacing the setter
+    /// line's body with a no-op left all tests in this file passing except this one.
     @Test func theSwiftSnippetExposesTheLiveValues() throws {
         let files = try ShaderExport.files(for: document(live: 2))
         let swift = try #require(files.first { $0.name.hasSuffix(".swift") })
-        #expect(swift.contents.contains("custom.value"))
+        #expect(swift.contents.contains("material.custom.value = SIMD4<Float>(0.0, 0.25, 0.0, 0.0)"))
+    }
+
+    /// A live parameter's input rewired away after being marked live has no matching
+    /// `UniformLayout` field — `bakedUniforms` never substitutes for it, so the `.metal` reads no
+    /// `custom_parameter()` at all. The header and the Swift snippet must not document or seed a
+    /// component the export doesn't touch either, or the reader writes to `.x` from Swift and
+    /// nothing animates, with nothing saying why.
+    @Test func aLiveParameterWhoseNodeIsNoLongerWiredIsNotDocumentedOrSeeded() throws {
+        var doc = document(live: 1)
+        let live = doc.root.nodes.values.first { $0.kind == .builtin("input.float") }!
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        let other = NodeInstance(kind: .builtin("input.float"), position: .zero)
+        doc.root.nodes[other.id] = other
+        doc.root.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(other.id, "out")
+        // `doc.settings.liveParameters` still names `live`'s "value" — nothing rewires the
+        // setting itself, only the graph moves out from under it.
+        #expect(doc.settings.liveParameters == [ParamPath(node: live.id, param: "value")])
+
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(!(shader.exportSource ?? "").contains("custom_parameter()"))
+        let files = try ShaderExport.files(for: doc)
+        let metal = try #require(files.first { $0.name.hasSuffix(".metal") })
+        let swift = try #require(files.first { $0.name.hasSuffix(".swift") })
+        #expect(!metal.contents.contains("Live parameters"))
+        #expect(!swift.contents.contains("custom.value"))
     }
 }

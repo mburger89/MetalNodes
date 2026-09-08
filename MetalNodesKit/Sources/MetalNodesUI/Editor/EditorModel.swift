@@ -484,12 +484,23 @@ public final class EditorModel {
     }
 
     /// A live parameter names a node by id (spec §24.6). Once that node is gone — deleted outright,
-    /// or carried off with a whole definition — the export would otherwise emit
-    /// `params.uniforms().custom_parameter().x` for a slot nothing in the graph writes anymore.
+    /// or carried off with a whole definition — pruning it is hygiene rather than a correctness
+    /// fix: a dangling path requests no uniform slot (`bakedUniforms` only substitutes for a path
+    /// with a matching `UniformLayout` field, and nothing asks for one on behalf of a node that no
+    /// longer exists), so the export was never going to read a value nothing writes. Left unpruned
+    /// it is just stale data — a setting pointing at nothing, documented and seeded by nothing
+    /// (`MaterialExport.liveParameters(for:document:)` filters it out the same way) — the same
+    /// reason `pruneSelection`/`pruneViewer` drop their own dangling references rather than let a
+    /// gone id linger in view state or settings.
+    ///
     /// Called from every case that can remove a node, the same way `pruneViewer`/`pruneSelection`
     /// are: unlike those, this is document data rather than view state, so it does not go through
     /// `.setSettings` and carries no separate undo step of its own — it lands in the same undo
-    /// group as whatever removal triggered it.
+    /// group as whatever removal triggered it. `reload(package:)` is the one caller where that
+    /// matters: it replaces `document` wholesale and clears the undo stack in the same call, so a
+    /// reverted-to file that happens to carry a dangling live parameter (hand-edited, or written by
+    /// a build with a bug of its own) is silently cleaned up with nothing to undo — the in-memory
+    /// document quietly diverges from the bytes just read until the next save overwrites them.
     private func pruneLiveParameters() {
         // `doc` is a snapshot read before the mutation below, not `document` itself: the removal
         // closure's own lookups must not reach back through `self.document` while

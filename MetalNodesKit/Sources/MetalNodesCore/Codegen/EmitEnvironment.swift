@@ -252,21 +252,34 @@ public struct EmitEnvironment: Sendable {
         sys.compactMapValues { $0.readable ? $0.spelling : nil }
     }
 
+    /// `custom_parameter()`'s four components, in the order `settings.liveParameters` fills them
+    /// (spec §24.6): index 0 is `.x`, and so on. The one spelling `bakedUniforms` below and
+    /// `MaterialExport`'s header/snippet both index into, so the two can never drift apart — this
+    /// milestone has already paid for two hand-kept copies of one fact going out of step more than
+    /// once (spec §24.5, §24.10).
+    public static let liveParameterComponents = ["x", "y", "z", "w"]
+
     /// Uniform reads spelled as the value the document holds right now (spec §23.6), except a field
     /// whose path is one of `document.settings.liveParameters` (spec §24.6): that one reads the
     /// `CustomMaterial`'s single `float4` instead of a literal, at the component its index in the
     /// list picks — 0 is `.x`, 1 is `.y`, and so on — so up to four parameters can animate from
-    /// Swift without a re-export. Snapshotted against `layout` up front so the returned closure
-    /// captures only strings and stays `Sendable`.
+    /// Swift without a re-export.
+    ///
+    /// Gated on `f.type == .float`: `MaterialValidation.liveParameterDiagnostics` refuses a
+    /// non-float live path before this ever runs, but if that check ever missed one (or a caller
+    /// reaches this without validating first), the wrong move is to fall through to a normal baked
+    /// literal, not to spell `custom_parameter().x` for a `float2` field — `length(float)` is
+    /// ambiguous MSL, and a silently mistyped accessor is worse than a value that just doesn't
+    /// animate. Snapshotted against `layout` up front so the returned closure captures only strings
+    /// and stays `Sendable`.
     public static func bakedUniforms(layout: UniformLayout, document: ShaderDocument,
                                      registry: NodeRegistry) -> @Sendable (UniformField) -> String {
         let live = document.settings.liveParameters
-        let components = ["x", "y", "z", "w"]
         var mutableLiterals: [String: String] = [:]
         for f in layout.fields {
             guard let path = f.path else { continue }
-            if let index = live.firstIndex(of: path), index < components.count {
-                mutableLiterals[f.name] = "params.uniforms().custom_parameter().\(components[index])"
+            if f.type == .float, let index = live.firstIndex(of: path), index < liveParameterComponents.count {
+                mutableLiterals[f.name] = "params.uniforms().custom_parameter().\(liveParameterComponents[index])"
                 continue
             }
             let value = ParamValues.value(for: path, in: document, registry: registry)

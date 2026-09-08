@@ -128,7 +128,29 @@ import Testing
         g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(color.id, "out")
         g.inputs[SocketRef(terminal.id, "positionOffset")] = SocketRef(offset.id, "out")
         doc.root = g
+        try expectMetalCompiles(doc)
 
+        // Task 12 (spec §24.6): a live parameter changes what a field's `Uniforms` accessor spells
+        // (`params.uniforms().custom_parameter().x` instead of a literal) — its own `.metal` shape,
+        // unexercised by the document above, which has none.
+        var liveDoc = ShaderDocument()
+        liveDoc.settings.target = .realityKit
+        liveDoc.settings.exportName = "liveCompileCheck"
+        var lg = Graph()
+        let liveTerminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        var rough = NodeInstance(id: NodeID(), kind: .builtin("input.float"), position: .zero)
+        rough.params["value"] = .float(0.4)
+        lg.nodes[liveTerminal.id] = liveTerminal
+        lg.nodes[rough.id] = rough
+        lg.inputs[SocketRef(liveTerminal.id, "roughness")] = SocketRef(rough.id, "out")
+        liveDoc.root = lg
+        liveDoc.settings.liveParameters = [ParamPath(node: rough.id, param: "value")]
+        try expectMetalCompiles(liveDoc)
+    }
+
+    /// Writes `doc`'s exported `.metal` to a temp file and runs `xcrun -sdk macosx metal -c` over
+    /// it, failing the current test with the compiler's stderr on a nonzero exit.
+    private func expectMetalCompiles(_ doc: ShaderDocument) throws {
         let file = try #require(ShaderExport.files(for: doc).first { $0.name.hasSuffix(".metal") })
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-materialexport-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -140,7 +162,7 @@ import Testing
         let err = Pipe(); metal.standardError = err; metal.standardOutput = FileHandle.nullDevice
         try metal.run(); metal.waitUntilExit()
         let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        #expect(metal.terminationStatus == 0, "\(log)")
+        #expect(metal.terminationStatus == 0, "\(doc.settings.exportName): \(log)")
     }
 }
 
@@ -151,7 +173,7 @@ import Testing
 /// `terminationStatus == 0`, which would not catch a *warning* (a `var` the snippet never mutates
 /// typechecks fine — it only warns). This one also fails on any `warning:` line on stderr.
 @Suite struct MaterialExportSwiftTypecheckTests {
-    private func doc(exportName: String, offset: Bool, texture: Bool) -> ShaderDocument {
+    private func doc(exportName: String, offset: Bool, texture: Bool, live: Bool = false) -> ShaderDocument {
         var d = ShaderDocument()
         d.settings.target = .realityKit
         d.settings.exportName = exportName
@@ -168,25 +190,39 @@ import Testing
             g.nodes[s.id] = s
             g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(s.id, "color")
         }
+        if live {
+            // Exercises the `hasLive` branch `swiftSnippet` gained in Task 12 (spec §24.6): a
+            // `var material` built even with no texture, and the `material.custom.value =
+            // SIMD4<Float>(...)` setter — neither existed before that task, and neither was
+            // covered by this gate until now.
+            let f = NodeInstance(id: NodeID(), kind: .builtin("input.float"), position: .zero)
+            g.nodes[f.id] = f
+            g.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(f.id, "out")
+            d.settings.liveParameters = [ParamPath(node: f.id, param: "value")]
+        }
         d.root = g
         return d
     }
 
     /// Covers all four code paths the geometry/texture flags select, since each takes a different
-    /// route through `swiftSnippet`.
+    /// route through `swiftSnippet` — plus the two live-parameter paths Task 12 added: live alone
+    /// (the `hasLive`-but-not-`hasTexture` branch) and live with a texture (both flags true at
+    /// once, which `hasTexture || hasLive`'s shared `var material` path must still handle cleanly).
     @Test func theGeneratedSwiftTypechecksWithNoWarningsForEveryStagePathWhenSwiftcIsAvailable() throws {
         guard xcrunSucceeds(["swiftc", "--version"]) else { return }
         let sdk = capture(["--show-sdk-path", "--sdk", "macosx"])?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sdk, !sdk.isEmpty else { return }
 
-        let variants: [(name: String, offset: Bool, texture: Bool)] = [
-            ("noGeometryNoTexture", false, false),
-            ("geometryOnly", true, false),
-            ("textureOnly", false, true),
-            ("geometryAndTexture", true, true),
+        let variants: [(name: String, offset: Bool, texture: Bool, live: Bool)] = [
+            ("noGeometryNoTexture", false, false, false),
+            ("geometryOnly", true, false, false),
+            ("textureOnly", false, true, false),
+            ("geometryAndTexture", true, true, false),
+            ("live", false, false, true),
+            ("liveAndTexture", false, true, true),
         ]
         for v in variants {
-            let d = doc(exportName: v.name, offset: v.offset, texture: v.texture)
+            let d = doc(exportName: v.name, offset: v.offset, texture: v.texture, live: v.live)
             let shader = try ShaderGenerator.generate(d, target: d.settings.target)
             let snippet = MaterialExport.swiftSnippet(for: shader, document: d, registry: .builtin)
 
