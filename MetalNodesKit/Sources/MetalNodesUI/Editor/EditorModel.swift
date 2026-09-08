@@ -46,7 +46,10 @@ public final class EditorModel {
     public let registry: NodeRegistry
     public let pasteboard: any Pasteboarding
     public nonisolated static let pasteboardType = "com.maxburger.metalnodes.graph"
-    public private(set) var diagnostics: [Diagnostic] = []
+    // `internal(set)`, not `private(set)`: the code editor's tests (Task 17) stage a diagnostic
+    // state directly — `m.diagnostics = […]` — without driving a real compile, and `@testable
+    // import` only reaches as far as `internal`.
+    public internal(set) var diagnostics: [Diagnostic] = []
     public private(set) var generatedSource = ""
     /// Alongside `generatedSource`, for the code panel's selected-node line highlight (spec §21.5).
     public private(set) var generatedLineMap = LineMap()
@@ -406,6 +409,8 @@ public final class EditorModel {
         case .deleteDefinition(let id):
             document = GroupOperations.deleteDefinition(id, in: document) ?? document
             pruneAfterRemoval()
+        case .setDefinitionBody(let id, let text):
+            document.definitions[id]?.body = .msl(text)
         case .addDefinition(let def):
             document.definitions[def.id] = def
         case .setSettings(let s):
@@ -637,6 +642,28 @@ public final class EditorModel {
     public func socketLabel(_ ref: SocketRef) -> String {
         guard let n = document.node(ref.node)?.node, let s = shape(of: ref.node) else { return ref.socket }
         return "\(n.customTitle ?? s.title).\(ref.socket)"
+    }
+
+    // MARK: The code editor (spec §24.3, §24.4, Task 17)
+
+    /// A `.msl` definition's body text, verbatim — never hardened or rewritten (Global
+    /// Constraints). Empty for a `.graph` definition or an unknown id.
+    public func codeBody(for id: GroupID) -> String {
+        if case .msl(let s)? = document.definitions[id]?.body { return s }
+        return ""
+    }
+
+    /// The error list under the code editor. `userLine` is 1-based in the user's own text; a
+    /// diagnostic without one came from generated scaffolding and sorts to the top as line 0.
+    /// A diagnostic naming *another* definition is not this editor's problem and is dropped;
+    /// one naming no definition at all is kept, because a body that fails to compile often
+    /// reports against the function's signature line rather than inside the spliced text.
+    public func codeDiagnostics(for id: GroupID)
+        -> [(line: Int, message: String, severity: Diagnostic.Severity)] {
+        diagnostics
+            .filter { $0.definition == nil || $0.definition == id }
+            .map { (line: $0.userLine ?? 0, message: $0.message, severity: $0.severity) }
+            .sorted { $0.line < $1.line }
     }
 }
 

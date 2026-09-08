@@ -65,6 +65,15 @@ public enum GroupOperations {
         }
     }
 
+    /// Whether `candidate` would collide with the generated function's own parameter list, were
+    /// it `kind`'s new name on `def` — the system parameters (`uv`, `time`, `size`, `mouse`) or
+    /// the other namespace's `in_<name>` spelling. Public so the editor's socket-name UI (Task
+    /// 17) can give a specific "this name is reserved" reason for an `addSocket`/`renameSocket`
+    /// refusal, rather than a generic one — the caller sees only `nil` from either.
+    public static func mslReservedSocketName(_ candidate: String, kind: SocketKind, in def: GroupDefinition) -> Bool {
+        mslNameCollides(candidate, kind: kind, def: def)
+    }
+
     public static func group(_ ids: Set<NodeID>, in path: GraphPath, of doc: ShaderDocument, registry: NodeRegistry,
                              name: String?) -> (document: ShaderDocument, definition: GroupID, instance: NodeID)? {
         let g = doc[path]

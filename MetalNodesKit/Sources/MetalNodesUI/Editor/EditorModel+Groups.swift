@@ -35,7 +35,8 @@ extension EditorModel {
     /// Creates a Custom MSL definition and places one instance of it, as a single undo step. `nil`
     /// — the active graph is itself a `.msl` definition's inert "canvas" (Task 16's HARD
     /// REQUIREMENT; `apply` refuses the whole change before either half lands) — when the document
-    /// could not take the new definition and its instance together.
+    /// could not take the new definition and its instance together. Explained with a notice
+    /// (Task 17's HARD REQUIREMENT): the refusal was silent through Task 16.
     @discardableResult
     public func newCustomCodeDefinition(at point: CGPoint) -> GroupID? {
         var def = GroupDefinition(name: GroupOperations.uniqueDefinitionName("Custom Code", in: document))
@@ -45,7 +46,10 @@ extension EditorModel {
         let instance = NodeInstance(kind: .group(def.id), position: point)
         // One change, so one undo step covers the definition and its instance together.
         apply(.insert(nodes: [instance], edges: [], definitions: [def]))
-        guard document.definitions[def.id] != nil else { return nil }
+        guard document.definitions[def.id] != nil else {
+            showNotice("Exit this Custom Code definition first — one can't hold another")
+            return nil
+        }
         select(instance.id)
         return def.id
     }
@@ -182,6 +186,60 @@ extension EditorModel {
     /// The active graph's shapes, as `NodeGeometry` and `DropResolver` take them.
     private var activeShapes: (NodeInstance) -> NodeShape? { { self.shape(of: $0) } }
 
+    // MARK: A definition's own socket editor (spec §20.6, §24.3; Task 17's HARD REQUIREMENT)
+
+    /// Adds a socket directly on `id` — a `.msl` definition's own way of gaining one, since it has
+    /// no pseudo-node `+` to wire into (`expose(_:in:decl:name:edge:)` is the `.graph` counterpart,
+    /// reached by dragging a wire). Returns the name it actually landed under, uniqued against its
+    /// siblings by `GroupOperations.addSocket`, or `nil` with a notice explaining why — a name
+    /// reserved by the generated function's own parameter list, or (an output) a texture type,
+    /// which no `.msl` result struct can express.
+    @discardableResult
+    public func addSocket(to id: GroupID, kind: SocketKind, decl: SocketDecl) -> String? {
+        guard let def = document.definitions[id] else { return nil }
+        let before = (kind == .input ? def.inputs : def.outputs).count
+        apply(.addSocket(id, kind, decl))
+        let after = kind == .input ? document.definitions[id]?.inputs : document.definitions[id]?.outputs
+        guard let after, after.count == before + 1 else {
+            if kind == .output, decl.type == .concrete(.texture) {
+                showNotice("An output can't be a texture — a “.msl” result can only hold plain values")
+            } else {
+                showNotice(reservedSocketNotice(StitchableCodegen.sanitizedName(decl.name), kind: kind))
+            }
+            return nil
+        }
+        return after.last?.name
+    }
+
+    /// Renames a socket directly on `id` — what `SocketRow`'s rename field commits through.
+    /// Returns whether it actually landed; on `false` the caller should snap its draft back, as it
+    /// already did, but now with a notice up rather than a silent revert. A no-op rename (the
+    /// sanitised name already matches `old`) counts as landed — there is nothing to explain.
+    @discardableResult
+    public func renameSocket(_ id: GroupID, _ kind: SocketKind, from old: String, to newName: String) -> Bool {
+        guard let def = document.definitions[id] else { return false }
+        let sanitized = StitchableCodegen.sanitizedName(newName)
+        guard sanitized != old else { return true }
+        apply(.renameSocket(id, kind, from: old, to: newName))
+        let names = (kind == .input ? document.definitions[id]?.inputs : document.definitions[id]?.outputs)?.map(\.name) ?? []
+        guard !names.contains(old), names.contains(sanitized) else {
+            if GroupOperations.mslReservedSocketName(sanitized, kind: kind, in: def) {
+                showNotice(reservedSocketNotice(sanitized, kind: kind))
+            } else {
+                showNotice("“\(sanitized)” is already the name of another \(kind == .input ? "input" : "output")")
+            }
+            return false
+        }
+        return true
+    }
+
+    /// The message for a name the generated function's own signature already uses (spec §24.5's
+    /// system parameters, or the other namespace's `in_<name>` spelling) — says what to do, not
+    /// just what failed, since the reader is the person who has to pick another name right now.
+    private func reservedSocketNotice(_ name: String, kind: SocketKind) -> String {
+        "“\(name)” is reserved — the generated function already has a parameter by that name. Pick a different \(kind == .input ? "input" : "output") name."
+    }
+
     // MARK: Placement
 
     /// Places an instance of `id` in the active graph; refused with a notice when it would make a
@@ -200,7 +258,13 @@ extension EditorModel {
         // for a node that was never actually inserted would be worse than the honest `nil` above:
         // the caller (a palette drag-and-drop, `GraphCanvasView.swift`) would report an accepted
         // drop that did nothing, and `select` below would select a phantom id.
-        guard graph.nodes[n.id] != nil else { return nil }
+        guard graph.nodes[n.id] != nil else {
+            // The only way `.addNode` can land here refused is the canvas gate: nothing else makes
+            // `perform` a no-op for it. Task 17's HARD REQUIREMENT: explain it rather than repeat
+            // Task 16's silent `nil`.
+            showNotice("A Custom Code definition can't hold other nodes — exit it first")
+            return nil
+        }
         select(n.id)
         return n.id
     }

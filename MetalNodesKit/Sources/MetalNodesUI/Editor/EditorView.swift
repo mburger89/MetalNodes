@@ -63,7 +63,11 @@ public struct EditorView: View {
     private var canvasColumn: some View {
         VStack(spacing: 0) {
             BreadcrumbBar(model: model)
-            GraphCanvasView(model: model)
+            if model.isEditingCode, case .definition(let id) = model.activePath {
+                CodeEditorView(model: model, definition: id)
+            } else {
+                GraphCanvasView(model: model)
+            }
         }
     }
 

@@ -40,6 +40,10 @@ public enum DocumentChange: Sendable {
     case renameSocket(GroupID, SocketKind, from: String, to: String)
     case removeSocket(GroupID, SocketKind, String)
     case deleteDefinition(GroupID)
+    /// Replaces a `.msl` definition's whole body text — the code editor's one write (spec §24.4,
+    /// Task 17). Classified `.topology`, not `.parameter`: the body decides what the function
+    /// computes and which identifiers it needs, not a tunable value inside an unchanged program.
+    case setDefinitionBody(GroupID, String)
 
     // MARK: Comments (spec §21.4)
 
@@ -70,7 +74,7 @@ public enum DocumentChange: Sendable {
         case .setParam(_, _, let v): v.isUniformable ? .parameter : .topology
         case .connect, .disconnect, .addNode, .removeNodes, .insert, .restore, .groupSelection, .ungroup,
              .makeUnique, .renameDefinition, .addSocket, .renameSocket, .removeSocket, .deleteDefinition,
-             .addDefinition: .topology
+             .addDefinition, .setDefinitionBody: .topology
         }
     }
 
@@ -96,7 +100,7 @@ public enum DocumentChange: Sendable {
         // Definition- and document-scoped: never read or write `path`, so still legal while the
         // active graph is a `.msl` definition's inert canvas.
         case .setSettings, .addDefinition, .renameDefinition, .setDefinitionAccent, .addSocket,
-             .renameSocket, .removeSocket, .deleteDefinition, .restore:
+             .renameSocket, .removeSocket, .deleteDefinition, .restore, .setDefinitionBody:
             false
         }
     }
@@ -124,6 +128,7 @@ public enum DocumentChange: Sendable {
         case .renameSocket: "Rename Socket"
         case .removeSocket: "Remove Socket"
         case .deleteDefinition: "Delete Group"
+        case .setDefinitionBody: "Edit Code"
         case .addSticky: "Add Note"
         case .updateSticky: "Edit Note"
         case .addFrame: "Add Frame"

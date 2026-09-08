@@ -135,8 +135,18 @@ struct DefinitionPane: View {
         .pickerStyle(.menu)
         .font(.caption)
 
-        socketList("Inputs", kind: .input, decls: def.inputs)
-        socketList("Outputs", kind: .output, decls: def.outputs)
+        let isCode = { if case .msl = def.body { true } else { false } }()
+
+        socketList("Inputs", kind: .input, decls: def.inputs, allowsAdding: isCode)
+        socketList("Outputs", kind: .output, decls: def.outputs, allowsAdding: isCode)
+
+        // A code definition's sockets *are* its function signature: renaming an input renames the
+        // parameter the user's own text reads (spec §24.3), and there is no pseudo-node `+` to add
+        // one by wiring — `AddSocketRow` below is the only way it gains a new one (Task 17).
+        if isCode {
+            Text("Input names are the variables your code reads; output names are what it assigns to.")
+                .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+        }
 
         Divider()
         Button("Delete definition") { model.apply(.deleteDefinition(id)) }
@@ -148,15 +158,20 @@ struct DefinitionPane: View {
         }
     }
 
-    /// Sockets are added by wiring into a pseudo-node's `+` (spec §20.6); this pane renames and removes.
+    /// A `.graph` definition's sockets are added by wiring into a pseudo-node's `+` (spec §20.6);
+    /// this pane renames and removes them either way, and — only for a `.msl` definition, which has
+    /// no pseudo-node to wire into — also adds them, through `AddSocketRow`.
     @ViewBuilder
-    private func socketList(_ title: String, kind: SocketKind, decls: [SocketDecl]) -> some View {
+    private func socketList(_ title: String, kind: SocketKind, decls: [SocketDecl], allowsAdding: Bool) -> some View {
         Divider()
         Text(title).font(.caption.bold()).foregroundStyle(DraculaToken.muted.color)
-        if decls.isEmpty {
+        if decls.isEmpty && !allowsAdding {
             Text("None").font(.caption2).foregroundStyle(DraculaToken.muted.color)
         } else {
             ForEach(decls, id: \.name) { SocketRow(model: model, group: id, kind: kind, decl: $0) }
+        }
+        if allowsAdding {
+            AddSocketRow(model: model, group: id, kind: kind)
         }
     }
 
@@ -201,10 +216,55 @@ private struct SocketRow: View {
     private func commit() {
         let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name != decl.name else { draft = decl.name; return }
-        model.apply(.renameSocket(group, kind, from: decl.name, to: name))
-        // A clash — or a name that sanitises to the one it already has — leaves the definition
-        // untouched and this row alive, so put the field back to the name it still carries. On a
+        // A clash — or a reserved name on a `.msl` definition — leaves the definition untouched
+        // and this row alive; `model.renameSocket` puts a notice up explaining why (Task 17's
+        // HARD REQUIREMENT — this used to snap the field back with no explanation at all). On a
         // successful rename the row is rebuilt under the new name and this write goes with it.
+        model.renameSocket(group, kind, from: decl.name, to: name)
         draft = decl.name
+    }
+}
+
+/// A `.msl` definition's only way to gain a new socket (Task 17): there is no pseudo-node `+` to
+/// wire into, since its "canvas" is text, not a graph (spec §24.3). Routes through
+/// `EditorModel.addSocket(to:kind:decl:)`, which is `GroupOperations.addSocket` plus a notice —
+/// never straight through `apply`, so the reserved-name guard is never bypassed.
+private struct AddSocketRow: View {
+    let model: EditorModel
+    let group: GroupID
+    let kind: SocketKind
+    @State private var name = ""
+    @State private var type: SocketType = .float
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField(kind == .input ? "New input" : "New output", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(add)
+            Picker("Type", selection: $type) {
+                ForEach(typeOptions, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            Button(action: add) { Image(systemName: "plus.circle") }
+                .buttonStyle(.plain)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Add \(kind == .input ? "input" : "output")")
+        }
+    }
+
+    /// A texture-typed output has no valid `.msl` result-struct field (`GroupOperations.addSocket`'s
+    /// own guard); left off the picker so the common path never has to read the notice explaining it.
+    private var typeOptions: [SocketType] {
+        kind == .output ? SocketType.allCases.filter { $0 != .texture } : SocketType.allCases
+    }
+
+    private func add() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let decl = SocketDecl(name: trimmed, type: .concrete(type),
+                              default: kind == .input ? .value(GroupOperations.zero(type)) : .required)
+        if model.addSocket(to: group, kind: kind, decl: decl) != nil { name = "" }
     }
 }

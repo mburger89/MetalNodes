@@ -132,6 +132,10 @@ import CoreGraphics
     /// `addInstance(of:at:)` must not report success for a node the gate refused to insert — a
     /// non-`nil` id the graph never actually holds would tell a palette drag-and-drop it landed
     /// when it did nothing (spec — Task 16 fix round 1, IMPORTANT 2).
+    ///
+    /// Task 16 left this refusal silent on purpose and pinned `m.notice == nil` here as the
+    /// honest record of that gap; Task 17's HARD REQUIREMENT is to close it, so this pin is
+    /// superseded — the refusal must now explain itself (spec §20.8's `showNotice` pattern).
     @Test func placingAnUnrelatedDefinitionInsideACodeDefinitionIsHonestlyRefused() throws {
         let m = model()
         let codeID = try #require(m.newCustomCodeDefinition(at: .zero))
@@ -147,6 +151,171 @@ import CoreGraphics
         let placed = m.addInstance(of: other.id, at: .zero)
         #expect(placed == nil)
         #expect(m.graph.nodes.count == nodesBefore)
+        #expect(m.notice != nil)
+    }
+
+    // MARK: HARD REQUIREMENT (Task 17) — the silent refusals get a `showNotice` explanation.
+
+    /// A second Custom Code node while already inside one's editor is refused by the HARD
+    /// REQUIREMENT gate (Task 16); Task 17 must not let that refusal stay silent.
+    @Test func creatingANestedCodeNodeShowsANotice() throws {
+        let m = model()
+        let outerID = try #require(m.newCustomCodeDefinition(at: .zero))
+        m.editDefinition(outerID)
         #expect(m.notice == nil)
+        let created = m.newCustomCodeDefinition(at: CGPoint(x: 10, y: 10))
+        #expect(created == nil)
+        #expect(m.notice != nil)
+    }
+
+    /// Renaming a socket to a name the generated function's own signature already uses (spec
+    /// §24.5's system parameters) is refused — and must explain *why*, not just fail silently
+    /// (SocketRow.commit previously just snapped the text field back).
+    @Test func renamingAnOutputToASystemParameterNameIsRefusedWithAnExplanation() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let ok = m.renameSocket(id, .output, from: "out", to: "time")
+        #expect(ok == false)
+        let def = try #require(m.document.definitions[id])
+        #expect(def.outputs.map(\.name) == ["out"])   // untouched
+        let notice = try #require(m.notice)
+        #expect(notice.contains("time"))
+        #expect(notice.localizedCaseInsensitiveContains("reserved"))
+    }
+
+    /// Adding an input whose parameter spelling (`in_<name>`) collides with an *existing output's*
+    /// own bare name is the cross-namespace reserved case (§24.5's `mslNameCollides` `.input`
+    /// branch) — also refused, also explained.
+    @Test func addingAnInputWhoseParameterSpellingCollidesWithAnExistingOutputIsRefused() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        // An output literally named "in_q" — legal on its own, nothing collides yet.
+        #expect(m.addSocket(to: id, kind: .output, decl: SocketDecl(name: "in_q", type: .concrete(.float))) == "in_q")
+        // An input named "q" would be spelled `in_q` in the function body — exactly the name the
+        // output above already declares in that scope.
+        let created = m.addSocket(to: id, kind: .input, decl: SocketDecl(name: "q", type: .concrete(.float)))
+        #expect(created == nil)
+        let def = try #require(m.document.definitions[id])
+        #expect(def.inputs.map(\.name) == ["a"])   // nothing appended
+        #expect(m.notice != nil)
+    }
+
+    /// `addSocket` on a `.msl` definition is what the code-definition's own socket editor (Task
+    /// 17, no pseudo-node `+` to wire into) routes through — a reserved name is refused there too.
+    @Test func addingASocketWithASystemParameterNameIsRefusedWithAnExplanation() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let created = m.addSocket(to: id, kind: .output, decl: SocketDecl(name: "uv", type: .concrete(.float)))
+        #expect(created == nil)
+        let def = try #require(m.document.definitions[id])
+        #expect(def.outputs.map(\.name) == ["out"])   // nothing appended
+        let notice = try #require(m.notice)
+        #expect(notice.contains("uv"))
+    }
+
+    /// A texture-typed output has no valid `.msl` result-struct field (`GroupOperations.addSocket`'s
+    /// own guard) — same wrapper, a different reason, still explained rather than silently dropped.
+    @Test func addingATextureTypedOutputIsRefusedWithAnExplanation() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let created = m.addSocket(to: id, kind: .output, decl: SocketDecl(name: "tex", type: .concrete(.texture)))
+        #expect(created == nil)
+        #expect(m.notice != nil)
+    }
+
+    /// A plain, non-colliding name succeeds and lands as an ordinary socket — the notice
+    /// machinery must not fire on the success path.
+    @Test func addingAnOrdinarySocketSucceedsWithNoNotice() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let created = m.addSocket(to: id, kind: .input, decl: SocketDecl(name: "b", type: .concrete(.float)))
+        #expect(created == "b")
+        #expect(m.notice == nil)
+        #expect(m.document.definitions[id]?.inputs.map(\.name) == ["a", "b"])
+    }
+
+    /// Two `.msl` definitions never collide with each other's reserved names — the guard is
+    /// purely about one definition's own generated signature.
+    @Test func renamingASocketOnAGraphDefinitionIsUnaffectedByTheMSLReservedNames() throws {
+        let m = model()
+        var g = GroupDefinition.make(name: "G")
+        g.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        m.apply(.addDefinition(g))
+        // "time" is a system-parameter name — refused as reserved on an *output* of a `.msl`
+        // definition (see `renamingAnOutputToASystemParameterNameIsRefusedWithAnExplanation`
+        // above) — but collides with nothing on a `.graph` body: `mslNameCollides` only ever
+        // applies to a `.msl` one (`GroupOperations.swift`'s own doc comment).
+        let ok = m.renameSocket(g.id, .output, from: "out", to: "time")
+        #expect(ok)
+        #expect(m.document.definitions[g.id]?.outputs.map(\.name) == ["time"])
+    }
+}
+
+@Suite @MainActor struct CodeEditorTests {
+    private func model() -> (EditorModel, GroupID) {
+        let m = EditorModel(document: ShaderDocument(), compiler: RecordingCompiler())
+        let id = m.newCustomCodeDefinition(at: .zero)!
+        return (m, id)
+    }
+
+    @Test func editingTheBodyIsOneUndoableChange() throws {
+        let (m, id) = model()
+        m.apply(.setDefinitionBody(id, "out = a;"))
+        guard case .msl(let b) = try #require(m.document.definitions[id]).body else {
+            Issue.record("not an msl body"); return
+        }
+        #expect(b == "out = a;")
+        m.undo()
+        guard case .msl(let back) = try #require(m.document.definitions[id]).body else {
+            Issue.record("not an msl body"); return
+        }
+        #expect(back == EditorModel.customCodeStarter)
+    }
+
+    /// The user typed three lines; the compiler complained about the third. The row says 3.
+    @Test func diagnosticsAreListedAtTheUsersOwnLineNumbers() throws {
+        let (m, id) = model()
+        var d = Diagnostic(.error, "use of undeclared identifier 'qq'")
+        d.userLine = 3
+        m.diagnostics = [d]
+        let rows = m.codeDiagnostics(for: id)
+        #expect(rows.count == 1)
+        #expect(rows.first?.line == 3)
+        #expect(rows.first?.message.contains("qq") == true)
+    }
+
+    /// A diagnostic with no user line came from generated scaffolding, not from the user's text.
+    @Test func aDiagnosticWithNoUserLineIsFiledAtZero() throws {
+        let (m, id) = model()
+        m.diagnostics = [Diagnostic(.warning, "unused variable 'p'")]
+        #expect(m.codeDiagnostics(for: id).first?.line == 0)
+    }
+
+    /// Rows come back in line order, so the list reads top-to-bottom like the text does.
+    @Test func rowsAreSortedByLine() throws {
+        let (m, id) = model()
+        var a = Diagnostic(.error, "second"); a.userLine = 7
+        var b = Diagnostic(.error, "first"); b.userLine = 2
+        m.diagnostics = [a, b]
+        #expect(m.codeDiagnostics(for: id).map(\.line) == [2, 7])
+    }
+
+    /// The definition's own body text is what the editor shows — never a hardened or rewritten
+    /// version of it (Global Constraints; spec §24.4).
+    @Test func theEditorShowsExactlyWhatWasTyped() throws {
+        let (m, id) = model()
+        let typed = "for (int i = 0; i < 100000; ++i) { out += a; }"
+        m.apply(.setDefinitionBody(id, typed))
+        #expect(m.codeBody(for: id) == typed)
+    }
+
+    /// A diagnostic naming a *different* definition is not this editor's problem.
+    @Test func aDiagnosticForAnotherDefinitionIsExcluded() throws {
+        let (m, id) = model()
+        var d = Diagnostic(.error, "elsewhere")
+        d.userLine = 1
+        d.definition = GroupID()   // some other definition, not `id`
+        m.diagnostics = [d]
+        #expect(m.codeDiagnostics(for: id).isEmpty)
     }
 }

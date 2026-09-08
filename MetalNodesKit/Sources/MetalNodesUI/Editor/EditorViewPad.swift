@@ -38,7 +38,11 @@ struct EditorViewPad<Inspector: View>: View {
                             .fixedSize()
                             .padding(.trailing, 8)
                     }
-                    GraphCanvasView(model: model)
+                    if model.isEditingCode, case .definition(let id) = model.activePath {
+                        CodeEditorView(model: model, definition: id)
+                    } else {
+                        GraphCanvasView(model: model)
+                    }
                 }
                 // `DocumentGroup` already puts a bar over the editor — back to the browser and the
                 // title menu — and that bar carries the editor's toolbar (below). Left to itself the
