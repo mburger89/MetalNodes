@@ -20,7 +20,7 @@ import Testing
             "output.material",
             "input.worldPosition", "input.modelPosition", "input.normal3d", "input.tangent",
             "input.bitangent", "input.viewDirection", "input.uv1", "input.vertexColor",
-            "input.vertexID", "input.screenPosition",
+            "input.vertexID", "input.screenPosition", "input.customAttribute",
         ]
         #expect(ids == expected)
     }

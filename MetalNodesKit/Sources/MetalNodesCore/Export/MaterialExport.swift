@@ -85,7 +85,7 @@ public enum MaterialExport {
         }
         lines.append("//")
         // The terminal's every socket is evaluated regardless of lighting model — it is a `.custom`
-        // body that marks all twelve live so an unwired one still gets a baked default (spec §23.2)
+        // body that marks all thirteen live so an unwired one still gets a baked default (spec §23.2)
         // — so the list below still names sockets this model ignores, e.g. the three clearcoat
         // sockets under Lit/Unlit. Their setter is simply never emitted; baking their value costs
         // nothing and re-deriving "which sockets this model actually reads" here would be a second

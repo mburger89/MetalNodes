@@ -40,7 +40,7 @@ public struct EmitEnvironment: Sendable {
     public static let sysNames: Set<String> = ["uv", "time", "resolution", "mouse", "worldPosition",
                                                 "modelPosition", "normal3d", "tangent", "bitangent",
                                                 "viewDirection", "uv1", "vertexColor", "vertexID",
-                                                "screenPosition"]
+                                                "screenPosition", "customAttribute"]
 
     /// A slot sampled by name, y-flipped: the shape every target but the Layer Effect export uses.
     public static func flippedSample(_ name: String, _ uv: String) -> String {
@@ -146,6 +146,12 @@ public struct EmitEnvironment: Sendable {
             s["tangent"] = SysValue("\(geo).tangent()")
             s["viewDirection"] = SysValue("\(geo).view_direction()")
             s["screenPosition"] = SysValue("\(geo).screen_position()")
+            // The only channel from the geometry stage to the surface stage (spec §23 preamble,
+            // §24.8): the geometry function writes it, this reads it back. Absent from the
+            // `.geometry` branch on purpose — it does not exist there, and that omission is what
+            // makes `input.customAttribute`'s surface-only legality derived rather than declared
+            // (`NodeDef.stages`).
+            s["customAttribute"] = SysValue("\(geo).custom_attribute()")
         case .geometry:
             s["vertexID"] = SysValue("int(\(geo).vertex_id())")
         }

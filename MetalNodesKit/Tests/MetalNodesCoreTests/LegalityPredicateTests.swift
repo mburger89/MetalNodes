@@ -238,9 +238,18 @@ import Testing
         }
     }
 
+    /// Nodes the library gained *after* this migration snapshot, whose derived stage set is
+    /// genuinely not `.all` — unlike `declared`/`declarationWasWrong` above, these never had a
+    /// `stages:` declaration to migrate away from at all. Task 14's Custom Attribute reader is
+    /// surface-only because `customAttribute` appears only in `materialSys(for: .surface)`
+    /// (`EmitEnvironment.swift`); the loop below's "every other builtin still derives both" claim
+    /// was true of the library at the moment this suite was written, not a law the library must
+    /// keep obeying as it grows.
+    static let addedAfterMigration: Set<String> = ["input.customAttribute"]
+
     /// The rest of the migration: every *other* builtin declared `MaterialStage.all` — the stored
     /// property's default — so the derivation has to keep answering "both" for all of them. The
-    /// two tables above plus this loop cover the whole library, not a sample of it.
+    /// three tables above plus this loop cover the whole library, not a sample of it.
     @Test func everyOtherBuiltinWasDeclaredBothStagesAndStillDerivesBoth() {
         // Guard the guard: this is a loop over a registry, so an empty or shrunken one would pass
         // it vacuously and the migration's whole-library claim would quietly stop being true. The
@@ -248,11 +257,13 @@ import Testing
         // (measured, not computed); the floor only has to be tight enough that "the loop ran over
         // the real library" stays a fact rather than an assumption.
         let checked = NodeRegistry.builtin.all
-            .filter { Self.declared[$0.id] == nil && Self.declarationWasWrong[$0.id] == nil }
+            .filter { Self.declared[$0.id] == nil && Self.declarationWasWrong[$0.id] == nil
+                     && !Self.addedAfterMigration.contains($0.id) }
         #expect(checked.count >= 40)
-        // …and both tables name real nodes, so a renamed id cannot silently empty them either.
+        // …and all three tables name real nodes, so a renamed id cannot silently empty them either.
         for id in Self.declared.keys { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }
         for id in Self.declarationWasWrong.keys { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }
+        for id in Self.addedAfterMigration { #expect(NodeRegistry.builtin[id] != nil, "\(id)") }
 
         for def in checked {
             #expect(def.stages == MaterialStage.all, "\(def.id)")

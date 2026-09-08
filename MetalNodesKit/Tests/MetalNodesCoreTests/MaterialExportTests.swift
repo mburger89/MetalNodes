@@ -188,6 +188,26 @@ import Testing
         ccng.inputs[SocketRef(ccnTerminal.id, "clearcoatNormal")] = SocketRef(ccnNormal.id, "normal")
         clearcoatNormalDoc.root = ccng
         try expectMetalCompiles(clearcoatNormalDoc)
+
+        // Task 14 (spec §24.8): the custom-attribute channel — a geometry-stage setter
+        // (`geo.set_custom_attribute(...)`) and a surface-stage reader
+        // (`params.geometry().custom_attribute()`) — gets its own real `xcrun -sdk macosx metal -c`
+        // gate, clearcoat lighting included, so this is the actual shape the task brief calls out
+        // rather than only the text assertions in `CustomAttributeTests`.
+        var customAttributeDoc = ShaderDocument()
+        customAttributeDoc.settings.target = .realityKit
+        customAttributeDoc.settings.exportName = "customAttributeCompileCheck"
+        customAttributeDoc.settings.lightingModel = .clearcoat
+        var cag = Graph()
+        let caTerminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        var caColor = NodeInstance(id: NodeID(), kind: .builtin("input.color"), position: .zero)
+        caColor.params["value"] = .float4(.init(0.3, 0.7, 0.2, 1))
+        let caRead = NodeInstance(id: NodeID(), kind: .builtin("input.customAttribute"), position: .zero)
+        for n in [caTerminal, caColor, caRead] { cag.nodes[n.id] = n }
+        cag.inputs[SocketRef(caTerminal.id, "customAttribute")] = SocketRef(caColor.id, "out")
+        cag.inputs[SocketRef(caTerminal.id, "baseColor")] = SocketRef(caRead.id, "value")
+        customAttributeDoc.root = cag
+        try expectMetalCompiles(customAttributeDoc)
     }
 
     /// Writes `doc`'s exported `.metal` to a temp file and runs `xcrun -sdk macosx metal -c` over

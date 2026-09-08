@@ -88,6 +88,44 @@ import Metal
         }
     }
 
+    /// The custom-attribute channel (spec §24.8, the only channel from the geometry stage to the
+    /// surface stage): a value written in the geometry stage and read back in the surface stage.
+    /// No other test in this file wires anything through it, so a preview compile bug in the new
+    /// `VertexOut.customAttribute` interpolant, the vertex function's `o.customAttribute = …`
+    /// write, or the `MNSurfaceGeometry.custom_attribute()` read could only be caught by an actual
+    /// wiring, compiled for real — a source-text assertion alone cannot rule out "reads the
+    /// interpolant nothing ever wrote". `.clearcoat` lighting is deliberate too: it is the shape
+    /// the task brief calls out as the one that must clear this gate alongside the export and
+    /// swiftc gates.
+    @Test func theCustomAttributeChannelCompiles() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        doc.settings.lightingModel = .clearcoat
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        var color = NodeInstance(id: NodeID(), kind: .builtin("input.color"), position: .zero)
+        color.params["value"] = .float4(.init(0.3, 0.7, 0.2, 1))
+        let read = NodeInstance(id: NodeID(), kind: .builtin("input.customAttribute"), position: .zero)
+        for n in [terminal, color, read] { g.nodes[n.id] = n }
+        g.inputs[SocketRef(terminal.id, "customAttribute")] = SocketRef(color.id, "out")
+        g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(read.id, "value")
+        doc.root = g
+
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(shader.source.contains("o.customAttribute ="))
+        #expect(shader.source.contains("in.customAttribute"))
+        let compiler = try ShaderCompiler(device: device)
+        let result = await compiler.compile(shader, generation: 1)
+        guard case .success = result else {
+            Issue.record("customAttribute channel failed to compile: \(result)")
+            return
+        }
+    }
+
     /// Every surface-legal 3D input node must genuinely reach the terminal and produce its own
     /// accessor call — one graph per node, each wired *directly* into `baseColor`
     /// (`TopoSort.order` walks upstream from the terminal only, so a node left unconnected is

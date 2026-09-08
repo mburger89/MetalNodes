@@ -79,9 +79,17 @@ public extension MaterialCodegen {
         case "clearcoatRoughness": "surface.set_clearcoat_roughness(half(\(e)));"
         case "clearcoatNormal":    "surface.set_clearcoat_normal(half3(\(e)));"
         case "positionOffset": "geo.set_model_position_offset(\(e));"
+        case "customAttribute": "geo.set_custom_attribute(\(e));"
         default: nil
         }
     }
+
+    /// Which geometry-stage sockets always get a setter once the geometry function exists at all
+    /// — the geometry mirror of `liveSurfaceSockets`, defaults included, same reasoning as the
+    /// surface stage's own eight (spec §23.2, §24.8): a live function that only wrote *one* of its
+    /// two sockets would silently leave the other at whatever the modifier's own default is,
+    /// rather than the document's.
+    static let liveGeometrySockets = ["positionOffset", "customAttribute"]
 
     /// Which sockets a lighting model actually renders (spec §23.7 rule 5). `.unlit` renders only
     /// emissive, so emitting the other setters would be noise in the exported file. The three
@@ -165,8 +173,9 @@ extension MaterialCodegen {
             for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
                 b.add(bodyLine: "    " + line, owner: geometry.lineOwners[i], origin: geometry.lineOrigins[i])
             }
-            if let e = geometry.inputExpressions[terminal]?["positionOffset"],
-               let statement = setterStatement(socket: "positionOffset", expression: e) {
+            for socket in liveGeometrySockets {
+                guard let e = geometry.inputExpressions[terminal]?[socket],
+                      let statement = setterStatement(socket: socket, expression: e) else { continue }
                 b.add("    " + statement, owner: terminal)
             }
             b.add("}")
@@ -174,9 +183,10 @@ extension MaterialCodegen {
         return b.text
     }
 
-    /// True when the geometry stage does anything but restate its default: some node reaches
-    /// Position Offset. An offset left at its slot default moves nothing, and emitting a modifier
-    /// that adds a constant zero would cost the caller a `boundsMargin` conversation for nothing.
+    /// True when the geometry stage does anything but restate its defaults: some node reaches
+    /// Position Offset or Custom Attribute. An offset left at its slot default moves nothing, and
+    /// emitting a modifier that adds a constant zero (and writes an all-zero custom attribute
+    /// nothing reads) would cost the caller a `boundsMargin` conversation for nothing.
     static func hasGeometryWork(_ geometry: Emitter.Output, terminal: NodeID) -> Bool {
         geometry.lineOwners.contains { $0 != nil && $0 != terminal }
     }

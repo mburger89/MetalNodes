@@ -44,6 +44,7 @@ public enum MaterialPreviewCodegen {
         float3 viewDirection;
         float2 uv;
         float4 color;
+        float4 customAttribute;
     };
     """
 
@@ -94,6 +95,11 @@ extension MaterialPreviewCodegen {
         add("    MeshVertex vert = verts[vid];")
         add("    float3 offset = float3(0.0);")
         let offsetExpression = geometry.inputExpressions[terminal]?["positionOffset"]
+        // The only channel from the geometry stage to the surface stage (spec §23 preamble,
+        // §24.8): written here, read back through `MNSurfaceGeometry.custom_attribute()` below.
+        // Defaults to `float4(0.0)` when unwired — Metal's own default interpolation, matching
+        // RealityKit's documented behaviour, is what carries it from here to the fragment stage.
+        let customAttributeExpression = geometry.inputExpressions[terminal]?["customAttribute"]
         // The statements run against a local `geo` shim whose accessors are the mesh vertex's own
         // fields, so `EmitEnvironment.realityKitGeometry`'s `geo.…()` spellings compile unchanged.
         // Declared only when a statement actually reads it — every builtin node's output is always
@@ -104,7 +110,8 @@ extension MaterialPreviewCodegen {
         // known to trigger today. Matched on the accessor form `geo.`, not the bare identifier: a
         // node-derived name or `geometry` itself could contain `geo` as a substring.
         if geometry.bodyLines.contains(where: { $0.contains("geo.") })
-            || (offsetExpression?.contains("geo.") ?? false) {
+            || (offsetExpression?.contains("geo.") ?? false)
+            || (customAttributeExpression?.contains("geo.") ?? false) {
             add("    MNGeometry geo = MNGeometry{ vert, cam, vid };")
         }
         // `{sys.time}` always spells as `params.uniforms().time()` (`EmitEnvironment.materialSys`),
@@ -115,7 +122,8 @@ extension MaterialPreviewCodegen {
         // exactly the wart a prior fix already had to remove from the RealityKit export snippet.
         // Matched on the accessor form `params.`, not the bare identifier, for the same reason.
         if geometry.bodyLines.contains(where: { $0.contains("params.") })
-            || (offsetExpression?.contains("params.") ?? false) {
+            || (offsetExpression?.contains("params.") ?? false)
+            || (customAttributeExpression?.contains("params.") ?? false) {
             add("    MNGeometryParams params = MNGeometryParams{ u };")
         }
         for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
@@ -143,6 +151,7 @@ extension MaterialPreviewCodegen {
         add("    o.viewDirection = normalize(cam.cameraPosition - world.xyz);")
         add("    o.uv = vert.uv;")
         add("    o.color = vert.color;")
+        add("    o.customAttribute = \(customAttributeExpression ?? "float4(0.0)");", terminal)
         add("    return o;")
         return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
     }
@@ -313,6 +322,7 @@ extension MaterialPreviewCodegen {
         float4 color() const { return in.color; }
         float4 screen_position() const { return in.position; }
         float3 view_direction() const { return in.viewDirection; }
+        float4 custom_attribute() const { return in.customAttribute; }
     };
     struct MNSurfaceUniforms {
         constant Uniforms &u;

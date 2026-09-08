@@ -7,13 +7,13 @@ import Testing
         return d
     }
 
-    @Test func theMaterialOutputHasTwelveSocketsInSpecOrder() {
+    @Test func theMaterialOutputHasThirteenSocketsInSpecOrder() {
         let d = def("output.material")
         #expect(d.category == .output)
         #expect(d.inputs.map(\.name) == ["baseColor", "normal", "roughness", "metallic",
                                          "emissive", "opacity", "occlusion", "specular",
                                          "clearcoat", "clearcoatRoughness", "clearcoatNormal",
-                                         "positionOffset"])
+                                         "positionOffset", "customAttribute"])
         #expect(d.outputs.isEmpty)
     }
 
@@ -31,13 +31,15 @@ import Testing
         #expect(types["clearcoatRoughness"] == .concrete(.float))
         #expect(types["clearcoatNormal"] == .concrete(.float3))
         #expect(types["positionOffset"] == .concrete(.float3))
+        #expect(types["customAttribute"] == .concrete(.float4))
     }
 
-    @Test func elevenSocketsAreSurfaceAndOneIsGeometry() {
+    @Test func elevenSocketsAreSurfaceAndTwoAreGeometry() {
         let surface = BuiltinNodes.materialStages.filter { $0.value == .surface }.keys.sorted()
         #expect(surface == ["baseColor", "clearcoat", "clearcoatNormal", "clearcoatRoughness",
                             "emissive", "metallic", "normal", "occlusion", "opacity", "roughness", "specular"])
         #expect(BuiltinNodes.materialStages["positionOffset"] == .geometry)
+        #expect(BuiltinNodes.materialStages["customAttribute"] == .geometry)
         // Every socket of the terminal has a stage; none is unclassified.
         #expect(Set(def("output.material").inputs.map(\.name)) == Set(BuiltinNodes.materialStages.keys))
     }
@@ -47,6 +49,10 @@ import Testing
         #expect(def("input.viewDirection").stages == [.surface])
         #expect(def("input.screenPosition").stages == [.surface])
         #expect(def("input.vertexID").stages == [.geometry])
+        // Derived, not declared (Task 11): `customAttribute` appears only in
+        // `materialSys(for: .surface)`, so `input.customAttribute` never names `stages:` at all —
+        // see `CustomAttributeTests.theReaderNodeIsSurfaceOnly` for the dedicated coverage.
+        #expect(def("input.customAttribute").stages == [.surface])
         for id in ["input.worldPosition", "input.modelPosition", "input.normal3d",
                    "input.bitangent", "input.uv1", "input.vertexColor"] {
             #expect(def(id).stages == MaterialStage.all, "\(id)")
@@ -58,7 +64,7 @@ import Testing
             "input.worldPosition": .float3, "input.modelPosition": .float3, "input.normal3d": .float3,
             "input.tangent": .float3, "input.bitangent": .float3, "input.viewDirection": .float3,
             "input.uv1": .float2, "input.vertexColor": .color, "input.vertexID": .int,
-            "input.screenPosition": .float4,
+            "input.screenPosition": .float4, "input.customAttribute": .float4,
         ]
         for (id, type) in expected {
             let d = def(id)
@@ -73,7 +79,8 @@ import Testing
     @Test func everySysPlaceholderIsAKnownSystemName() {
         let known: Set<String> = ["uv", "time", "resolution", "mouse", "uv1", "worldPosition",
                                   "modelPosition", "normal3d", "tangent", "bitangent",
-                                  "viewDirection", "vertexColor", "vertexID", "screenPosition"]
+                                  "viewDirection", "vertexColor", "vertexID", "screenPosition",
+                                  "customAttribute"]
         for d in BuiltinNodes.material3D {
             guard case .template(let t) = d.body else { continue }
             for m in t.matches(of: NodeRegistry.placeholderPattern) where m.1 == "sys" {
