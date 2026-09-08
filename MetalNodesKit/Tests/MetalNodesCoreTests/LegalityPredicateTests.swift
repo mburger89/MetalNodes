@@ -244,9 +244,9 @@ import Testing
     @Test func everyOtherBuiltinWasDeclaredBothStagesAndStillDerivesBoth() {
         // Guard the guard: this is a loop over a registry, so an empty or shrunken one would pass
         // it vacuously and the migration's whole-library claim would quietly stop being true. The
-        // library held 54 builtins when the derivation landed, 42 of them outside the two tables;
-        // the floor only has to be tight enough that "the loop ran over the real library" stays a
-        // fact rather than an assumption.
+        // library held 55 builtins when the derivation landed, 43 of them outside the two tables
+        // (measured, not computed); the floor only has to be tight enough that "the loop ran over
+        // the real library" stays a fact rather than an assumption.
         let checked = NodeRegistry.builtin.all
             .filter { Self.declared[$0.id] == nil && Self.declarationWasWrong[$0.id] == nil }
         #expect(checked.count >= 40)
@@ -539,9 +539,12 @@ import Testing
     /// The control: where `mouse` *is* readable the same node emits the environment's real
     /// spelling, so the test above is measuring `readable`, not a broken emitter.
     @Test func aReadableSystemValueStillEmitsItsSpelling() throws {
-        #expect(try emittedLine(env: .fragment).contains("u.mouse"))
-        #expect(try emittedLine(env: .groupFunction).contains("mouse"))
+        #expect(try emittedLine(env: .fragment).hasSuffix("= u.mouse;"))
         #expect(try !emittedLine(env: .fragment).contains("?sys."))
+        // `groupFunction` spells `mouse` as the bare parameter name, so `contains("mouse")` would
+        // also be satisfied by `/* ?sys.mouse */` — the very failure this suite exists to catch.
+        // Anchored on the whole statement instead, which the marker cannot satisfy.
+        #expect(try emittedLine(env: .groupFunction).hasSuffix("= mouse;"))
     }
 
     /// And the same is true of a readable key under the *material* environments, so the refusal

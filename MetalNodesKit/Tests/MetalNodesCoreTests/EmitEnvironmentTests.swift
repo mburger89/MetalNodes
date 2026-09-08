@@ -75,9 +75,14 @@ import Testing
         #expect(g["normal3d"]?.spelling == "geo.normal()")
     }
 
-    /// Group functions take `(float2 uv, float time, float2 size, float2 mouse, …)`, and the UV
-    /// node's `aspect` variant reads `{sys.resolution}` — both keys must resolve to something
-    /// even though no node can observe them as data (spec §23.4).
+    /// Group functions take `(float2 uv, float time, float2 size, float2 mouse, …)` and a RealityKit
+    /// material spells that argument list from these keys, so both must resolve to something. That
+    /// call site is the *only* reason they exist: `readable == false` is what stops them being
+    /// values a node can observe (spec §23.4, amended by §24.10).
+    ///
+    /// M7 also justified them by the UV node's `aspect` variant reading `{sys.resolution}` — in the
+    /// same breath as "no node can observe them as data", which cannot both be true. M8 resolved it
+    /// against the permissive reading, so that variant is now refused under this target too.
     @Test func resolutionAndMouseAreNeutralLiterals() {
         for env in [EmitEnvironment.realityKitSurface, EmitEnvironment.realityKitGeometry] {
             #expect(env.sys["resolution"]?.spelling == "float2(1.0, 1.0)")
