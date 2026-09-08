@@ -182,3 +182,36 @@ import Testing
         #expect(!swift.contents.contains("custom.value"))
     }
 }
+
+/// Spec §24.10 once predicted that a live value could never reach a hand-written body except
+/// "baked as a literal". It can, and live: a `.msl` definition's unwired input marked live is a
+/// uniform field like any other, and the *call site* spells it `params.uniforms().custom_parameter().x`
+/// — the body reads it as `in_<name>`, none the wiser (final fix wave, F3).
+@Suite struct LiveCustomBodyInputTests {
+    @Test func aLiveDefinitionInputReachesACustomBodyThroughItsCallSite() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var def = GroupDefinition(name: "Scale")
+        def.inputs = [SocketDecl(name: "k", type: .concrete(.float), default: .value(.float(0.5)))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.body = .msl("out = in_k;")
+        doc.definitions[def.id] = def
+        let terminal = NodeInstance(kind: .builtin("output.material"), position: .zero)
+        let instance = NodeInstance(kind: .group(def.id), position: .zero)
+        doc.root.nodes[terminal.id] = terminal
+        doc.root.nodes[instance.id] = instance
+        doc.root.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(instance.id, "out")
+        doc.settings.liveParameters = [ParamPath(node: instance.id, param: "k")]
+
+        let errs = GraphValidator.validate(document: doc, registry: .builtin, target: .realityKit)
+            .filter { $0.severity == .error }
+        #expect(errs.isEmpty, "\(errs.map(\.message))")
+        let export = try #require(try ShaderGenerator.generate(doc, target: .realityKit).exportSource)
+        // The call site: `<struct> r0 = mn_g_<id>(uv, time, size, mouse, <k>);` — the function's own
+        // signature line also names `mn_g_`, but only the call assigns its result.
+        let call = try #require(export.split(separator: "\n").first { $0.contains("= mn_g_") }, "\(export)")
+        #expect(call.contains("params.uniforms().custom_parameter().x"), "\(call)\n\(export)")
+        // The body itself is untouched — it reads its parameter, not the accessor.
+        #expect(export.contains("out = in_k;"))
+    }
+}
