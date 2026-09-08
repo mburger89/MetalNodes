@@ -31,6 +31,10 @@ import Testing
     @Test func excludesLocalsDeclaredInTheText() {
         #expect(MSLScanner.identifiers(in: "float d = length(uv); d * 2.0") == ["uv"])
     }
+
+    @Test func everyOccurrenceOfAFreeIdentifierIsRewritten() {
+        #expect(MSLScanner.rewritingIdentifiers(in: "a * a + sin(a)") { "{\($0)}" } == "{a} * {a} + sin({a})")
+    }
 }
 
 @Suite struct MSLScannerGuardTests {
@@ -222,6 +226,14 @@ import Testing
         #expect(MSLScanner.identifiers(in: "a // b") == ["a"])
         #expect(MSLScanner.scopeBreakers(in: "out = 1.0; // #include") .isEmpty)
     }
+
+    /// The one thing the shared skipper could get wrong that no other test saw: the newlines
+    /// *inside* a `/* … */` still count, so a token after it sits on its real line.
+    @Test func newlinesInsideABlockCommentStillCount() {
+        let v = MSLScanner.scopeBreakers(in: "/* a\n b\n c */ out = 1.0;\nreturn;")
+        #expect(v == [MSLScanner.Violation(kind: .bareReturn, line: 3)])
+        #expect(MSLScanner.identifierLines(in: "/* a\n b */ x")["x"] == 1)
+    }
 }
 
 /// CRLF normalisation is the scanner's job, on every public entry point (spec §25.2, handoff
@@ -290,9 +302,5 @@ import Testing
         #expect(computes == 5)
         _ = value("d")                       // still held
         #expect(computes == 5)
-    }
-
-    @Test func everyOccurrenceOfAFreeIdentifierIsRewritten() {
-        #expect(MSLScanner.rewritingIdentifiers(in: "a * a + sin(a)") { "{\($0)}" } == "{a} * {a} + sin({a})")
     }
 }

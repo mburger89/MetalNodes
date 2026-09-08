@@ -91,11 +91,11 @@ import MetalNodesCore
         #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "v"), in: doc.root, shapes: shapes) == CGPoint(x: 220, y: 42))
         #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "y"), in: doc.root, shapes: shapes) == CGPoint(x: 410, y: 86))
         // Math at (220, 200): inputs a/b are rows 0…1, the "op" param is row 2, output "out" is row 3.
-        // Its label column widens for "Operation" (9 chars): ceil(9 × 6.4) = 58, so the node is
-        // 190 + 58 - 46 = 202 wide, not the base 190 (Task 9, spec §25.2).
+        // "op" is an `.enumeration` param, whose label draws inside the picker, not the label
+        // column, so it does not widen the node past the base 190 (final review, M9).
         let mul = doc.root.nodes.values.first { $0.kind == .builtin("math.math") && $0.params["op"] == .enumCase("multiply") }!
         #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "b"), in: doc.root, shapes: shapes) == CGPoint(x: 220, y: 264))
-        #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "out"), in: doc.root, shapes: shapes) == CGPoint(x: 422, y: 308))
+        #expect(NodeGeometry.socketAnchor(for: SocketRef(mul.id, "out"), in: doc.root, shapes: shapes) == CGPoint(x: 410, y: 308))
         #expect(NodeGeometry.socketAnchor(for: SocketRef(sep.id, "nope"), in: doc.root, shapes: shapes) == nil)
         #expect(NodeGeometry.socketAnchor(for: SocketRef(NodeID(), "v"), in: doc.root, shapes: shapes) == nil)
     }
@@ -227,6 +227,9 @@ import MetalNodesCore
         #expect(column > NodeGeometry.minLabelColumn)
         #expect(column <= NodeGeometry.maxLabelColumn)
         #expect(column >= CGFloat("Clearcoat Roughness".count) * 5.5, "wide enough for the longest label at caption size")
+        let math = try #require(reg["math.math"])
+        #expect(NodeGeometry.labelColumnWidth(for: NodeShape(def: math)) == NodeGeometry.minLabelColumn,
+                "an enumeration's label is in the picker, not the column")
     }
 
     @Test func theNodeWidensByExactlyTheExtraColumn() throws {

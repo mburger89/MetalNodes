@@ -153,6 +153,16 @@ import Foundation
         #expect(try compiles(out))
     }
 
+    /// A `do … while` as an `if`'s unbraced body: the wrap must close after the trailing `;`, not
+    /// after the body's `}` — the one path where `LoopOpener.isDo` matters (final review, M9).
+    @Test func aDoWhileAsAnIfsUnbracedBodyIsWrappedAndCompiles() throws {
+        let body = "if (a > 0.0) do { s += 1.0; } while (s < 4.0);"
+        let out = LoopHardening.harden(body)
+        #expect(out.contains("mn_loopGuard0"))
+        #expect(out.hasSuffix("while (s < 4.0);\n}"))
+        #expect(try compiles(out))
+    }
+
     /// The `else` mirror of the test above — a loop as the unbraced body of an `else`.
     @Test func aLoopAsAnElsesUnbracedBodyIsWrappedAndCompiles() throws {
         let body = "if (a > 0.0) { s = 1.0; } else while (s > 0.0) { s -= 1.0; }"
@@ -237,6 +247,9 @@ import Foundation
             ("do { do { s += 1.0; } while (a > 1.0); } while (a > 2.0);",
              "int mn_loopGuard0 = 0;\ndo {\n    if (++mn_loopGuard0 > 4096) { break; }\nint mn_loopGuard1 = 0;\n do {\n    if (++mn_loopGuard1 > 4096) { break; }\n s += 1.0; } while (a > 1.0); } while (a > 2.0);",
              [nil, 0, nil, nil, 0, nil, 0]),
+            ("if (a > 0.0) do { s += 1.0; } while (s < 4.0);",
+             "if (a > 0.0) \n{\nint mn_loopGuard0 = 0;\ndo {\n    if (++mn_loopGuard0 > 4096) { break; }\n s += 1.0; } while (s < 4.0);\n}",
+             [0, nil, nil, 0, nil, 0, nil]),
         ]
         for c in cases {
             let h = LoopHardening.hardened(c.body)

@@ -51,9 +51,19 @@ enum NodeGeometry {
     /// The label column for `shape`'s body rows — inputs and body params, the two row kinds that
     /// draw a leading label — from its longest label. One function, two readers: `NodeView`
     /// passes it to every `ParamControl`, and `estimatedSize` widens the node by the same amount,
-    /// so the estimate and the drawing cannot disagree (spec §25.2, handoff §15.5 item 8).
+    /// so the estimate and the drawing cannot disagree (spec §25.2, handoff §15.5 item 8). An
+    /// `.enumeration` param draws its label inside the picker control, not the column, and a
+    /// multiline `.text` param draws its label above the editor rather than beside it, so neither
+    /// contributes to the column's width (final review, M9).
     static func labelColumnWidth(for shape: NodeShape) -> CGFloat {
-        let labels = shape.inputs.map(\.label) + shape.params.filter(\.showsInBody).map(\.label)
+        let labels = shape.inputs.map(\.label) + shape.params.filter { p in
+            guard p.showsInBody else { return false }
+            switch p.kind {
+            case .enumeration: return false
+            case .text(let multiline): return !multiline
+            default: return true
+            }
+        }.map(\.label)
         let longest = labels.map(\.count).max() ?? 0
         return min(maxLabelColumn, max(minLabelColumn, (CGFloat(longest) * captionPointsPerCharacter).rounded(.up)))
     }

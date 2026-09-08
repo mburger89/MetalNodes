@@ -235,6 +235,17 @@ import Testing
         #expect(shader.stageFunctionNames[.geometry] == nil)
     }
 
+    /// A value stored explicitly *equal* to the declared default is still "no work".
+    @Test func anExplicitlyStoredDefaultStillEmitsNoGeometryStage() throws {
+        var doc = MaterialFixture.document()
+        let terminal = try #require(doc.root.nodes.values.first { $0.kind == .builtin("output.material") }).id
+        doc.root.nodes[terminal]!.params["positionOffset"] = .float3(.init(0, 0, 0))
+        doc.root.nodes[terminal]!.params["customAttribute"] = .float4(.init(0, 0, 0, 0))
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(shader.exportSource?.contains("realitykit::geometry_parameters") == false)
+        #expect(shader.stageFunctionNames[.geometry] == nil)
+    }
+
     /// Writes `doc`'s exported `.metal` to a temp file and runs `xcrun -sdk macosx metal -c` over
     /// it, failing the current test with the compiler's stderr on a nonzero exit. `extraArgs` is
     /// spliced in ahead of `-c` — e.g. `-mmacosx-version-min=…`, to pin a real deployment floor
