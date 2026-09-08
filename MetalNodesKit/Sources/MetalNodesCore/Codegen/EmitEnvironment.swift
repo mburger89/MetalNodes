@@ -60,6 +60,16 @@ public struct EmitEnvironment: Sendable {
         self.knownAccessors = knownAccessors
     }
 
+    /// This environment with only its uniform speller replaced: every other field — `sys`,
+    /// texture spelling, `usesLayer`, `knownAccessors` — carried through. `ShaderGenerator`'s
+    /// export path used to rebuild the environment by hand and silently dropped
+    /// `knownAccessors` (handoff T11); a copy that names no field cannot lose one.
+    public func withUniformSpeller(_ uniform: @escaping @Sendable (UniformField) -> String) -> EmitEnvironment {
+        var copy = self
+        copy.uniform = uniform
+        return copy
+    }
+
     /// The fragment program (and every viewer program): a `constant Uniforms &u` buffer.
     public static let fragment = EmitEnvironment(
         uniform: { f in f.type == .bool ? "bool(u.\(f.name))" : "u.\(f.name)" },

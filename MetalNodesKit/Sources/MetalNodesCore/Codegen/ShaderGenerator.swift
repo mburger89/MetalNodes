@@ -211,10 +211,7 @@ public enum ShaderGenerator {
 
         // The export reads no uniform buffer: the same environments with a literal speller.
         let baked = EmitEnvironment.bakedUniforms(layout: shared.layout, document: doc, registry: registry)
-        func bake(_ env: EmitEnvironment) -> EmitEnvironment {
-            EmitEnvironment(uniform: baked, sys: env.sys, textureSample: env.textureSample,
-                            textureName: env.textureName, usesLayer: env.usesLayer)
-        }
+        func bake(_ env: EmitEnvironment) -> EmitEnvironment { env.withUniformSpeller(baked) }
         let exportSurface = emit(.surface, env: bake(.realityKitSurface), shared: shared)
         let exportGeometry = emit(.geometry, env: bake(.realityKitGeometry), shared: shared)
 

@@ -291,4 +291,8 @@ import Testing
         _ = value("d")                       // still held
         #expect(computes == 5)
     }
+
+    @Test func everyOccurrenceOfAFreeIdentifierIsRewritten() {
+        #expect(MSLScanner.rewritingIdentifiers(in: "a * a + sin(a)") { "{\($0)}" } == "{a} * {a} + sin({a})")
+    }
 }

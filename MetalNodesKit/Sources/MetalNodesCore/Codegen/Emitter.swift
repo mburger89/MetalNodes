@@ -232,13 +232,17 @@ enum Emitter {
                     // hardened text in `{out.out} = … ;` only touches the first/last line's content,
                     // never the line count, so it lines up 1:1 with `lines` once substitution has run
                     // — substitution never introduces or removes a newline (every placeholder
-                    // resolves to a single-line expression), which the precondition below enforces
+                    // resolves to a single-line expression), which the fallback below checks
                     // rather than assumes.
                     let templated = ExpressionNode.template(for: inst)
                     lines = substitute(templated.text, ctx)
-                    precondition(lines.count == templated.userLines.count,
-                                "Expression template's line count must match its userLines origins")
-                    lineOrigins = templated.userLines.map { .user($0) }
+                    // Provably equal today (substitution never adds or removes a newline). Were a
+                    // future placeholder ever to span lines, a wrong origin map is a worse-located
+                    // diagnostic; a trap in a release build is a crash on the user's document.
+                    // So: fall back to "generated" for every line rather than assert (handoff T9).
+                    lineOrigins = lines.count == templated.userLines.count
+                        ? templated.userLines.map { .user($0) }
+                        : Array(repeating: .generated, count: lines.count)
                 } else {
                     switch def.body {
                     case .template(let t): lines = substitute(t, ctx)

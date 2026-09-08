@@ -100,4 +100,13 @@ import Testing
         // `texture2d<half>.sample` yields half4; the graph works in float4.
         #expect(expr.hasPrefix("float4("))
     }
+
+    @Test func replacingTheUniformSpellerKeepsEveryOtherField() {
+        let env = EmitEnvironment.realityKitSurface
+        let baked = env.withUniformSpeller { _ in "1.0" }
+        #expect(baked.knownAccessors == env.knownAccessors)
+        #expect(!baked.knownAccessors.isEmpty)
+        #expect(baked.sys.keys.sorted() == env.sys.keys.sorted())
+        #expect(baked.usesLayer == env.usesLayer)
+    }
 }

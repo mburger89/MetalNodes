@@ -38,8 +38,9 @@ import Testing
     /// would still satisfy a substring check on the call name alone; it fails these two.
     @Test func theExportWritesInGeometryAndReadsInSurface() throws {
         let src = try #require(ShaderGenerator.generate(document(), target: .realityKit).exportSource)
-        #expect(src.contains("v0 = float4(1.0, 0.0, 0.0, 1.0);"))
-        #expect(src.contains("geo.set_custom_attribute(v0)"))
+        // Whichever SSA name the colour node lands on, the setter must name *that* variable.
+        let name = try #require(src.firstMatch(of: /(v\d+) = float4\(1\.0, 0\.0, 0\.0, 1\.0\);/)?.1)
+        #expect(src.contains("geo.set_custom_attribute(\(name))"))
         #expect(src.contains("params.geometry().custom_attribute()"))
     }
 
@@ -47,9 +48,14 @@ import Testing
     /// variable the geometry stage's own statements produced, not a fixed `float4(0.0)` that would
     /// render every wired document black regardless of what was wired.
     @Test func thePreviewCarriesItAsAnInterpolant() throws {
-        let src = try ShaderGenerator.generate(document(), target: .realityKit).source
+        // The preview path reads uniforms live (`u.pN`), not baked literals, so the SSA name is
+        // pulled from `exportSource` — same emission order, so the same variable number — rather
+        // than matched against a literal that only the export path ever emits.
+        let generated = try ShaderGenerator.generate(document(), target: .realityKit)
+        let src = generated.source
         #expect(src.contains("float4 customAttribute;"))
-        #expect(src.contains("o.customAttribute = v0;"))
+        let name = try #require(generated.exportSource?.firstMatch(of: /(v\d+) = float4\(1\.0, 0\.0, 0\.0, 1\.0\);/)?.1)
+        #expect(src.contains("o.customAttribute = \(name);"))
         #expect(src.contains("in.customAttribute"))
     }
 

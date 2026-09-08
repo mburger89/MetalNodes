@@ -106,7 +106,7 @@ public enum MSLScanner {
     /// Rewrites `source`, replacing every occurrence of a free identifier — exactly the token
     /// occurrences `identifiers(in:)` would name, by the same rule — with `replacement(name)`.
     /// Everything else passes through unchanged: punctuation, numbers, whitespace, comments, and
-    /// crucially a member/swizzle access after `.` (`col.rgb` keeps its `.rgb`; only a *bound*
+    /// crucially a member/swizzle access after `.` (`col.rgb` keeps its `.rgb`; only a *free*
     /// `col` before the dot is ever a candidate). Splicing the original characters around each
     /// substituted span — rather than re-joining tokens with synthesized spacing — is what keeps
     /// the untouched text byte-for-byte, which a whole-token regex on `\b` cannot do: `\b` is a

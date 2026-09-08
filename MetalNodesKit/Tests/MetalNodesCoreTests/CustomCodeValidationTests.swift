@@ -152,6 +152,13 @@ import Testing
         doc.root = g
         #expect(errors(doc).contains { $0.message.lowercased().contains("pragma") })
     }
+
+    /// The validator and codegen count the same lines: both trim the formula first (handoff T9).
+    @Test func aFormulaWithLeadingNewlinesReportsTheTrimmedLine() {
+        let d = CustomCodeValidation.diagnostics(document: expressionDoc("\n\nreturn a;"), registry: .builtin)
+        #expect(d.count == 1)
+        #expect(d.first?.userLine == 1)
+    }
 }
 
 /// Final fix wave — F4 and F7.

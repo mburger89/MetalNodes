@@ -64,6 +64,12 @@ import Foundation
 }
 
 @Suite struct ExpressionEmissionTests {
+    /// `Emitter` names SSA variables `v0, v1, …` per stage; which number a node lands on depends
+    /// on emission order, not on the assertion's subject. Match the statement's shape, not `v0`.
+    private func emits(_ s: String, _ pattern: String) -> Bool {
+        s.range(of: pattern, options: .regularExpression) != nil
+    }
+
     /// A document with one Expression wired into the fragment terminal.
     private func document(_ formula: String, type: String = "color") -> ShaderDocument {
         var doc = ShaderDocument()
@@ -84,7 +90,7 @@ import Foundation
         // text around it survives verbatim. Asserting the whole statement (not just a fragment)
         // is what catches a stray unsubstituted placeholder landing anywhere else in the line.
         #expect(!s.contains("/* ?"))   // no placeholder ever reaches generated source
-        #expect(s.contains("v0 = float4(u.p0, 0.0, 0.0, 1.0);"))
+        #expect(emits(s, #"\bv\d+ = float4\(u\.p0, 0\.0, 0\.0, 1\.0\);"#))
         #expect(!s.contains("uvx"))   // substituted, not passed through
     }
 
@@ -102,8 +108,9 @@ import Foundation
     @Test func theTerminalReadsTheExpressionsOutputVariable() throws {
         let s = try ShaderGenerator.generate(document("a + 1.0")).source
         #expect(!s.contains("/* ?"))
-        #expect(s.contains("v0 = u.p0 + 1.0;"))
-        #expect(s.contains("return v0;"))
+        #expect(emits(s, #"\bv\d+ = u\.p0 \+ 1\.0;"#))
+        let name = try #require(s.firstMatch(of: /(v\d+) = u\.p0 \+ 1\.0;/)?.1)
+        #expect(s.contains("return \(name);"))
     }
 
     /// Nothing else in this suite wires a value into an Expression's own input, so the wired
@@ -124,7 +131,7 @@ import Foundation
         doc.root = g
         let s = try ShaderGenerator.generate(doc).source
         #expect(!s.contains("/* ?"))
-        #expect(s.contains("v0 = in.uv;"))
+        #expect(emits(s, #"\bv\d+ = in\.uv;"#))
         #expect(s.contains("v1 = v0.x;"))
     }
 
@@ -136,7 +143,7 @@ import Foundation
     @Test func aSwizzledIdentifierIsSubstitutedWithoutTouchingTheMember() throws {
         let s = try ShaderGenerator.generate(document("float4(col.rgb, 1.0)", type: "color")).source
         #expect(!s.contains("/* ?"))
-        #expect(s.contains("v0 = float4(u.p0.rgb, 1.0);"))
+        #expect(emits(s, #"\bv\d+ = float4\(u\.p0\.rgb, 1\.0\);"#))
     }
 
     /// The mirror bug a naive `wordBoundaryKind(.simple)` regex would reintroduce: `a` must be
@@ -145,7 +152,7 @@ import Foundation
     @Test func anIdentifierThatAlsoAppearsAsAMemberKeepsTheMemberUntouched() throws {
         let s = try ShaderGenerator.generate(document("a + b.a")).source
         #expect(!s.contains("/* ?"))
-        #expect(s.contains("v0 = u.p0 + u.p1.a;"))
+        #expect(emits(s, #"\bv\d+ = u\.p0 \+ u\.p1\.a;"#))
     }
 
     /// Two Expression nodes are independent — the point of instance data (spec §24.2). Both feed
@@ -180,7 +187,7 @@ import Foundation
     @Test func anIdentifierThatIsASubstringOfABuiltinIsNotCorrupted() throws {
         let s = try ShaderGenerator.generate(document("saturate(a)")).source
         #expect(!s.contains("/* ?"))
-        #expect(s.contains("v0 = saturate(u.p0);"))
+        #expect(emits(s, #"\bv\d+ = saturate\(u\.p0\);"#))
     }
 
     /// A formula of only whitespace passes the old `isEmpty` guard and would previously emit

@@ -299,4 +299,20 @@ import Testing
         #expect(GroupOperations.isUsed(a.id, in: doc) == false)
         #expect(GroupOperations.deleteDefinition(a.id, in: doc)?.definitions.isEmpty == true)
     }
+
+    /// The `.input` branch of `mslNameCollides` had no test (handoff T6): an input named `x`
+    /// would be spelled `in_x` inside the body, which collides with an *output* already named
+    /// `in_x` — the mirror of the output-side check.
+    @Test func anInputWhosePrefixedNameMatchesAnOutputIsReserved() {
+        var def = GroupDefinition(name: "W")
+        def.body = .msl("out = 1.0;")
+        def.outputs = [SocketDecl(name: "in_x", type: .concrete(.float))]
+        #expect(GroupOperations.mslReservedSocketName("x", kind: .input, in: def))
+        #expect(!GroupOperations.mslReservedSocketName("y", kind: .input, in: def))
+    }
+
+    @Test func aGraphDefinitionReservesNoMSLNames() {
+        let def = GroupDefinition(name: "G")
+        #expect(!GroupOperations.mslReservedSocketName("uv", kind: .output, in: def))
+    }
 }

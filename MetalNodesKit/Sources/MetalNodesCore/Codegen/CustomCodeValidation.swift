@@ -13,7 +13,11 @@ public enum CustomCodeValidation {
         // follows for a compiled program (spec §24.4, Task 9).
         for node in allExpressionNodes(doc) {
             guard case .text(let formula)? = node.params[ExpressionNode.formulaParam] else { continue }
-            out += MSLScanner.scopeBreakers(in: formula).map {
+            // The same text codegen maps: `ExpressionNode.template` trims the formula before
+            // hardening, so a formula with leading newlines would otherwise report a line number
+            // one path apart from the compile error's (handoff T9).
+            let scanned = formula.trimmingCharacters(in: .whitespacesAndNewlines)
+            out += MSLScanner.scopeBreakers(in: scanned).map {
                 Diagnostic(.error, message(for: $0), node: node.id, socket: ExpressionNode.formulaParam,
                           userLine: $0.line + 1)
             }

@@ -13,9 +13,13 @@ import Foundation
         let material3DIDs = Set(BuiltinNodes.material3D.map(\.id))
         for def in reg.all where def.id != "output.fragment" && !material3DIDs.contains(def.id) {
             var doc = ShaderDocument()
-            let n = NodeInstance(kind: .builtin(def.id)), out = NodeInstance(kind: .builtin("output.fragment"))
+            var n = NodeInstance(kind: .builtin(def.id)), out = NodeInstance(kind: .builtin("output.fragment"))
+            // The Expression registry entry declares no outputs — its shape is computed from the
+            // formula — so without one it was the only node this sweep never wired (handoff T3).
+            if def.id == ExpressionNode.id { n.params[ExpressionNode.formulaParam] = .text("a") }
             doc.root.nodes[n.id] = n; doc.root.nodes[out.id] = out
-            if let first = def.outputs.first { doc.root.connect(SocketRef(n.id, first.name), to: SocketRef(out.id, "color")) }
+            let outName = def.id == ExpressionNode.id ? "out" : def.outputs.first?.name
+            if let outName { doc.root.connect(SocketRef(n.id, outName), to: SocketRef(out.id, "color")) }
             let s = try ShaderGenerator.generate(doc, registry: reg)
             #expect(!s.source.contains("/* ?"), "\(def.id)")
             #expect(!s.source.contains("/* unconnected */"), "\(def.id)")
