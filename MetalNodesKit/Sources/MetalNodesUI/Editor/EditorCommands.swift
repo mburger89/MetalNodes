@@ -25,14 +25,10 @@ public struct EditorCommands: Commands {
 
     /// `canvasFocused`, extended to the code editor (Task 17 fix round 2). `canvasHasFocus` is
     /// correctly `false` there — `GraphCanvasView` really is unmounted while a `.msl` definition
-    /// is open (fix round 1's Critical 2 fix) — but two items on `canvasFocused` alone need a
-    /// keyboard path from inside the code editor too: Exit Group (⌘↑), the only keyboard way out
-    /// once the canvas that would otherwise hold focus is gone, and Undo/Redo (⌘Z/⇧⌘Z), which the
-    /// code editor needs for the same reason a node's canvas edits do. Undo/Redo's own key
-    /// equivalent still only fires when `TextEditor`'s own field editor is *not* first responder —
-    /// AppKit gives a focused text view's own local undo first crack at ⌘Z, so document undo and
-    /// in-progress-typo undo never fight over the same keystroke; this only widens which state
-    /// the *menu item* is enabled in, not which one wins when both could claim the key.
+    /// is open (fix round 1's Critical 2 fix) — but Exit Group (⌘↑) still needs a keyboard path
+    /// from inside the code editor: it is the only way out once the canvas that would otherwise
+    /// hold focus is gone. **Deliberately not used for Undo/Redo — see the comment at their
+    /// `CommandGroup`, fix round 3.**
     private var canvasFocusedOrEditingCode: Bool { canvasFocused || (model?.isEditingCode ?? false) }
 
     public var body: some Commands {
@@ -48,13 +44,32 @@ public struct EditorCommands: Commands {
         // The titles name the step ("Undo Move"): `commitUndo` sets an action name on every group,
         // and `UndoManager` composes the menu title from it. Reading `canUndo`/`canRedo` in the
         // same body is what re-evaluates these — they touch `undoStackVersion` (spec §18.6).
+        //
+        // DELIBERATELY still `canvasFocused` alone, not `canvasFocusedOrEditingCode` (fix round 3
+        // reverts fix round 2's widening here — Exit Group below keeps it, this does not, and that
+        // split is intentional, not an inconsistency to "fix" again). `CommandGroup(replacing:
+        // .undoRedo)` REPLACES AppKit's own nil-targeted Undo/Redo items with these fixed-action
+        // ones. A nil-targeted item is exactly what lets a focused `NSTextView`'s own field editor
+        // win a key equivalent — AppKit resolves a nil target down the responder chain from the
+        // first responder before the item's declared action ever runs. Once replaced, that
+        // mechanism is gone: an *enabled* `Button { model?.undo() }` fires unconditionally on ⌘Z,
+        // first responder or not, so widening this gate to `isEditingCode` would make ⌘Z reach
+        // `model.undo()` even while the user is mid-keystroke inside `TextEditor`. Combined with
+        // `CodeEditorView`'s own `.onChange(of: model.codeBody(for:))` watcher (fix round 1's
+        // Critical 1 fix), a popped step touching this definition's body would reseed `draft` and
+        // drop focus — discarding whatever the user had just typed and kicking them out of the
+        // editor mid-edit. Leaving this gate exactly as it already was is what keeps ⌘Z inside the
+        // editor doing field-editor *text* undo (the field editor is first responder, so the
+        // disabled menu item never fires and the text view's own local undo handles the key
+        // natively) — a document undo is still reachable by clicking out of the editor first, same
+        // as it always was for any other text field on the canvas.
         CommandGroup(replacing: .undoRedo) {
             Button(model?.undoManager.undoMenuItemTitle ?? "Undo") { model?.undo() }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(!((model?.canUndo ?? false) && canvasFocusedOrEditingCode))
+                .disabled(!((model?.canUndo ?? false) && canvasFocused))
             Button(model?.undoManager.redoMenuItemTitle ?? "Redo") { model?.redo() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(!((model?.canRedo ?? false) && canvasFocusedOrEditingCode))
+                .disabled(!((model?.canRedo ?? false) && canvasFocused))
         }
         // iPad's Edit ▸ Cut / Copy / Paste / Delete / Select All (spec §22.5, and the ruling in the
         // M6 plan's Task 9: SwiftUI Commands, not a UIKit responder). macOS keeps the responder
