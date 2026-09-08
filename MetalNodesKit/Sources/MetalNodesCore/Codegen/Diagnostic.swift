@@ -6,9 +6,18 @@ public struct Diagnostic: Sendable, Hashable {
     public var message: String
     public var node: NodeID?
     public var socket: String?
+    /// The 1-based line of the user's own text this diagnostic points at — an Expression's formula
+    /// or a Custom MSL definition body — or `nil` when it does not resolve to user-authored text
+    /// (spec §24.4). Set by `EditorModel` from `LineMap.userLine(forLine:)` after a compile failure.
+    public var userLine: Int?
+    /// The Custom MSL definition whose body this diagnostic is inside, or `nil`. Lets the code
+    /// editor (Task 17) list only the open definition's own errors.
+    public var definition: GroupID?
 
-    public init(_ severity: Severity = .error, _ message: String, node: NodeID? = nil, socket: String? = nil) {
+    public init(_ severity: Severity = .error, _ message: String, node: NodeID? = nil, socket: String? = nil,
+                userLine: Int? = nil, definition: GroupID? = nil) {
         self.severity = severity; self.message = message; self.node = node; self.socket = socket
+        self.userLine = userLine; self.definition = definition
     }
 }
 

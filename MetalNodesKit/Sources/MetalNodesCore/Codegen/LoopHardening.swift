@@ -22,9 +22,19 @@ public enum LoopHardening {
     /// commonly share a user line with the rest of the body, since nothing in the spec requires a
     /// loop to be formatted across multiple lines — see `loopBraceSites` below).
     ///
-    /// Not consumed by this task: the next task in this milestone maps compiler diagnostics back
-    /// to the user's own line numbers and needs exactly this shape.
+    /// Consumed by `GroupCodegen`'s `.msl` branch via `SourceBuilder.add(userText:origins:…)`,
+    /// which maps compiler diagnostics back to the user's own line numbers (spec §24.4, Task 9).
     public static func hardened(_ text: String) -> (text: String, userLines: [Int?]) {
+        // Normalised once, here, on the way into the *generated* copy only — `text` as stored in
+        // the document and shown by the editor is never touched (a caller keeps its own copy).
+        // Both this function and `MSLScanner.tokenise` split on `Character("\n")`, and Swift folds
+        // a `\r\n` pair into one `Character` (grapheme cluster): a body pasted from a Windows
+        // editor would otherwise read as a single giant line below, so `userLines.count` would be
+        // the Swift-level line count rather than the physical line count Metal's compiler reports
+        // errors against — silently misattributing every diagnostic inside it (Task 9). MSL treats
+        // `\n` and `\r\n` as equivalent line terminators, so this changes nothing about what
+        // compiles.
+        let text = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         let rawLines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let sites = loopBraceSites(in: text)
         guard !sites.isEmpty else { return (text, (0..<rawLines.count).map { $0 }) }

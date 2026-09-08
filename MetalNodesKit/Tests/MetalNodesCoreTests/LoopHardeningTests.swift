@@ -132,6 +132,26 @@ import Foundation
         #expect(userLines == [0])
     }
 
+    /// A carried defect (Task 8, surfaced by Task 9): `Character("\r\n")` is one grapheme cluster,
+    /// so splitting on `Character("\n")` alone would see a Windows-pasted body as a single line
+    /// and report a `userLines` array with one (wrong) entry instead of one per physical line.
+    /// `hardened` normalises line endings on the way in specifically to prevent this.
+    @Test func aCRLFBodyStillReportsOneUserLinePerPhysicalLine() {
+        let (text, userLines) = LoopHardening.hardened("float a = 1.0;\r\nfloat b = 2.0;\r\nout = a + b;")
+        #expect(userLines == [0, 1, 2])
+        #expect(text == "float a = 1.0;\nfloat b = 2.0;\nout = a + b;")
+    }
+
+    /// The same defect, but with a loop before the CRLF-separated line that errors — proving the
+    /// normalisation and the hardening insertions compose correctly rather than one undoing the
+    /// other's line count.
+    @Test func aCRLFBodyWithAHardenedLoopStillMapsThePostLoopLine() {
+        let (_, userLines) = LoopHardening.hardened("for (int i = 0; i < 4; i++) { }\r\nout = a + b;")
+        // Line 1 (0-based) is the user's second physical line, wherever it lands among the
+        // hardener's insertions.
+        #expect(userLines.contains(1))
+    }
+
     // MARK: - Fix round 1: a loop in an unbraced statement slot
 
     /// A loop as the single unbraced body of an `if` — legal MSL, accepted by

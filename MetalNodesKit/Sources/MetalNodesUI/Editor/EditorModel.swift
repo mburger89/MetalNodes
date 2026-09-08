@@ -546,7 +546,10 @@ public final class EditorModel {
             var mapped: [Diagnostic] = []
             for l in lines {
                 let sev: Diagnostic.Severity = l.severity == .error ? .error : .warning
-                mapped.append(Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line)))
+                var d = Diagnostic(sev, l.message, node: shader.lineMap.node(forLine: l.line))
+                d.userLine = shader.lineMap.userLine(forLine: l.line)
+                d.definition = shader.lineMap.definition(forLine: l.line)
+                mapped.append(d)
             }
             diagnostics = (mapped.isEmpty ? [Diagnostic(.error, message)] : mapped) + missing
             lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, false)

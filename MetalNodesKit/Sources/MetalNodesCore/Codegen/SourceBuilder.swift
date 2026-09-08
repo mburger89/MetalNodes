@@ -21,6 +21,27 @@ struct SourceBuilder {
         let offset = nextLine - 1
         append(chunk)
         for e in map.entries { own((e.range.lowerBound + offset)...(e.range.upperBound + offset), e.node) }
+        // A spliced-in group function's own `userEntries` (its Custom MSL body, if it has one)
+        // shift the same way, so a diagnostic inside it still resolves to the user's own line once
+        // the function is folded into the whole program (spec §24.4).
+        for e in map.userEntries {
+            self.map.userEntries.append(LineMap.UserEntry(range: (e.range.lowerBound + offset)...(e.range.upperBound + offset),
+                                                           userLines: e.userLines, node: e.node, definition: e.definition))
+        }
+    }
+
+    /// Appends user-authored lines, recording which of the user's own lines each came from so a
+    /// compiler diagnostic can be reported against the text the user actually typed (spec §24.4).
+    /// `owner` and `definition` are mutually exclusive: an Expression has a node, a Custom MSL
+    /// definition body has a definition.
+    mutating func add(userText lines: [String], origins: [Int?], owner: NodeID? = nil, definition: GroupID? = nil) {
+        precondition(lines.count == origins.count)
+        guard !lines.isEmpty else { return }
+        let first = nextLine
+        let last = append(lines.joined(separator: "\n"))
+        map.userEntries.append(LineMap.UserEntry(range: first...last, userLines: origins,
+                                                 node: owner, definition: definition))
+        if let owner { own(first...last, owner) }
     }
 
     /// Appends `chunk` plus a trailing newline; returns the last line number it occupies.

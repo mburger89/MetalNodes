@@ -167,10 +167,15 @@ public enum GroupCodegen {
             // Hardened on the way into the generated program (spec §24.4): every loop the user
             // wrote gets a counter and a `break`, so a runaway one terminates instead of hanging
             // the GPU. The editor keeps showing the user's own, unmodified text — only what lands
-            // in the compiled program changes.
-            for line in LoopHardening.harden(text).split(separator: "\n", omittingEmptySubsequences: false) {
-                b.add("    " + line)
-            }
+            // in the compiled program changes. `hardened.userLines` records, for each emitted
+            // line, which of the user's own lines it came from (`nil` for a line the hardener
+            // inserted) — recorded via `add(userText:…)` rather than plain `add`, so a compiler
+            // diagnostic on this text resolves back to the line the user actually typed (spec
+            // §24.4, Task 9).
+            let hardened = LoopHardening.hardened(text)
+            b.add(userText: hardened.text.split(separator: "\n", omittingEmptySubsequences: false)
+                                          .map { "    " + $0 },
+                  origins: hardened.userLines, definition: def.id)
             // The result-struct local cannot be named `out` unconditionally: the user's own text
             // may already declare a local of that name (an output literally called `out` is the
             // idiomatic case — spec §24.3's own examples use it), which would collide with a
