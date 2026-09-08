@@ -795,3 +795,68 @@ Three of the twenty (#1, #7, #9) would have shipped **generated** Metal that doe
 2. **Compile the output, do not grep it.** Six of these defects produce syntactically plausible text. `xcrun metal` found them; substring assertions did not.
 3. **Prefer derivation to a correspondence test, and a correspondence test to a comment.** Four separate rulings in this milestone (13, 17, 18, 23) reduce to the same finding: two lists that must agree with nothing checking that they do is *the* recurring defect shape in this codebase, named in §14.6 as the shared cause of two M7 defects. Deriving one from the other makes disagreement impossible; a correspondence test only makes it detectable; a comment makes it nothing.
 4. **Report what was not run.** Task 17's reviewer found the screen locked, said so three times in three rounds rather than reasoning and calling it verified, and that honesty is why §15.3 above is a usable list instead of a false one.
+
+---
+
+## 16. M9 execution record — hardening (2026-09-08)
+
+Spec §25; plan `docs/superpowers/plans/2026-09-08-metalnodes-m9-hardening.md`. Twelve implementation tasks, 18 commits on `m9-hardening` off `e7b9596`, run subagent-driven in three waves (six tasks in parallel worktrees, then the four `MSLScanner` tasks in series, then the sweep). Final whole-branch review on the most capable model, with six mutations of its own; one fix wave; one scoped re-review. **974 → 977 package tests** (322 UI / 77 Render / 578 Core), `swift build` warning-free, macOS and iOS `xcodebuild` warning-free under Xcode 26.6.
+
+### 16.1 What shipped
+
+| Task | Commit(s) | Item |
+|---|---|---|
+| 1 | `bfa733d`, `3c2dafc`, `afadd01` | One `MetalCompiler` test helper replaces **eight** inline `xcrun metal` probes (the plan said seven; `ShaderExportTests` had one too) and removes its temp directory |
+| 2 | `547d1b1` | Aspect-UV refusal under RealityKit ends with "or switch this node's Mode to Normalized"; corpus golden re-pinned |
+| 3 | `c49063d` | Every Material Output float socket declares `range: 0...1`, with a correspondence test |
+| 4 | `1fe160a` | CRLF normalised once in `MSLScanner.normalisedLineEndings`; validator's workaround deleted |
+| 5 | `9446fba` | `stripComments` and `tokenise` share `commentEnd(at:in:)` |
+| 6 | `4b54c47` | `LoopHardening` consumes `MSLScanner.loopOpeners`; ~60 duplicated lines gone; byte-for-byte goldens as the gate |
+| 7 | `47588a2`, `aae55e6` | `scopeBreakers` memoised in a bounded `Mutex`-guarded `ScanCache` (measured ~700× on the second pass); the bound itself is tested |
+| 8 | `d4978ec` | Export emits the geometry stage when the terminal's unwired Position Offset / Custom Attribute is edited away from its default, matching the preview |
+| 9 | `da0f119`, `39fa971` | Node label column derives from the shape's longest row label (`NodeGeometry.labelColumnWidth`, clamp 46…120); node widens by the same amount; anchors follow |
+| 10 | `70cf9ae`, `26b1a05` | macOS Undo/Redo items stay enabled and forward `undo:`/`redo:` to a focused `NSText`; iPadOS gating unchanged |
+| 11 | `cdbf96c` | Sweep: Expression wired in the library sweep; `precondition` → fallback; validator scans the trimmed formula; `withUniformSpeller` keeps `knownAccessors`; structural SSA assertions; T6 `.input` test |
+| 12 | `9adc0b5` | iOS floor 26.0 (`Package.swift` + exactly four `pbxproj` lines); `MTL_DEBUG_LAYER=1` on the scheme's test action; README recipe |
+| fix wave | `fc92f25` | Two gate holes closed (a wrapping `do … while` golden + compile test; a token after a multi-line block comment); explicit stored default emits no geometry stage; enumeration and multiline-text labels no longer widen a node |
+
+### 16.2 Rulings
+
+Every `Ruling:` line from the ledger, in order made. Each names what it costs if wrong.
+
+1. **Task 1 — replace the metal probe in `ShaderExportTests` too.** The brief said to leave that file alone; the spec says every copy goes through the helper. Costs one extra commit if wrong.
+2. **Task 10 — rewrite the comment paragraph the brief said to keep.** It claimed Undo/Redo were gated on `canvasHasFocus`, false on macOS after the change. Costs nothing if wrong.
+3. **Task 1 — add the temp-directory `defer` to the helper**, not to eight call sites. The plan's helper had no cleanup and dropped the one site that did. Costs nothing if wrong.
+4. **Task 9 — pin the widened-node test to hand-derived literals** (column 120, width 264) instead of the plan's tautology. Costs a literal update if the estimate constant ever changes.
+5. **Task 7 — add a direct `ScanCache` bound test**; the plan's eviction test could not detect an unbounded cache. Costs one test if wrong.
+6. **Final review — one fix wave for Important 1, Important 2, Minors 3, 4, 10.** Minor 4 makes a Math node 190 wide again (its "Operation" picker draws no column label). Costs a re-run of the label live check if wrong.
+7. **Final review — Minor 5 parked:** a Material Output placed from the palette lands 37 pt off-centre because placement centres on the base width. Cosmetic; M10.
+8. **Final review — Minor 8 parked:** the T14 line-owner assertion in `MaterialCompileTests` was never planned; the Render target compiles that program on a device already. M10 nice-to-have.
+9. **Re-review residual parked:** `NodeGeometry.labelColumnWidth`'s filter lets an `.asset` param count toward the column although the image well draws its label above the well, not in the column. Inert today (the only `.asset` param is inspector-only) — one line (`case .asset: return false`) for M10; no second fix wave by process. Costs a needlessly wide node if a future in-body asset param appears.
+10. **Spec §25 amended** (by the controller, same commit as this section) where it disagreed with what shipped: the clamp is 46…120 not 46…96; T6's `layer`/`position` sentence was stale; T14's second half is carried; `MTL_DEBUG_LAYER` reaches the UI-test action only.
+
+### 16.3 Live checks (spec §25.6)
+
+The four items no unit test can see. **Status at the time of writing: not run** — the screen locked (`CGSSessionScreenIsLocked=1`) after the M9 app was built and launched from `cdbf96c`; the app is still running and the checks take about ten minutes on an unlocked screen.
+
+1. Material Output's socket labels each on one line, the node visibly wider, wires still on the dots.
+2. ⌘Z in the inspector's formula field undoes typing and keeps focus; ⌘Z on the canvas undoes the document; the same pair inside and after the code editor.
+3. Roughness slider ends at 0.00 and 1.00.
+4. Aspect-mode UV under RealityKit: the strip ends with "or switch this node's Mode to Normalized".
+
+iPad ⌘Z behaviour is unverified (Task 10 kept its pre-M9 gating there).
+
+### 16.4 What the reviews caught that the tests did not
+
+- **Five of the plan's own test or helper snippets were defective** (rulings 1–5): a missed probe copy, a comment that became false, a leaked temp directory, a tautological width test, an eviction test that could not see an unbounded cache. Same rate as M8: roughly one defect per two tasks, all in the plan text, all caught at review.
+- **Two declared gates had holes only a mutation could show:** `isDo: false` survived 64 hardening tests because no golden had a `do … while` in an unbraced slot, and `line += 0` for block comments survived 974 tests because no test placed a token after a multi-line comment. Both would have let a future refactor emit invalid MSL silently. Closed in the fix wave.
+- **The label column widened nodes for labels that never sit in the column** (an enumeration picker's), found only by reading why a Math node's anchor test had moved.
+
+### 16.5 M10 starting list
+
+1. **Timeline and recording** (spec §17 Q4) — the milestone: a scrubable fixed-rate timeline with a frame counter, and image/video export of the preview.
+2. Minor 5: centre a newly placed node on its real width, not the base width.
+3. Minor 8: a line-owner assertion for the custom-attribute assignment in `MaterialCompileTests`.
+4. From §15.5, still open: per-task items T2, T5, T8; the Custom Code features M8 deferred by design (error gutter, `#include`, two open definitions, smart-quote suppression via a representable); checklist items 26, 36, 39–41 on a device.
+5. `NodeGeometry.labelColumnWidth`: add `case .asset: return false` (ruling 9).
+6. The `ScanCache` keys raw text, so CRLF and LF twins of one body take two slots; fine at 64 entries, worth a normalising key if the cache ever grows.
