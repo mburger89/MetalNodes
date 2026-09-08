@@ -417,3 +417,33 @@ import CoreGraphics
         #expect(m.codeDiagnostics(for: id).isEmpty)
     }
 }
+
+/// Final fix wave — F9: `.setDefinitionBody` applied to a `.graph` definition would have replaced
+/// the whole canvas with `.msl(text)`. Unreachable through the UI (the code editor mounts only for
+/// `.msl`), but Task 5's "a `.msl` body cannot become `.graph`" had no mirror until now.
+@Suite @MainActor struct DefinitionBodyKindGuardTests {
+    @Test func settingABodyOnAGraphDefinitionIsRefusedWithoutAnUndoStep() throws {
+        var doc = ShaderDocument()
+        let def = GroupDefinition.make(name: "Graph")
+        doc.definitions[def.id] = def
+        let m = EditorModel(document: doc, compiler: RecordingCompiler())
+        #expect(!m.isCustomCodeDefinition(def.id))
+
+        m.apply(.setDefinitionBody(def.id, "out = 1.0;"))
+        guard case .graph(let g) = try #require(m.document.definitions[def.id]).body else {
+            Issue.record("the graph body was replaced by text"); return
+        }
+        #expect(g == def.graph)
+        #expect(m.notice != nil)
+        #expect(!m.undoManager.canUndo)
+    }
+
+    /// The guard is on the body kind, not on the change: a `.msl` definition still takes its text.
+    @Test func settingABodyOnACodeDefinitionStillLands() throws {
+        let m = EditorModel(document: ShaderDocument(), compiler: RecordingCompiler())
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        #expect(m.isCustomCodeDefinition(id))
+        m.apply(.setDefinitionBody(id, "out = 2.0;"))
+        #expect(m.codeBody(for: id) == "out = 2.0;")
+    }
+}

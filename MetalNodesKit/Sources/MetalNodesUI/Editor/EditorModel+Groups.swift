@@ -114,6 +114,14 @@ extension EditorModel {
         return false
     }
 
+    /// Whether `id` names a definition whose body is text — the only kind `.setDefinitionBody`
+    /// may replace (`apply` refuses it for a `.graph` body, the mirror of Task 5's "a `.msl` body
+    /// cannot become `.graph`"). False for an unknown id too.
+    public func isCustomCodeDefinition(_ id: GroupID) -> Bool {
+        if case .msl = document.definitions[id]?.body { return true }
+        return false
+    }
+
     /// "Edit" in the palette: a definition with no instance to dive through (spec §20.6).
     public func editDefinition(_ id: GroupID) {
         guard document.definitions[id] != nil else { return }

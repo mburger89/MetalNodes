@@ -161,3 +161,98 @@ import CoreGraphics
         #expect(EditorModel.isLiveParameterReachable(orphan, in: nil))
     }
 }
+
+/// Final fix wave — F5 and F6.
+@Suite @MainActor struct LiveParameterPruningTests {
+    // MARK: F5 — a live path whose *param* is gone, with its node still present.
+
+    /// `uv.x * k` with `k` live, edited to `uv.x`: the socket is gone from the node's shape, the
+    /// export no longer reads the path, and the setting must not go on holding one of four slots
+    /// for it. An unrelated live path on another node survives the reshape, and undo brings the
+    /// pruned one back with the formula — it is the same change.
+    @Test func editingAFormulaAwayFromALiveSocketDropsItsLiveParameter() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var e = NodeInstance(kind: .builtin(ExpressionNode.id), position: .zero)
+        e.params[ExpressionNode.formulaParam] = .text("uv.x * k")
+        var f = NodeInstance(kind: .builtin("input.float"), position: CGPoint(x: 40, y: 0))
+        f.params["value"] = .float(1)
+        doc.root.nodes[e.id] = e
+        doc.root.nodes[f.id] = f
+        let m = EditorModel(document: doc, compiler: RecordingCompiler())
+        let k = ParamPath(node: e.id, param: "k")
+        let other = ParamPath(node: f.id, param: "value")
+        #expect(m.toggleLiveParameter(k))
+        #expect(m.toggleLiveParameter(other))
+
+        m.apply(.setParam(e.id, ExpressionNode.formulaParam, .text("uv.x")))
+        #expect(m.document.settings.liveParameters == [other])
+
+        m.undo()
+        #expect(m.document.settings.liveParameters == [k, other])
+        #expect(m.document.root.nodes[e.id]?.params[ExpressionNode.formulaParam] == .text("uv.x * k"))
+    }
+
+    /// A socket the formula still names keeps its mark — the prune is by the node's *current*
+    /// shape, not a blanket drop on every formula edit.
+    @Test func editingAFormulaThatKeepsTheSocketKeepsItsLiveParameter() {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var e = NodeInstance(kind: .builtin(ExpressionNode.id), position: .zero)
+        e.params[ExpressionNode.formulaParam] = .text("uv.x * k")
+        doc.root.nodes[e.id] = e
+        let m = EditorModel(document: doc, compiler: RecordingCompiler())
+        let k = ParamPath(node: e.id, param: "k")
+        _ = m.toggleLiveParameter(k)
+        m.apply(.setParam(e.id, ExpressionNode.formulaParam, .text("uv.y + k")))
+        #expect(m.document.settings.liveParameters == [k])
+    }
+
+    /// The same class on a definition instance: removing the definition's input drops the param
+    /// from every instance, and the live mark on it goes with it — the prune `.removeSocket`
+    /// already ran now judges the param half of the path too.
+    @Test func removingADefinitionInputDropsItsLiveParameter() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        let m = EditorModel(document: doc, compiler: RecordingCompiler())
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let instance = try #require(m.document.root.nodes.values.first { $0.kind == .group(id) })
+        let a = ParamPath(node: instance.id, param: "a")
+        #expect(m.toggleLiveParameter(a))
+        m.apply(.removeSocket(id, .input, "a"))
+        #expect(m.document.settings.liveParameters.isEmpty)
+    }
+
+    /// Renaming the input is not a removal: `GroupOperations.renameSocket` carries each instance's
+    /// value across, and the live mark follows the same way rather than being pruned.
+    @Test func renamingADefinitionInputCarriesItsLiveParameterAcross() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        let m = EditorModel(document: doc, compiler: RecordingCompiler())
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let instance = try #require(m.document.root.nodes.values.first { $0.kind == .group(id) })
+        #expect(m.toggleLiveParameter(ParamPath(node: instance.id, param: "a")))
+        m.apply(.renameSocket(id, .input, from: "a", to: "gain"))
+        #expect(m.document.settings.liveParameters == [ParamPath(node: instance.id, param: "gain")])
+    }
+
+    // MARK: F6 — `isLiveable(_ decl: ParamDecl)` is concretely `.float`, not any `.value`.
+
+    /// Widening the check to `if case .value = decl.kind` passed the whole suite: nothing pinned
+    /// that a declared vector param is refused the Live control. A `CustomMaterial`'s `float4`
+    /// holds one float per component, so only a `.value(.float, …)` param may be offered.
+    @Test func aDeclaredFloatParamIsLiveableAndAnyOtherKindIsNot() {
+        let float = ParamDecl(name: "k", kind: .value(.float, range: nil), defaultValue: .float(1))
+        #expect(EditorModel.isLiveable(float))
+        let float3 = ParamDecl(name: "v", kind: .value(.float3, range: nil), defaultValue: .float3(.zero))
+        #expect(!EditorModel.isLiveable(float3))
+        let color = ParamDecl(name: "c", kind: .value(.color, range: nil), defaultValue: .float4(.init(0, 0, 0, 1)))
+        #expect(!EditorModel.isLiveable(color))
+        let int = ParamDecl(name: "n", kind: .value(.int, range: nil), defaultValue: .int(1))
+        #expect(!EditorModel.isLiveable(int))
+        let mode = ParamDecl(name: "mode", kind: .enumeration(["a", "b"]), defaultValue: .enumCase("a"))
+        #expect(!EditorModel.isLiveable(mode))
+        let text = ParamDecl(name: "formula", kind: .text(multiline: false), defaultValue: .text(""))
+        #expect(!EditorModel.isLiveable(text))
+    }
+}

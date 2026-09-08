@@ -320,6 +320,15 @@ public final class EditorModel {
         // `isEditingCode`, not on the canvas view existing, so this holds even before Task 17's
         // code editor replaces it.
         if isEditingCode && change.touchesActiveGraph { return }
+        // The mirror of Task 5's "a `.msl` body cannot become `.graph`": a `.graph` definition has
+        // no body text to replace, and `perform` writes `.msl(text)` unconditionally — applied to
+        // a graph id it would overwrite the whole canvas with a string. No caller does that today
+        // (`CodeEditorView` mounts only for `.msl`), so this is refused here, before an undo step
+        // or a recompile is spent on it, rather than trusted to stay unreachable.
+        if case .setDefinitionBody(let id, _) = change, !isCustomCodeDefinition(id) {
+            showNotice("Only a Custom MSL definition has code to edit")
+            return
+        }
         if transactionSnapshot != nil {
             perform(change)
         } else {
@@ -353,6 +362,10 @@ public final class EditorModel {
                 document[path].inputs = document[path].inputs.filter {
                     $0.key.node != id || live.contains($0.key.socket)
                 }
+                // A live parameter naming a socket the new shape dropped (`uv.x * k` edited to
+                // `uv.x`, with `k` live) is the same dangling reference as that edge: the read
+                // silently vanishes from the export while the path still holds one of four slots.
+                pruneLiveParameters()
             }
         case .setTitle(let id, let title):
             document[path].nodes[id]?.customTitle = title.flatMap { $0.isEmpty ? nil : $0 }
@@ -411,7 +424,20 @@ public final class EditorModel {
         case .addSocket(let id, let kind, let decl):
             document = GroupOperations.addSocket(id, kind: kind, decl: decl, in: document) ?? document
         case .renameSocket(let id, let kind, let old, let new):
-            document = GroupOperations.renameSocket(id, kind: kind, from: old, to: new, in: document) ?? document
+            if let renamed = GroupOperations.renameSocket(id, kind: kind, from: old, to: new, in: document) {
+                document = renamed
+                // `GroupOperations.renameSocket` carries each instance's param value across to the
+                // new name; a live mark on that input follows it too, so the user's intent
+                // survives a rename rather than being pruned as a socket that no longer exists.
+                if kind == .input {
+                    let doc = document
+                    document.settings.liveParameters = document.settings.liveParameters.map { p in
+                        guard p.param == old, let node = p.instancePath.first,
+                              doc.node(node)?.node.kind == .group(id) else { return p }
+                        return ParamPath(instancePath: p.instancePath, param: new)
+                    }
+                }
+            }
             pruneAfterRemoval()                      // the viewed socket may have been the renamed one
         case .removeSocket(let id, let kind, let name):
             document = GroupOperations.removeSocket(id, kind: kind, name: name, in: document) ?? document
@@ -516,15 +542,27 @@ public final class EditorModel {
     /// reverted-to file that happens to carry a dangling live parameter (hand-edited, or written by
     /// a build with a bug of its own) is silently cleaned up with nothing to undo — the in-memory
     /// document quietly diverges from the bytes just read until the next save overwrites them.
+    ///
+    /// The *param* half of the path can dangle too, with the node still present: an Expression's
+    /// sockets are its formula's free identifiers, so editing `uv.x * k` to `uv.x` drops `k` from
+    /// the node's shape (`.setParam`), and removing a definition's input drops it from every
+    /// instance (`.removeSocket`). Either way the export stops reading the path — `bakedUniforms`
+    /// substitutes only for a field the layout actually requests — while the setting still holds
+    /// one of the four slots and documents nothing. So a path is also pruned when its node's
+    /// *current* shape declares neither a param nor an input of that name. A node whose shape
+    /// cannot be resolved at all (an unknown builtin, a missing definition) keeps its path: that
+    /// is a validation error the user sees, not a silent reshape.
     private func pruneLiveParameters() {
         // `doc` is a snapshot read before the mutation below, not `document` itself: the removal
         // closure's own lookups must not reach back through `self.document` while
         // `document.settings.liveParameters` is under exclusive access for the `removeAll`, or the
         // runtime traps on the overlapping access.
         let doc = document
-        document.settings.liveParameters.removeAll {
-            guard let id = $0.instancePath.first else { return true }
-            return doc.node(id) == nil
+        let registry = registry
+        document.settings.liveParameters.removeAll { path in
+            guard let id = path.instancePath.first, let (inst, gpath) = doc.node(id) else { return true }
+            guard let shape = doc.shape(of: inst, in: gpath, registry: registry) else { return false }
+            return shape.param(named: path.param) == nil && shape.input(named: path.param) == nil
         }
     }
 
