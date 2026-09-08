@@ -324,6 +324,26 @@ public enum MSLScanner {
         loopOpeners(tokenise(source)).filter(\.isBraced).map(\.line).sorted()
     }
 
+    /// The end (exclusive) of the comment that starts at `chars[i]`, or `nil` when no comment
+    /// starts there. A `//` comment ends at its newline, which is *not* consumed — both callers
+    /// need it, one to count and one to keep. A `/* … */` comment ends after its `*/`, or at the
+    /// text's end when unterminated. One routine, two readers (spec §25.3, handoff §15.5 item 14):
+    /// `tokenise` skips the span, `stripComments` blanks it.
+    private static func commentEnd(at i: Int, in chars: [Character]) -> Int? {
+        guard chars[i] == "/", i + 1 < chars.count else { return nil }
+        if chars[i + 1] == "/" {
+            var j = i + 2
+            while j < chars.count, chars[j] != "\n" { j += 1 }
+            return j
+        }
+        if chars[i + 1] == "*" {
+            var j = i + 2
+            while j + 1 < chars.count, !(chars[j] == "*" && chars[j + 1] == "/") { j += 1 }
+            return min(j + 2, chars.count)
+        }
+        return nil
+    }
+
     /// Blanks `//` and `/* … */` comment *content* to spaces while leaving every newline in place,
     /// so a caller that scans the result line by line still sees the user's own line numbers. Used
     /// by `scopeBreakers` so a preprocessor directive is recognised (or excused) exactly where MSL
@@ -339,26 +359,9 @@ public enum MSLScanner {
         var i = 0
         while i < chars.count {
             let c = chars[i]
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" {
-                    out.append(" ")
-                    i += 1
-                }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                out.append(" ")
-                out.append(" ")
-                i += 2
-                while i + 1 < chars.count, !(chars[i] == "*" && chars[i + 1] == "/") {
-                    out.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
-                let end = min(i + 2, chars.count)
-                while i < end {
-                    out.append(chars[i] == "\n" ? "\n" : " ")
-                    i += 1
-                }
+            if let end = commentEnd(at: i, in: chars) {
+                for k in i..<end { out.append(chars[k] == "\n" ? "\n" : " ") }
+                i = end
                 continue
             }
             out.append(c)
@@ -377,17 +380,9 @@ public enum MSLScanner {
         while i < chars.count {
             let c = chars[i]
             if c == "\n" { line += 1; i += 1; continue }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "/" {
-                while i < chars.count, chars[i] != "\n" { i += 1 }
-                continue
-            }
-            if c == "/", i + 1 < chars.count, chars[i + 1] == "*" {
-                i += 2
-                while i + 1 < chars.count, !(chars[i] == "*" && chars[i + 1] == "/") {
-                    if chars[i] == "\n" { line += 1 }
-                    i += 1
-                }
-                i = min(i + 2, chars.count)
+            if let end = commentEnd(at: i, in: chars) {
+                line += chars[i..<end].reduce(0) { $0 + ($1 == "\n" ? 1 : 0) }
+                i = end
                 continue
             }
             if c == "\"" {

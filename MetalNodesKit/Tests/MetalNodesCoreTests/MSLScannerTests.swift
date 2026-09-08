@@ -207,6 +207,23 @@ import Testing
     }
 }
 
+/// The two comment passes (`stripComments`, `tokenise`) share one skipper after Task 5 (spec
+/// §25.3, handoff §15.5 item 14); these pin the edges either could get wrong on its own.
+@Suite struct MSLScannerCommentTests {
+    /// The two comment passes share one skipper after Task 5; these pin the edges either could
+    /// get wrong on its own: an unterminated block comment, and a `//` on the last line.
+    @Test func anUnterminatedBlockCommentSwallowsTheRestWithoutCrashing() {
+        #expect(MSLScanner.identifiers(in: "a /* never closed b").isEmpty == false)
+        #expect(MSLScanner.identifiers(in: "a /* never closed b") == ["a"])
+        #expect(MSLScanner.scopeBreakers(in: "a /* { never closed").isEmpty)
+    }
+
+    @Test func aLineCommentOnTheLastLineEndsAtTheText() {
+        #expect(MSLScanner.identifiers(in: "a // b") == ["a"])
+        #expect(MSLScanner.scopeBreakers(in: "out = 1.0; // #include") .isEmpty)
+    }
+}
+
 /// CRLF normalisation is the scanner's job, on every public entry point (spec §25.2, handoff
 /// §15.5 item 6) — a Windows-pasted body must not report line 0 for everything.
 @Suite struct MSLScannerCRLFTests {
