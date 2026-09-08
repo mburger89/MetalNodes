@@ -236,6 +236,24 @@ import CoreGraphics
         #expect(m.document.settings.liveParameters == [ParamPath(node: instance.id, param: "gain")])
     }
 
+    /// The name the mark follows to is the one `GroupOperations.renameSocket` actually *wrote*,
+    /// not the raw text the inspector passed in: the operation sanitises ("my gain" becomes
+    /// `my_gain`), and a path rewritten to the raw name would name a socket that does not exist
+    /// and be pruned on the next line — the silent unmark the follow exists to prevent. The
+    /// identifier-clean rename above cannot see this; only a name sanitisation rewrites can.
+    @Test func renamingADefinitionInputToANameThatNeedsSanitisingStillCarriesTheMark() throws {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        let m = EditorModel(document: doc, compiler: RecordingCompiler())
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let instance = try #require(m.document.root.nodes.values.first { $0.kind == .group(id) })
+        #expect(m.toggleLiveParameter(ParamPath(node: instance.id, param: "a")))
+        m.apply(.renameSocket(id, .input, from: "a", to: "my gain"))
+        let written = try #require(m.document.definitions[id]?.inputs.first?.name)
+        #expect(written == "my_gain")
+        #expect(m.document.settings.liveParameters == [ParamPath(node: instance.id, param: written)])
+    }
+
     // MARK: F6 — `isLiveable(_ decl: ParamDecl)` is concretely `.float`, not any `.value`.
 
     /// Widening the check to `if case .value = decl.kind` passed the whole suite: nothing pinned

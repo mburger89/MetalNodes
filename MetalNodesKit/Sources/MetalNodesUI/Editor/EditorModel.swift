@@ -425,16 +425,27 @@ public final class EditorModel {
             document = GroupOperations.addSocket(id, kind: kind, decl: decl, in: document) ?? document
         case .renameSocket(let id, let kind, let old, let new):
             if let renamed = GroupOperations.renameSocket(id, kind: kind, from: old, to: new, in: document) {
-                document = renamed
                 // `GroupOperations.renameSocket` carries each instance's param value across to the
                 // new name; a live mark on that input follows it too, so the user's intent
                 // survives a rename rather than being pruned as a socket that no longer exists.
-                if kind == .input {
+                //
+                // The name it follows to is read back from the renamed definition, never `new`:
+                // `renameSocket` sanitises the text it is handed (`StitchableCodegen.sanitizedName`
+                // — "my gain" is written as `my_gain`) and the inspector passes the raw text in, so
+                // a path rewritten to `new` would name a socket that does not exist and be pruned
+                // on the very next line — the silent unmark this follow exists to prevent. The
+                // written name is the one input name the definition has now and did not have
+                // before; a no-op rename (sanitised `new` equals `old`) yields none, and nothing
+                // needs to move.
+                let before = Set(document.definitions[id]?.inputs.map(\.name) ?? [])
+                let written = renamed.definitions[id]?.inputs.map(\.name).first { !before.contains($0) }
+                document = renamed
+                if kind == .input, let written {
                     let doc = document
                     document.settings.liveParameters = document.settings.liveParameters.map { p in
                         guard p.param == old, let node = p.instancePath.first,
                               doc.node(node)?.node.kind == .group(id) else { return p }
-                        return ParamPath(instancePath: p.instancePath, param: new)
+                        return ParamPath(instancePath: p.instancePath, param: written)
                     }
                 }
             }
