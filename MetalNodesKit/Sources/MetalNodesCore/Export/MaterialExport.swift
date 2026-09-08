@@ -3,21 +3,42 @@ import Foundation
 /// What File ▸ Export Shader… writes for the RealityKit target (spec §23.6): a `.metal` holding
 /// both `[[visible]]` functions and a `.swift` snippet that builds the material.
 public enum MaterialExport {
-    /// `settings.liveParameters`, narrowed to the entries that actually reach the export, each kept
-    /// with its **original** index into `settings.liveParameters` — the index `bakedUniforms` itself
-    /// keys the component letter on (`EmitEnvironment.bakedUniforms`'s `live.firstIndex(of: path)`),
-    /// which does not shift when an earlier entry is dropped. A path with no matching field in
-    /// `shader.layout` requests nothing (`bakedUniforms` only substitutes for a path with a field),
-    /// so nothing in the emitted `.metal` reads `custom_parameter()` for it either — most commonly
-    /// because the parameter's input was rewired to a different node after being marked live, or a
-    /// document was hand-edited. Without this narrowing, `header` and `swiftSnippet` would still
-    /// document and seed a component the export never touches: the user writes to `.x` from Swift,
-    /// nothing animates, and nothing says why. Re-enumerating the *filtered* list from 0 instead of
-    /// keeping the original index would be a second bug of the same shape: entry 2 surviving while
-    /// entry 1 is dropped must still print `.z` (its real, unshifted position), not `.y`.
+    /// `settings.liveParameters`, narrowed to exactly the entries `bakedUniforms` itself would
+    /// substitute for — **the same two conditions**, `field(for:) != nil` *and* `.type == .float`,
+    /// not a filter that merely happens to agree with it. (A first version of this filter checked
+    /// field existence alone: `vector.dot`'s `a` and `b` are both `.generic("T")` with `a`'s own
+    /// default `.float(1)`; wiring `b` to a `float3` unifies `T` to `float3` for both, so the real
+    /// layout field for `a` is `p1: float3` — but `MaterialValidation.fieldType`'s fallback resolves
+    /// `a`'s *default value* rather than its resolved type and answered `.float`, so validation
+    /// passed it, and the field-existence-only filter here kept it too: the header advertised `.x`,
+    /// the snippet seeded `SIMD4<Float>(1.0, …)`, and the `.metal` baked `dot(float3(1.0, 1.0, 1.0),
+    /// …)` — no `custom_parameter()` anywhere. `bakedUniforms`'s own `f.type == .float` gate is what
+    /// actually decided this field bakes rather than substitutes; a second predicate that checked
+    /// something else and merely agreed with it most of the time was the bug, not a coincidence to
+    /// keep chasing case by case.)
+    ///
+    /// Each survivor keeps its **original** index into `settings.liveParameters` — the index
+    /// `bakedUniforms` itself keys the component letter on (`EmitEnvironment.bakedUniforms`'s
+    /// `live.firstIndex(of: path)`), which does not shift when an earlier entry is dropped. A path
+    /// filtered out here — because nothing requests its uniform slot at all (most commonly a
+    /// rewired input), or because its field is real but not a float (`vector.dot` above) — has
+    /// nothing in the emitted `.metal` reading `custom_parameter()` for it either. Without this
+    /// narrowing, `header` and `swiftSnippet` would still document and seed a component the export
+    /// never touches: the user writes to `.x` from Swift, nothing animates, and nothing says why.
+    /// Re-enumerating the *filtered* list from 0 instead of keeping the original index would be a
+    /// second bug of the same shape: entry 2 surviving while entry 1 is dropped must still print
+    /// `.z` (its real, unshifted position), not `.y`.
+    ///
+    /// The real gap `vector.dot` exposes — `fieldType` judging a generic input's *default value*
+    /// rather than its *resolved* type — stays open. Closing it needs type resolution inside
+    /// `MaterialValidation`, which runs before the emitter (`ShaderGenerator.swift:72`, gating
+    /// generation on its errors) and so cannot borrow the emitter's own resolved types without
+    /// running that pass twice per generation. This filter is the proportionate fix: it guarantees
+    /// the export's three artifacts — `.metal`, header, snippet — never disagree about which
+    /// component is real, even while validation can still be wrong about a generic path's type.
     private static func liveParameters(for shader: GeneratedShader, document doc: ShaderDocument) -> [(index: Int, path: ParamPath)] {
         doc.settings.liveParameters.enumerated()
-            .filter { shader.layout.field(for: $0.element) != nil }
+            .filter { shader.layout.field(for: $0.element)?.type == .float }
             .map { (index: $0.offset, path: $0.element) }
     }
 

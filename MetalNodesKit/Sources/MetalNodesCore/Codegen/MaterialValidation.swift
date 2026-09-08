@@ -258,12 +258,21 @@ public enum MaterialValidation {
     /// may hold at most four entries, no path may repeat (a duplicate would silently drop one
     /// component's worth of animation — the header and the Swift snippet would both list and seed
     /// two components from the same value), and every one of them must itself be a float — a live
-    /// vector or texture path has nowhere to go in that single `float4`. Nothing in this build's
-    /// editor can produce any of the three mistakes yet — the inspector has no Live affordance
-    /// until a later task — but a hand-edited or migrated document can carry one anyway, and this
-    /// rule is what stands between that document and a `.metal` export that fails to compile
-    /// (`length(params.uniforms().custom_parameter().x)` is ambiguous MSL for a float — see
-    /// `fieldType` below).
+    /// vector path (`float2`/`float3`/`float4`/`.color`) has nowhere to go in that single `float4`.
+    /// Nothing in this build's editor can produce any of the three mistakes yet — the inspector has
+    /// no Live affordance until a later task — but a hand-edited or migrated document can carry one
+    /// anyway, and this rule is what stands between that document and a `.metal` export that fails
+    /// to compile (`length(params.uniforms().custom_parameter().x)` is ambiguous MSL for a float —
+    /// see `fieldType` below).
+    ///
+    /// This only enforces the *vector* half of "not a float" — a live path naming a `.asset` param
+    /// (a texture slot) resolves to `nil` in `fieldType`, not to a type this rule can compare against
+    /// `.float`, so it is silently unjudged rather than refused. Harmless in practice: an asset
+    /// param never becomes a `UniformLayout` field either way (`UniformLayoutBuilder` only requests
+    /// uniformable — value-typed — params), so `MaterialExport.liveParameters` filters it out of the
+    /// header and snippet exactly as it does any other path with no matching field, and
+    /// `bakedUniforms` never reads it as a live substitution. Still worth a rule of its own one day
+    /// rather than relying on that filter to keep quiet about it.
     ///
     /// A path naming a node the document no longer has is *not* this rule's problem: `EditorModel`
     /// prunes a dangling live parameter the moment its node is deleted
@@ -300,6 +309,22 @@ public enum MaterialValidation {
     /// `ParamValues.value` itself would bake there — the same lookup `bakedUniforms` uses — whose
     /// `.socketType` is concrete. Only truly unresolvable paths (an id nothing in the document owns)
     /// come back `nil`, left unjudged rather than wrongly flagged.
+    ///
+    /// **The real gap this fallback still has:** it answers with the generic input's *own default
+    /// value*'s type, not the type `T` is actually *resolved to* at this instance. `vector.dot`
+    /// declares both `a` and `b` as `.generic("T")`, `a` defaulting to `.float(1)`; wiring only `b`
+    /// to a `float3` unifies `T` to `float3` for the instance, so the real `UniformLayout` field for
+    /// `a` ends up `float3` even though `a`'s own default is a bare `.float` — this fallback still
+    /// answers `.float`, wrongly. Closing that needs `TypeResolver`'s per-instance resolution
+    /// inside validation, and validation runs *before* the emitter that builds a `UniformLayout` at
+    /// all (`ShaderGenerator.swift:72` gates generation on validation's errors), so doing this
+    /// properly would mean re-running (or restructuring) the emitter's own generic-resolution pass
+    /// a second time just to validate. Not attempted here. What *is* guaranteed, regardless of this
+    /// gap: `MaterialExport.liveParameters` filters on the real `UniformLayout` field's own type —
+    /// built after resolution, downstream of this mistake — so a case like `vector.dot`'s never
+    /// reaches the header or the Swift snippet even when this rule wrongly lets it through
+    /// unrefused; it just bakes as a literal like any other non-live field, silently ignoring the
+    /// live mark rather than emitting a mistyped accessor.
     private static func fieldType(for path: ParamPath, in doc: ShaderDocument, registry: NodeRegistry) -> SocketType? {
         guard let nodeID = path.instancePath.first, let (inst, gpath) = doc.node(nodeID),
               let shape = doc.shape(of: inst, in: gpath, registry: registry) else { return nil }

@@ -142,4 +142,43 @@ import Testing
         #expect(!metal.contents.contains("Live parameters"))
         #expect(!swift.contents.contains("custom.value"))
     }
+
+    /// The gap `MaterialValidation.fieldType`'s doc comment now names explicitly: `vector.dot`
+    /// declares both `a` and `b` as `.generic("T")`, `a` defaulting to `.value(.float(1))`. Wiring
+    /// only `b` to a `float3` unifies `T` to `float3` for the *instance*, so the real
+    /// `UniformLayout` field for `a` ends up `float3` — but `fieldType`'s fallback answers with `a`'s
+    /// own *default value*'s type (`.float`), not its resolved one, so validation wrongly lets this
+    /// through with **zero diagnostics**.
+    ///
+    /// What must still hold, even though validation misses it: `MaterialExport.liveParameters`
+    /// filters on the real `UniformLayout` field's own type (`field(for:)?.type == .float`), which
+    /// is built *after* resolution — downstream of validation's mistake — so the header and the
+    /// Swift snippet must not advertise or seed `.x` for a slot the `.metal` never reads as live.
+    /// The field bakes as an ordinary literal instead, silently ignoring the live mark rather than
+    /// emitting a mistyped `dot(params.uniforms().custom_parameter().x, …)` that would fail to
+    /// compile — the same outcome `aGenericVectorLiveParameterIsRefused` gets from a validation
+    /// refusal, reached here through the export's own filter instead.
+    @Test func aGenericParameterResolvedToANonFloatTypeIsNotDocumentedOrSeededEvenThoughValidationMissesIt() throws {
+        var doc = document(live: 0)
+        let dot = NodeInstance(kind: .builtin("vector.dot"), position: .zero)
+        let vec3 = NodeInstance(kind: .builtin("input.float3"), position: .zero)
+        doc.root.nodes[dot.id] = dot
+        doc.root.nodes[vec3.id] = vec3
+        let terminal = doc.root.nodes.values.first { $0.kind == .builtin("output.material") }!
+        doc.root.inputs[SocketRef(dot.id, "b")] = SocketRef(vec3.id, "out")
+        doc.root.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(dot.id, "out")
+        doc.settings.liveParameters = [ParamPath(node: dot.id, param: "a")]
+
+        let errs = GraphValidator.validate(document: doc, registry: .builtin, target: .realityKit)
+            .filter { $0.severity == .error }
+        #expect(errs.isEmpty)
+
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(!(shader.exportSource ?? "").contains("custom_parameter()"))
+        let files = try ShaderExport.files(for: doc)
+        let metal = try #require(files.first { $0.name.hasSuffix(".metal") })
+        let swift = try #require(files.first { $0.name.hasSuffix(".swift") })
+        #expect(!metal.contents.contains("Live parameters"))
+        #expect(!swift.contents.contains("custom.value"))
+    }
 }
