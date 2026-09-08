@@ -117,6 +117,11 @@ public struct InspectorView: View {
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
                          image: model.assetThumbnail(for: value),
                          onChooseImage: { source in chooseImage(id, p.name, source) })
+            if model.document.settings.target == .realityKit, isLiveable(p) {
+                let path = ParamPath(node: id, param: p.name)
+                let index = model.liveParameterIndex(of: path)
+                liveToggle(index: index) { model.toggleLiveParameter(path) }
+            }
             // `id: \.offset`, not `\.self`: two distinct errors on the same formula (`return a;
             // return b;`) can be byte-identical `Diagnostic` values — same severity, message,
             // node, socket, userLine — and `Diagnostic` being `Hashable` is exactly what makes
@@ -159,6 +164,54 @@ public struct InspectorView: View {
                     .foregroundStyle(d.severity == .error ? DraculaTheme.error.color : DraculaToken.orange.color)
             }
         }
+    }
+
+    /// Whether `decl` may be marked live (spec §24.6): a `CustomMaterial`'s `float4` holds exactly
+    /// one float per component, so only a declared value param whose kind is concretely `.float`
+    /// qualifies — never an enum, asset, or text param, and never an unwired input socket's own
+    /// fallback control.
+    ///
+    /// Deliberately narrower than "every float-looking control in this pane": an unwired input can
+    /// declare a **generic** type (`vector.length`'s `v: .generic("T")`, defaulting to `.float2`),
+    /// and `TypeRef.concreteOrFloat` — already used a few lines up to label such a socket while type
+    /// resolution is pending — answers `.float` for *every* generic case regardless of what the
+    /// socket actually defaults to or resolves to per instance. Reusing that fallback here would
+    /// offer the toggle on a vector-typed generic input and let the user "mark" something that can
+    /// never reach `custom_parameter()` — the same class of gap `MaterialValidation.fieldType`'s doc
+    /// comment documents for `vector.dot`, where even *validation* can't always tell a generic
+    /// input's declared type from its per-instance resolved one without re-deriving type resolution.
+    /// A declared `ParamDecl`'s `kind` has no such gap: `ParamKind.value` carries a `SocketType`,
+    /// which has no `.generic` case at all — a param's type is exactly what its kind says, always —
+    /// so checking `decl.kind` directly is both simpler and correct where the socket-default path
+    /// is not. This does mean a generic input can never be marked live from this control, even one
+    /// that happens to resolve to `.float` today; `UniformLayout.liveField(for:)` — the export's own
+    /// predicate — would still refuse it were validation ever to let it through, so nothing unsound
+    /// reaches the export either way.
+    private func isLiveable(_ decl: ParamDecl) -> Bool {
+        if case .value(.float, _) = decl.kind { return true }
+        return false
+    }
+
+    /// The "Live" checkbox beside a markable param: on while its path holds a slot in
+    /// `settings.liveParameters`, labelled with the `custom_parameter()` component it lands in
+    /// (spec §24.6) so `custom_parameter().z` is traceable back to this row without reading the
+    /// export.
+    @ViewBuilder
+    private func liveToggle(index: Int?, toggle: @escaping () -> Void) -> some View {
+        Toggle(isOn: Binding(get: { index != nil }, set: { _ in toggle() })) {
+            HStack(spacing: 4) {
+                Text("Live")
+                if let i = index {
+                    Text("custom_parameter().\(EditorModel.liveParameterComponent(i))")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(DraculaToken.muted.color)
+                }
+            }
+        }
+        .font(.caption)
+        #if os(macOS)
+        .toggleStyle(.checkbox)
+        #endif
     }
 
     /// The image well's chooser: the model owns the "Choose Image" transaction (spec §21.2, §22.4),
@@ -215,6 +268,11 @@ public struct InspectorView: View {
                 .pickerStyle(.menu)
                 Text("The preview approximates RealityKit's lit model with Cook-Torrance GGX. It shows the material's shape, not RealityKit's exact output.")
                     .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+                if s.lightingModel == .clearcoat {
+                    Text("The preview approximates the coat with a second specular lobe; the exported material is exact.")
+                        .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+                }
+                liveParametersSection
             }
             HStack {
                 Text("Export name").font(.caption)
@@ -246,6 +304,41 @@ public struct InspectorView: View {
             assetsList
         }
         .textFieldStyle(.roundedBorder)
+    }
+
+    /// The four (or fewer) parameters marked live, in `custom_parameter()` order — the only place
+    /// all of them are visible together, and what makes `custom_parameter().z` in the export
+    /// traceable back to a node without reading the generated Swift (spec §24.6).
+    @ViewBuilder
+    private var liveParametersSection: some View {
+        let live = model.document.settings.liveParameters
+        if !live.isEmpty {
+            Divider()
+            Text("Live parameters").font(.caption).bold()
+            ForEach(Array(live.enumerated()), id: \.element) { index, path in
+                HStack {
+                    Text("custom_parameter().\(EditorModel.liveParameterComponent(index))")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(DraculaToken.muted.color)
+                    Text(liveParameterLabel(path)).font(.caption)
+                    Spacer()
+                    Button("Unmark") { model.toggleLiveParameter(path) }
+                        .buttonStyle(.plain).font(.caption2)
+                }
+            }
+        }
+    }
+
+    /// "Title.param" for a live parameter's path — the node's custom title if it has one, else its
+    /// shape's title, the same fallback `socketLabel(_:)` uses for a source ref. A path whose node
+    /// is gone can't reach here: `EditorModel.pruneLiveParameters` drops it the moment the node does.
+    private func liveParameterLabel(_ path: ParamPath) -> String {
+        guard let nodeID = path.instancePath.first, let (inst, _) = model.document.node(nodeID) else {
+            return path.param
+        }
+        let title = inst.customTitle ?? model.shape(of: nodeID)?.title ?? "?"
+        let paramLabel = model.shape(of: nodeID)?.params.first { $0.name == path.param }?.label ?? path.param
+        return "\(title).\(paramLabel)"
     }
 
     /// Every imported image the package carries (spec §21.1): removable only while nothing points
