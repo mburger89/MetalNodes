@@ -56,8 +56,9 @@ import CoreGraphics
         _ = m.toggleLiveParameter(p[0])
         _ = m.toggleLiveParameter(p[1])
         // `ParamPath` has no `.node` accessor (that's `SocketRef`'s) — the node id is the first
-        // (only, for these single-node paths) element of `instancePath`.
-        m.apply(.removeNodes([p[0].instancePath[0]]))
+        // (only, for these single-node paths) element of `instancePath`, the same lookup every
+        // other consumer (`doc.node(_:)`) uses.
+        m.apply(.removeNodes([p[0].instancePath.first!]))
         #expect(m.document.settings.liveParameters == [p[1]])
     }
 
@@ -65,5 +66,17 @@ import CoreGraphics
     @Test func componentLettersFollowTheOrder() {
         #expect(EditorModel.liveParameterComponent(0) == "x")
         #expect(EditorModel.liveParameterComponent(3) == "w")
+    }
+
+    /// `DocumentSettings.liveParameters` carries no cap of its own — a hand-edited or migrated
+    /// document can decode a fifth entry intact (`MaterialValidation`'s rule 6 is what refuses it,
+    /// as a diagnostic, not the decoder). `liveParameterComponent` must not trap on that: it is what
+    /// `InspectorView.documentSettings` calls, unconditionally, for every entry — and that pane is
+    /// what an empty selection renders at the document root, so a bare `Array` subscript there would
+    /// trap the instant such a document opened, before the user could do anything about it.
+    @Test func theComponentPastTheFourthIsNilRatherThanTrapping() {
+        #expect(EditorModel.liveParameterComponent(4) == nil)
+        #expect(EditorModel.liveParameterComponent(100) == nil)
+        #expect(EditorModel.liveParameterComponent(-1) == nil)
     }
 }
