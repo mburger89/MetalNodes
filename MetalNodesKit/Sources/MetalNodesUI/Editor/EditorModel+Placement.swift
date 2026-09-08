@@ -17,6 +17,17 @@ extension EditorModel {
         }
         let n = NodeInstance(kind: .builtin(defID), position: point)
         apply(.addNode(n))
+        // `apply` can refuse the whole change without this call ever being told — the HARD
+        // REQUIREMENT gate, inside a `.msl` definition's inert "canvas" (fix round 1, I5: the
+        // same shape `addInstance`/`insert` were already given the check for). Every route that
+        // reaches this method today — palette double-click, drag-and-drop, the ⇧A chooser — lives
+        // on `GraphCanvasView`, unmounted for exactly as long as the gate is shut, so this is
+        // currently unreachable; the check is here so the method's own contract does not depend
+        // on that staying true.
+        guard graph.nodes[n.id] != nil else {
+            showNotice("A Custom Code definition can't hold other nodes — exit it first")
+            return nil
+        }
         if select { self.select(n.id) }
         return n.id
     }

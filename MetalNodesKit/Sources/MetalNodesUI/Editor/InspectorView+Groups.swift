@@ -254,10 +254,13 @@ private struct AddSocketRow: View {
         }
     }
 
-    /// A texture-typed output has no valid `.msl` result-struct field (`GroupOperations.addSocket`'s
-    /// own guard); left off the picker so the common path never has to read the notice explaining it.
+    /// Neither an input nor an output can be texture-typed on a `.msl` definition (fix round 1,
+    /// I3 — an *input* has no core-level guard against it at all, unlike an output's, so leaving
+    /// it off this picker for both kinds is what actually stops it, not a belt-and-suspenders
+    /// extra): nothing here can ever bind a texture to it, and `EditorModel.addSocket(to:kind:decl:)`
+    /// would otherwise succeed and leave the document permanently invalid.
     private var typeOptions: [SocketType] {
-        kind == .output ? SocketType.allCases.filter { $0 != .texture } : SocketType.allCases
+        SocketType.allCases.filter { $0 != .texture }
     }
 
     private func add() {

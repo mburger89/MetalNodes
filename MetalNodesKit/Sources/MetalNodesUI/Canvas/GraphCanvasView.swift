@@ -313,6 +313,22 @@ public struct GraphCanvasView: View {
             transform = CanvasTransform.fitting(r, in: viewport, padding: 40)
             model.viewState.cameras[model.activePath] = transform.camera
         }
+        // Task 17 CRITICAL 2: this view is unmounted, not merely hidden, whenever the editor swaps
+        // it for `CodeEditorView` (diving into a `.msl` definition). Nothing else ever clears
+        // `canvasHasFocus` — `.onChange(of: canvasFocused)` needs a focus *change* to fire, and
+        // losing focus by disappearing entirely does not reliably produce one — so left alone it
+        // stays `true` from whatever it was the instant before, keeping every `canvasFocused`-gated
+        // menu command (`EditorCommands.swift`) enabled with nobody left to act on it. And a
+        // `canvasRequest` set while unmounted has no consumer: `.onChange(of: model.canvasRequest)`
+        // above only fires on a *change*, so a freshly remounted copy of this view treats whatever
+        // stale value is still sitting there as its own baseline and silently ignores it — the next
+        // *different* request clears the latch by accident, but an identical repeat of the same
+        // request stays dead. Clearing both here, on the way out, is what keeps a request issued
+        // while there is no canvas from becoming a request that is quietly dropped forever after.
+        .onDisappear {
+            model.canvasHasFocus = false
+            model.canvasRequest = nil
+        }
     }
 
     /// Where a palette double-click drops a node: the viewport's centre, offset so the node's

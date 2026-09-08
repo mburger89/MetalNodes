@@ -58,6 +58,24 @@ extension EditorModel {
         beginTransaction(undoName)
         apply(.insert(nodes: nodes, edges: edges, definitions: clip.definitions, assets: assets, stickies: stickies, frames: frames))
         endTransaction()
+        // `apply` can refuse the whole change without this call ever being told — most concretely
+        // the HARD REQUIREMENT gate, inside a `.msl` definition's inert "canvas" (`.insert` is one
+        // of the changes it refuses outright). Reporting the clipboard's own ids as "landed" for a
+        // paste or duplicate that inserted nothing would be the same lie `addInstance`/`addSocket`
+        // were fixed to stop telling (fix round 1, I4 — flagged, deliberately left, in this task's
+        // first pass; the earlier commit's justification that it was safe because `canCopy` is
+        // false inside a `.msl` definition is true of `duplicateSelection`, which reads the
+        // selection, but not of `paste`, which does not, so this is the honest fix rather than a
+        // rationale for continuing to skip it). Currently unreachable in practice — the canvas
+        // gesture, its context menu, and the pasteboard command all live on `GraphCanvasView`,
+        // which is unmounted for exactly as long as this gate is shut — but that is a property of
+        // today's UI wiring, not of this method's own contract.
+        guard ids.isSubset(of: graph.nodes.keys),
+              Set(stickies.map(\.id)).isSubset(of: graph.stickies.keys),
+              Set(frames.map(\.id)).isSubset(of: graph.frames.keys) else {
+            showNotice("\(undoName) isn't possible right now")
+            return []
+        }
         // Both sets at once: what was pasted is what is selected, comments included (spec §21.4).
         select(nodes: ids,
                comments: Set(stickies.map { CommentID.sticky($0.id) }).union(frames.map { CommentID.frame($0.id) }),

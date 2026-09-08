@@ -48,6 +48,27 @@ import CoreGraphics
         #expect(errs.isEmpty, "\(errs.map(\.message))")
     }
 
+    /// `.setDefinitionBody` must classify `.topology`, not `.parameter` or `.cosmetic` (Task 17
+    /// fix round 1, I1) — `.cosmetic` never calls `scheduleCompile()`, so editing a body would
+    /// never recompile and the diagnostics list — this task's whole deliverable — would never
+    /// update. 858/858 still passed with the misclassification in place, which is exactly why
+    /// this needs its own pin: it watches the generated *source*, not just that `apply` succeeded.
+    @Test func editingTheBodyRecompiles() async throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let instance = try #require(m.document.root.nodes.values.first { $0.kind == .group(id) })
+        let terminal = NodeInstance(kind: .builtin("output.fragment"), position: .zero)
+        m.apply(.addNode(terminal))
+        m.apply(.connect(from: SocketRef(instance.id, "out"), to: SocketRef(terminal.id, "color")))
+        m.start()
+        await m.awaitIdle()
+        #expect(m.generatedSource.contains("in_a * 2.0"))
+        m.apply(.setDefinitionBody(id, "out = in_a * 3.0;"))
+        await m.awaitIdle()
+        #expect(m.generatedSource.contains("in_a * 3.0"))
+        #expect(!m.generatedSource.contains("in_a * 2.0"))
+    }
+
     @Test func creatingOneIsASingleUndoStep() throws {
         let m = model()
         let before = m.document
@@ -151,7 +172,8 @@ import CoreGraphics
         let placed = m.addInstance(of: other.id, at: .zero)
         #expect(placed == nil)
         #expect(m.graph.nodes.count == nodesBefore)
-        #expect(m.notice != nil)
+        let notice = try #require(m.notice)
+        #expect(notice.localizedCaseInsensitiveContains("code"))
     }
 
     // MARK: HARD REQUIREMENT (Task 17) — the silent refusals get a `showNotice` explanation.
@@ -165,7 +187,8 @@ import CoreGraphics
         #expect(m.notice == nil)
         let created = m.newCustomCodeDefinition(at: CGPoint(x: 10, y: 10))
         #expect(created == nil)
-        #expect(m.notice != nil)
+        let notice = try #require(m.notice)
+        #expect(notice.localizedCaseInsensitiveContains("exit"))
     }
 
     /// Renaming a socket to a name the generated function's own signature already uses (spec
@@ -183,6 +206,22 @@ import CoreGraphics
         #expect(notice.localizedCaseInsensitiveContains("reserved"))
     }
 
+    /// A plain clash with a *sibling* socket's name is not the reserved-name case at all (fix
+    /// round 1, M4) — `renameSocket` must tell the two apart and give the right message for each.
+    @Test func renamingASocketToASiblingsNameIsRefusedAsAClashNotAsReserved() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        #expect(m.addSocket(to: id, kind: .input, decl: SocketDecl(name: "b", type: .concrete(.float))) == "b")
+        let ok = m.renameSocket(id, .input, from: "b", to: "a")
+        #expect(ok == false)
+        let def = try #require(m.document.definitions[id])
+        #expect(def.inputs.map(\.name) == ["a", "b"])   // untouched
+        let notice = try #require(m.notice)
+        #expect(notice.contains("a"))
+        #expect(notice.localizedCaseInsensitiveContains("already"))
+        #expect(!notice.localizedCaseInsensitiveContains("reserved"))
+    }
+
     /// Adding an input whose parameter spelling (`in_<name>`) collides with an *existing output's*
     /// own bare name is the cross-namespace reserved case (§24.5's `mslNameCollides` `.input`
     /// branch) — also refused, also explained.
@@ -197,7 +236,9 @@ import CoreGraphics
         #expect(created == nil)
         let def = try #require(m.document.definitions[id])
         #expect(def.inputs.map(\.name) == ["a"])   // nothing appended
-        #expect(m.notice != nil)
+        let notice = try #require(m.notice)
+        #expect(notice.contains("q"))
+        #expect(notice.localizedCaseInsensitiveContains("reserved"))
     }
 
     /// `addSocket` on a `.msl` definition is what the code-definition's own socket editor (Task
@@ -220,7 +261,64 @@ import CoreGraphics
         let id = try #require(m.newCustomCodeDefinition(at: .zero))
         let created = m.addSocket(to: id, kind: .output, decl: SocketDecl(name: "tex", type: .concrete(.texture)))
         #expect(created == nil)
-        #expect(m.notice != nil)
+        let notice = try #require(m.notice)
+        #expect(notice.localizedCaseInsensitiveContains("texture"))
+    }
+
+    /// Unlike an output, `GroupOperations.addSocket` has **no** guard at all against a
+    /// texture-typed *input* — only `EditorModel.addSocket(to:kind:decl:)`'s own pre-check does
+    /// (fix round 1, I3). Without it, this would silently succeed and leave the document
+    /// permanently invalid: no builtin has a texture output, and a `.msl` function is never given
+    /// `textureParams` to bind one through, so `GraphValidator` would report the new input
+    /// unconnectable forever.
+    @Test func addingATextureTypedInputIsRefusedWithAnExplanation() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        let created = m.addSocket(to: id, kind: .input, decl: SocketDecl(name: "tex", type: .concrete(.texture)))
+        #expect(created == nil)
+        let def = try #require(m.document.definitions[id])
+        #expect(def.inputs.map(\.name) == ["a"])   // nothing appended
+        let notice = try #require(m.notice)
+        #expect(notice.localizedCaseInsensitiveContains("texture"))
+    }
+
+    /// `paste` must not report success for nodes the gate refused to insert (fix round 1, I4) —
+    /// the same shape `addInstance`/`addSocket` were already given the check for. Unreachable
+    /// through the shipped UI today (every trigger for `paste` lives on `GraphCanvasView`, which
+    /// is unmounted for exactly as long as this gate is shut), but the method's own contract
+    /// should not depend on that being true forever, and this drives it directly rather than
+    /// through a UI path to prove the fix rather than the UI wiring around it.
+    @Test func pasteInsideACodeDefinitionIsHonestlyRefused() throws {
+        let pb = MemoryPasteboard()
+        let m = EditorModel(document: ShaderDocument(), compiler: RecordingCompiler(), pasteboard: pb)
+        let uv = NodeInstance(kind: .builtin("input.uv"), position: .zero)
+        m.apply(.addNode(uv))
+        m.select(uv.id)
+        m.copySelection()
+        #expect(m.canPaste)
+        let id = try #require(m.newCustomCodeDefinition(at: CGPoint(x: 100, y: 100)))
+        m.editDefinition(id)
+        #expect(m.isEditingCode)
+        let nodesBefore = m.graph.nodes.count
+        let pasted = m.paste(at: .zero)
+        #expect(pasted.isEmpty)
+        #expect(m.graph.nodes.count == nodesBefore)
+    }
+
+    /// `addNode(defID:at:)` must not report success for a node the gate refused to insert either
+    /// (fix round 1, I5) — `addInstance`'s own sibling, ten lines away in a different file.
+    /// Unreachable through the shipped UI (every route to this method lives on `GraphCanvasView`,
+    /// unmounted for exactly as long as the gate is shut), driven directly to prove the method's
+    /// own contract rather than the UI wiring that happens to keep it from firing today.
+    @Test func addNodeInsideACodeDefinitionIsHonestlyRefused() throws {
+        let m = model()
+        let id = try #require(m.newCustomCodeDefinition(at: .zero))
+        m.editDefinition(id)
+        #expect(m.isEditingCode)
+        let nodesBefore = m.graph.nodes.count
+        let created = m.addNode(defID: "input.uv", at: .zero)
+        #expect(created == nil)
+        #expect(m.graph.nodes.count == nodesBefore)
     }
 
     /// A plain, non-colliding name succeeds and lands as an ordinary socket — the notice

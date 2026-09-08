@@ -192,20 +192,33 @@ extension EditorModel {
     /// no pseudo-node `+` to wire into (`expose(_:in:decl:name:edge:)` is the `.graph` counterpart,
     /// reached by dragging a wire). Returns the name it actually landed under, uniqued against its
     /// siblings by `GroupOperations.addSocket`, or `nil` with a notice explaining why — a name
-    /// reserved by the generated function's own parameter list, or (an output) a texture type,
-    /// which no `.msl` result struct can express.
+    /// reserved by the generated function's own parameter list, or a texture type, which no group
+    /// function (either body kind) can bind one to.
+    ///
+    /// Texture is refused here, before `apply`, for *both* kinds — `GroupOperations.addSocket`'s
+    /// own guard only covers an output (fix round 1, I3): an input has no such guard at all, so an
+    /// unfiltered picker offering `.texture` there would succeed and leave the document permanently
+    /// invalid (`GraphValidator` reporting the new input "must be connected" forever, since no
+    /// builtin has a texture output and a `.msl` function is never given `textureParams` to bind
+    /// one through). `AddSocketRow`'s own picker also leaves `.texture` off both lists, so the
+    /// common path never reaches this branch at all — this is the backstop for any other caller.
     @discardableResult
     public func addSocket(to id: GroupID, kind: SocketKind, decl: SocketDecl) -> String? {
         guard let def = document.definitions[id] else { return nil }
-        let before = (kind == .input ? def.inputs : def.outputs).count
+        guard decl.type != .concrete(.texture) else {
+            showNotice("A texture-typed \(kind == .input ? "input" : "output") isn't valid here — nothing can bind a texture to it")
+            return nil
+        }
+        let existing = (kind == .input ? def.inputs : def.outputs).map(\.name)
+        // The name `GroupOperations.addSocket` will actually check for a reserved-name collision,
+        // computed the same way it computes it internally — so a refusal names the identifier that
+        // really collided, not the raw text the caller typed (fix round 1, M1: a sibling clash can
+        // still lengthen the candidate before the reserved check ever runs).
+        let uniqued = GroupOperations.uniqueSocketName(decl.name, among: existing)
         apply(.addSocket(id, kind, decl))
         let after = kind == .input ? document.definitions[id]?.inputs : document.definitions[id]?.outputs
-        guard let after, after.count == before + 1 else {
-            if kind == .output, decl.type == .concrete(.texture) {
-                showNotice("An output can't be a texture — a “.msl” result can only hold plain values")
-            } else {
-                showNotice(reservedSocketNotice(StitchableCodegen.sanitizedName(decl.name), kind: kind))
-            }
+        guard let after, after.count == existing.count + 1 else {
+            showNotice(reservedSocketNotice(uniqued, kind: kind))
             return nil
         }
         return after.last?.name
@@ -220,13 +233,22 @@ extension EditorModel {
         guard let def = document.definitions[id] else { return false }
         let sanitized = StitchableCodegen.sanitizedName(newName)
         guard sanitized != old else { return true }
+        let before = (kind == .input ? def.inputs : def.outputs).map(\.name)
         apply(.renameSocket(id, kind, from: old, to: newName))
-        let names = (kind == .input ? document.definitions[id]?.inputs : document.definitions[id]?.outputs)?.map(\.name) ?? []
-        guard !names.contains(old), names.contains(sanitized) else {
+        let after = (kind == .input ? document.definitions[id]?.inputs : document.definitions[id]?.outputs)?.map(\.name) ?? before
+        // Comparing the whole list, not just "does it contain the new name", is what tells a real
+        // refusal apart from every other reason `perform` could land here — fix round 1, M4: the
+        // previous check (`!names.contains(old), names.contains(sanitized)`) reported *every*
+        // refusal as "already used by a sibling", even `GroupOperations.renameSocket`'s other exit
+        // (`hasItsPseudoNodes` false on a structurally incomplete `.graph` definition) or a
+        // caller passing an `old` that no longer names a socket — neither of which is a name clash.
+        guard after != before else {
             if GroupOperations.mslReservedSocketName(sanitized, kind: kind, in: def) {
                 showNotice(reservedSocketNotice(sanitized, kind: kind))
-            } else {
+            } else if before.contains(sanitized) {
                 showNotice("“\(sanitized)” is already the name of another \(kind == .input ? "input" : "output")")
+            } else {
+                showNotice("That socket can't be renamed right now")
             }
             return false
         }
