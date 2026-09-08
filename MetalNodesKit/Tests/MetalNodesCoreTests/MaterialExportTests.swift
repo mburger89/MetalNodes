@@ -108,13 +108,7 @@ import Testing
     /// and `FragmentExportTests.exportedFragmentMetalCompilesWithTheToolchainWhenAvailable`: probe with
     /// `xcrun -sdk macosx metal --version` and skip silently when the toolchain is not available.
     @Test func theExportedMetalCompilesWithXcrunMetal() throws {
-        let probe = Process()
-        probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        probe.arguments = ["-sdk", "macosx", "metal", "--version"]
-        probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
-        guard (try? probe.run()) != nil else { return }
-        probe.waitUntilExit()
-        guard probe.terminationStatus == 0 else { return }
+        guard MetalCompiler.isAvailable else { return }
 
         var doc = ShaderDocument()
         doc.settings.target = .realityKit
@@ -216,19 +210,8 @@ import Testing
     /// rather than the toolchain's own default.
     private func expectMetalCompiles(_ doc: ShaderDocument, extraArgs: [String] = []) throws {
         let file = try #require(ShaderExport.files(for: doc).first { $0.name.hasSuffix(".metal") })
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-materialexport-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent(file.name)
-        try file.contents.write(to: url, atomically: true, encoding: .utf8)
-        let metal = Process()
-        metal.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        metal.arguments = ["-sdk", "macosx", "metal"] + extraArgs
-            + ["-c", url.path, "-o", dir.appendingPathComponent("out.air").path]
-        let err = Pipe(); metal.standardError = err; metal.standardOutput = FileHandle.nullDevice
-        try metal.run(); metal.waitUntilExit()
-        let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        #expect(metal.terminationStatus == 0,
-               "\(doc.settings.exportName)\(extraArgs.isEmpty ? "" : " \(extraArgs.joined(separator: " "))"): \(log)")
+        try MetalCompiler.expectCompiles(file.contents, extraArgs: extraArgs,
+            "\(doc.settings.exportName)\(extraArgs.isEmpty ? "" : " \(extraArgs.joined(separator: " "))")")
     }
 }
 

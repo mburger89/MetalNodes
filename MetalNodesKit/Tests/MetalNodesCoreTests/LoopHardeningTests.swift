@@ -10,13 +10,7 @@ import Foundation
     /// headers themselves. Skips silently (same pattern as `CustomMSLEmissionTests`) when the
     /// toolchain isn't installed.
     private func compiles(_ hardened: String) throws -> Bool {
-        let probe = Process()
-        probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        probe.arguments = ["-sdk", "macosx", "metal", "--version"]
-        probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
-        guard (try? probe.run()) != nil else { return true }
-        probe.waitUntilExit()
-        guard probe.terminationStatus == 0 else { return true }
+        guard MetalCompiler.isAvailable else { return true }
 
         let source = """
         #include <metal_stdlib>
@@ -28,18 +22,9 @@ import Foundation
             buf[0] = s;
         }
         """
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-loophardening-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("test.metal")
-        try source.write(to: url, atomically: true, encoding: .utf8)
-        let metal = Process()
-        metal.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        metal.arguments = ["-sdk", "macosx", "metal", "-c", url.path, "-o", dir.appendingPathComponent("out.air").path]
-        let err = Pipe(); metal.standardError = err; metal.standardOutput = FileHandle.nullDevice
-        try metal.run(); metal.waitUntilExit()
-        if metal.terminationStatus != 0 {
-            let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            Issue.record("metal -c failed for hardened body:\n\(hardened)\n\n\(log)")
+        let r = try MetalCompiler.compile(source)
+        if r.status != 0 {
+            Issue.record("metal -c failed for hardened body:\n\(hardened)\n\n\(r.log)")
             return false
         }
         return true

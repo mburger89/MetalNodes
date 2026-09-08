@@ -92,28 +92,12 @@ import CoreGraphics
     /// The export must be a valid Metal file. `xcrun metal` is not always installed; skip silently
     /// when it is not (copied from `ShaderExportTests.exportedMetalCompilesWithTheToolchainWhenAvailable`).
     @Test func exportedFragmentMetalCompilesWithTheToolchainWhenAvailable() throws {
-        let probe = Process()
-        probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        probe.arguments = ["-sdk", "macosx", "metal", "--version"]
-        probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
-        guard (try? probe.run()) != nil else { return }
-        probe.waitUntilExit()
-        guard probe.terminationStatus == 0 else { return }
+        guard MetalCompiler.isAvailable else { return }
 
         var sample = ShaderDocument.sample(); sample.settings.exportName = "sample"
         for d in [sample, texturedDoc()] {
             let files = try ShaderExport.files(for: d, registry: .builtin)
-            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-fragexport-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let url = dir.appendingPathComponent(files[0].name)
-            try files[0].contents.write(to: url, atomically: true, encoding: .utf8)
-            let metal = Process()
-            metal.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            metal.arguments = ["-sdk", "macosx", "metal", "-c", url.path, "-o", dir.appendingPathComponent("out.air").path]
-            let err = Pipe(); metal.standardError = err; metal.standardOutput = FileHandle.nullDevice
-            try metal.run(); metal.waitUntilExit()
-            let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            #expect(metal.terminationStatus == 0, "\(d.settings.exportName): \(log)")
+            try MetalCompiler.expectCompiles(files[0].contents, d.settings.exportName)
         }
     }
 }

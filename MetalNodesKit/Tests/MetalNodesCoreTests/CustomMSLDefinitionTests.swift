@@ -441,13 +441,7 @@ import Foundation
     /// compiling the generated scaffolding). `xcrun metal` is not always installed; skip silently
     /// when it is not (same pattern as `ExpressionNodeTests`).
     @Test func generatedMSLCompilesWithTheToolchainWhenAvailable() throws {
-        let probe = Process()
-        probe.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        probe.arguments = ["-sdk", "macosx", "metal", "--version"]
-        probe.standardOutput = FileHandle.nullDevice; probe.standardError = FileHandle.nullDevice
-        guard (try? probe.run()) != nil else { return }
-        probe.waitUntilExit()
-        guard probe.terminationStatus == 0 else { return }
+        guard MetalCompiler.isAvailable else { return }
 
         var def = GroupDefinition(name: "Kitchen Sink")
         def.outputs = [
@@ -478,16 +472,6 @@ import Foundation
         doc.settings.exportName = "mslkitchensink"
 
         let files = try ShaderExport.files(for: doc, registry: .builtin)
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-mslexport-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent(files[0].name)
-        try files[0].contents.write(to: url, atomically: true, encoding: .utf8)
-        let metal = Process()
-        metal.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        metal.arguments = ["-sdk", "macosx", "metal", "-c", url.path, "-o", dir.appendingPathComponent("out.air").path]
-        let err = Pipe(); metal.standardError = err; metal.standardOutput = FileHandle.nullDevice
-        try metal.run(); metal.waitUntilExit()
-        let log = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        #expect(metal.terminationStatus == 0, "\(log)")
+        try MetalCompiler.expectCompiles(files[0].contents)
     }
 }
