@@ -200,6 +200,8 @@ public enum MSLScanner {
 
         init(capacity: Int) { self.capacity = capacity }
 
+        var count: Int { values.count }
+
         mutating func value(for key: String, compute: () -> Value) -> Value {
             if let hit = values[key] { return hit }
             let v = compute()

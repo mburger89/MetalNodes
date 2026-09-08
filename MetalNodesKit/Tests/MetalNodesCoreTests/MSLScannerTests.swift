@@ -272,4 +272,23 @@ import Testing
         #expect(MSLScanner.scopeBreakers(in: first) == before)
         #expect(before == [MSLScanner.Violation(kind: .bareReturn, line: 1)])
     }
+
+    /// The bound itself, not just correctness under it: after more misses than the capacity, the
+    /// oldest key is gone (its compute runs again) and the newest is still held.
+    @Test func theCacheHoldsAtMostItsCapacity() {
+        var cache = MSLScanner.ScanCache<Int>(capacity: 3)
+        var computes = 0
+        func value(_ key: String) -> Int { cache.value(for: key) { computes += 1; return key.count } }
+        _ = value("a"); _ = value("b"); _ = value("c")
+        #expect(computes == 3)
+        _ = value("a")                       // hit: no compute
+        #expect(computes == 3)
+        _ = value("d")                       // fourth distinct key evicts the oldest, "a"
+        #expect(computes == 4)
+        #expect(cache.count == 3)
+        _ = value("a")                       // miss again: recomputed
+        #expect(computes == 5)
+        _ = value("d")                       // still held
+        #expect(computes == 5)
+    }
 }
