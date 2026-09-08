@@ -63,10 +63,11 @@ public struct EditorCommands: Commands {
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(model == nil)
         }
-        // Undo/Redo, Delete, and the View menu's bare-key shortcuts are gated on `canvasHasFocus`
-        // (rather than always enabled) so that, while a node parameter `TextField` is focused
-        // (canvas is not), these menu key equivalents go disabled and let the field editor's own
-        // Delete/⌘Z handling see the keystroke instead of the menu intercepting it first.
+        // Delete and the View menu's bare-key shortcuts are gated on `canvasHasFocus` (rather than
+        // always enabled) so that, while a node parameter `TextField` is focused (canvas is not),
+        // those menu key equivalents go disabled and let the field editor's own Delete handling
+        // see the keystroke instead of the menu intercepting it first. Undo/Redo are gated the
+        // same way on iPadOS; on macOS they are handled by the paragraph below instead.
         // The titles name the step ("Undo Move"): `commitUndo` sets an action name on every group,
         // and `UndoManager` composes the menu title from it. Reading `canUndo`/`canRedo` in the
         // same body is what re-evaluates these — they touch `undoStackVersion` (spec §18.6).
