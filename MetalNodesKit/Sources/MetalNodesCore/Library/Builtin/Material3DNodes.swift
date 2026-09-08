@@ -22,21 +22,21 @@ extension BuiltinNodes {
                                default: .value(.float4(.init(0.8, 0.8, 0.8, 1)))),
                     SocketDecl(name: "normal", label: "Normal", type: .concrete(.float3),
                                default: .value(.float3(.init(0, 0, 1)))),
+                    // `range:` on every float here because all are 0…1 by definition — the preview saturates them and
+                    // RealityKit clamps them — and without it the slider spans the −10…10 default
+                    // (in-app checklist item 10, found 2026-09-08: one drag baked `clearcoat = -10`).
                     SocketDecl(name: "roughness", label: "Roughness", type: .concrete(.float),
-                               default: .value(.float(0.5))),
+                               default: .value(.float(0.5)), range: 0...1),
                     SocketDecl(name: "metallic", label: "Metallic", type: .concrete(.float),
-                               default: .value(.float(0))),
+                               default: .value(.float(0)), range: 0...1),
                     SocketDecl(name: "emissive", label: "Emissive", type: .concrete(.color),
                                default: .value(.float4(.init(0, 0, 0, 1)))),
                     SocketDecl(name: "opacity", label: "Opacity", type: .concrete(.float),
-                               default: .value(.float(1))),
+                               default: .value(.float(1)), range: 0...1),
                     SocketDecl(name: "occlusion", label: "Ambient Occlusion", type: .concrete(.float),
-                               default: .value(.float(1))),
+                               default: .value(.float(1)), range: 0...1),
                     SocketDecl(name: "specular", label: "Specular", type: .concrete(.float),
-                               default: .value(.float(0.5))),
-                    // `range:` because both are 0…1 by definition — the preview saturates them and
-                    // RealityKit clamps them — and without it the slider spans the −10…10 default
-                    // (in-app checklist item 10, found 2026-09-08: one drag baked `clearcoat = -10`).
+                               default: .value(.float(0.5)), range: 0...1),
                     SocketDecl(name: "clearcoat", label: "Clearcoat", type: .concrete(.float),
                                default: .value(.float(0)), range: 0...1),
                     SocketDecl(name: "clearcoatRoughness", label: "Clearcoat Roughness", type: .concrete(.float),

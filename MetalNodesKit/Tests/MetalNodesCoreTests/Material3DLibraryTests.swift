@@ -88,4 +88,14 @@ import Testing
             }
         }
     }
+
+    /// Spec §25.2 (handoff §15.5 item 7): a float socket on the terminal is a 0…1 quantity by
+    /// definition, and the slider's own default is −10…10. Correspondence, so the next socket
+    /// cannot forget — clearcoat did until the 2026-09-08 walk baked `set_clearcoat(half(-10.0))`.
+    @Test func everyFloatInputOfMaterialOutputDeclaresAUnitRange() throws {
+        let def = try #require(NodeRegistry.builtin["output.material"])
+        for decl in def.inputs where decl.type == .concrete(.float) {
+            #expect(decl.range == 0...1, "\(decl.name) declares \(String(describing: decl.range))")
+        }
+    }
 }
