@@ -47,6 +47,8 @@ The package tests cover the document model, type system, codegen goldens, group 
 swift test --package-path MetalNodesKit
 ```
 
+Run GPU tests with `MTL_DEBUG_LAYER=1 swift test` to turn the Metal validation layer on locally; the shared scheme's test action sets it for `xcodebuild`.
+
 ## Project layout
 
 ```
