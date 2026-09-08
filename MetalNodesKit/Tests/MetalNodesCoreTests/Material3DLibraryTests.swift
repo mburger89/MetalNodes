@@ -7,11 +7,13 @@ import Testing
         return d
     }
 
-    @Test func theMaterialOutputHasNineSocketsInSpecOrder() {
+    @Test func theMaterialOutputHasTwelveSocketsInSpecOrder() {
         let d = def("output.material")
         #expect(d.category == .output)
         #expect(d.inputs.map(\.name) == ["baseColor", "normal", "roughness", "metallic",
-                                         "emissive", "opacity", "occlusion", "specular", "positionOffset"])
+                                         "emissive", "opacity", "occlusion", "specular",
+                                         "clearcoat", "clearcoatRoughness", "clearcoatNormal",
+                                         "positionOffset"])
         #expect(d.outputs.isEmpty)
     }
 
@@ -25,12 +27,16 @@ import Testing
         #expect(types["opacity"] == .concrete(.float))
         #expect(types["occlusion"] == .concrete(.float))
         #expect(types["specular"] == .concrete(.float))
+        #expect(types["clearcoat"] == .concrete(.float))
+        #expect(types["clearcoatRoughness"] == .concrete(.float))
+        #expect(types["clearcoatNormal"] == .concrete(.float3))
         #expect(types["positionOffset"] == .concrete(.float3))
     }
 
-    @Test func eightSocketsAreSurfaceAndOneIsGeometry() {
+    @Test func elevenSocketsAreSurfaceAndOneIsGeometry() {
         let surface = BuiltinNodes.materialStages.filter { $0.value == .surface }.keys.sorted()
-        #expect(surface == ["baseColor", "emissive", "metallic", "normal", "occlusion", "opacity", "roughness", "specular"])
+        #expect(surface == ["baseColor", "clearcoat", "clearcoatNormal", "clearcoatRoughness",
+                            "emissive", "metallic", "normal", "occlusion", "opacity", "roughness", "specular"])
         #expect(BuiltinNodes.materialStages["positionOffset"] == .geometry)
         // Every socket of the terminal has a stage; none is unclassified.
         #expect(Set(def("output.material").inputs.map(\.name)) == Set(BuiltinNodes.materialStages.keys))

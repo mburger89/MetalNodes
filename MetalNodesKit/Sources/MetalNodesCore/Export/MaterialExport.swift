@@ -49,6 +49,22 @@ public enum MaterialExport {
         EmitEnvironment.liveParameterComponents.indices.contains(index) ? EmitEnvironment.liveParameterComponents[index] : nil
     }
 
+    /// Whether `header` and `swiftSnippet` must both warn about `set_clearcoat_normal`'s higher OS
+    /// floor: the model is `.clearcoat` and something is wired to Clearcoat Normal. The one
+    /// predicate both read, so the `.metal` note and the Swift doc comment cannot disagree.
+    private static func clearcoatNormalNeedsAvailabilityNote(document doc: ShaderDocument) -> Bool {
+        guard doc.settings.lightingModel == .clearcoat,
+              let terminal = GraphValidator.terminal(in: doc.root, target: .realityKit) else { return false }
+        return doc.root.inputs[SocketRef(terminal, "clearcoatNormal")] != nil
+    }
+
+    /// The comment lines both `header` and `swiftSnippet` splice in verbatim when
+    /// `clearcoatNormalNeedsAvailabilityNote` is true — one wording, so the two cannot drift.
+    private static let clearcoatNormalAvailabilityNote = [
+        "Clearcoat Normal requires iOS 18 / macOS 15 or later — set_clearcoat_normal is newer than",
+        "the rest of the surface API. Remove that socket's wiring to target an earlier OS.",
+    ]
+
     /// The comment block prepended to the exported source: what this file is, which lighting model
     /// it was written for, every baked parameter with the node it came from, and the texture slot.
     public static func header(for shader: GeneratedShader, document doc: ShaderDocument,
@@ -62,9 +78,13 @@ public enum MaterialExport {
             "// Parameters are baked as literals unless marked live below: a CustomMaterial exposes",
             "// one float4 and one texture, so there is no uniform buffer to read most values from.",
             "// Edit the graph and re-export to change a baked value.",
-            "//",
-            "// Baked parameters:",
         ]
+        if clearcoatNormalNeedsAvailabilityNote(document: doc) {
+            lines.append("//")
+            lines += clearcoatNormalAvailabilityNote.map { "// \($0)" }
+        }
+        lines.append("//")
+        lines.append("// Baked parameters:")
         var any = false
         for f in shader.layout.fields {
             guard let path = f.path, !live.contains(where: { $0.path == path }) else { continue }
@@ -128,6 +148,10 @@ public enum MaterialExport {
         s += "enum \(name.prefix(1).uppercased() + name.dropFirst())Material {\n"
         s += "    struct NoMetalDevice: Error {}\n\n"
         s += "    /// Builds the material. Call once and reuse it — compiling shaders is not free.\n"
+        if clearcoatNormalNeedsAvailabilityNote(document: doc) {
+            s += "    ///\n"
+            s += clearcoatNormalAvailabilityNote.map { "    /// \($0)\n" }.joined()
+        }
         if hasTexture {
             s += "    /// - Parameter texture: assigned to `custom.texture`, the slot the graph's texture sample reads.\n"
         }

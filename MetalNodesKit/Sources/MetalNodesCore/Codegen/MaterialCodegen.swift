@@ -75,17 +75,24 @@ public extension MaterialCodegen {
         case "opacity":        "surface.set_opacity(half(\(e)));"
         case "occlusion":      "surface.set_ambient_occlusion(half(\(e)));"
         case "specular":       "surface.set_specular(half(\(e)));"
+        case "clearcoat":          "surface.set_clearcoat(half(\(e)));"
+        case "clearcoatRoughness": "surface.set_clearcoat_roughness(half(\(e)));"
+        case "clearcoatNormal":    "surface.set_clearcoat_normal(half3(\(e)));"
         case "positionOffset": "geo.set_model_position_offset(\(e));"
         default: nil
         }
     }
 
     /// Which sockets a lighting model actually renders (spec §23.7 rule 5). `.unlit` renders only
-    /// emissive, so emitting the other seven setters would be noise in the exported file.
+    /// emissive, so emitting the other setters would be noise in the exported file. The three
+    /// clearcoat setters are ignored by RealityKit unless the model is `.clearcoat` — the header's
+    /// own doc comments say so — so `.lit` must not emit them either (spec §24.7).
     static func liveSurfaceSockets(_ lighting: MaterialLightingModel) -> [String] {
         switch lighting {
         case .lit: ["baseColor", "normal", "roughness", "metallic", "emissive", "opacity", "occlusion", "specular"]
         case .unlit: ["emissive"]
+        case .clearcoat: ["baseColor", "normal", "roughness", "metallic", "emissive", "opacity",
+                          "occlusion", "specular", "clearcoat", "clearcoatRoughness", "clearcoatNormal"]
         }
     }
 }

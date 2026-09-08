@@ -1,11 +1,13 @@
 import Foundation
 
 extension BuiltinNodes {
-    /// Which stage each Material Output socket belongs to (spec §23.2). Eight surface sockets and
-    /// one geometry socket; the generator partitions the graph by this map.
+    /// Which stage each Material Output socket belongs to (spec §23.2). Eleven surface sockets —
+    /// the eight base ones plus the three clearcoat sockets (spec §24.7) — and one geometry socket;
+    /// the generator partitions the graph by this map.
     public static let materialStages: [String: MaterialStage] = [
         "baseColor": .surface, "normal": .surface, "roughness": .surface, "metallic": .surface,
         "emissive": .surface, "opacity": .surface, "occlusion": .surface, "specular": .surface,
+        "clearcoat": .surface, "clearcoatRoughness": .surface, "clearcoatNormal": .surface,
         "positionOffset": .geometry,
     ]
 
@@ -31,6 +33,12 @@ extension BuiltinNodes {
                                default: .value(.float(1))),
                     SocketDecl(name: "specular", label: "Specular", type: .concrete(.float),
                                default: .value(.float(0.5))),
+                    SocketDecl(name: "clearcoat", label: "Clearcoat", type: .concrete(.float),
+                               default: .value(.float(0))),
+                    SocketDecl(name: "clearcoatRoughness", label: "Clearcoat Roughness", type: .concrete(.float),
+                               default: .value(.float(0))),
+                    SocketDecl(name: "clearcoatNormal", label: "Clearcoat Normal", type: .concrete(.float3),
+                               default: .value(.float3(.init(0, 0, 1)))),
                     SocketDecl(name: "positionOffset", label: "Position Offset", type: .concrete(.float3),
                                default: .value(.float3(.init(0, 0, 0)))),
                 ],
@@ -38,7 +46,7 @@ extension BuiltinNodes {
                 // because one body cannot serve two stages with different setters (spec §23.2).
                 // `.custom` rather than an empty template because the emitter reads a template to
                 // decide which inputs are live: an empty one claims the terminal reads none of its
-                // nine sockets, so an unwired one would get no uniform slot, no baked literal and
+                // twelve sockets, so an unwired one would get no uniform slot, no baked literal and
                 // no setter — and spec §23.2 requires all eight surface setters, defaults included.
                 // `.custom` marks every input live and still contributes no statement of its own.
                 body: .custom { _ in [] }),

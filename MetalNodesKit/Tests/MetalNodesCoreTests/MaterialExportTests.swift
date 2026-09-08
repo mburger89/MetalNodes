@@ -146,6 +146,39 @@ import Testing
         liveDoc.root = lg
         liveDoc.settings.liveParameters = [ParamPath(node: rough.id, param: "value")]
         try expectMetalCompiles(liveDoc)
+
+        // Task 13 (spec §24.7): `.clearcoat` emits three more setters than `.lit`, one of them —
+        // `set_clearcoat_normal` — behind the availability trap the header must also note. Both the
+        // unwired shape (default clearcoat normal, no note) and the wired shape (the note, and a
+        // real expression reaching `set_clearcoat_normal`) get their own `.metal` here so the gate
+        // that actually runs `xcrun -sdk macosx metal -c` covers both, not just the text assertions
+        // in `ClearcoatTests`.
+        var clearcoatDoc = ShaderDocument()
+        clearcoatDoc.settings.target = .realityKit
+        clearcoatDoc.settings.exportName = "clearcoatCompileCheck"
+        clearcoatDoc.settings.lightingModel = .clearcoat
+        var ccg = Graph()
+        let ccTerminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        var ccStrength = NodeInstance(id: NodeID(), kind: .builtin("input.float"), position: .zero)
+        ccStrength.params["value"] = .float(0.6)
+        ccg.nodes[ccTerminal.id] = ccTerminal
+        ccg.nodes[ccStrength.id] = ccStrength
+        ccg.inputs[SocketRef(ccTerminal.id, "clearcoat")] = SocketRef(ccStrength.id, "out")
+        clearcoatDoc.root = ccg
+        try expectMetalCompiles(clearcoatDoc)
+
+        var clearcoatNormalDoc = ShaderDocument()
+        clearcoatNormalDoc.settings.target = .realityKit
+        clearcoatNormalDoc.settings.exportName = "clearcoatNormalCompileCheck"
+        clearcoatNormalDoc.settings.lightingModel = .clearcoat
+        var ccng = Graph()
+        let ccnTerminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        let ccnNormal = NodeInstance(id: NodeID(), kind: .builtin("input.normal3d"), position: .zero)
+        ccng.nodes[ccnTerminal.id] = ccnTerminal
+        ccng.nodes[ccnNormal.id] = ccnNormal
+        ccng.inputs[SocketRef(ccnTerminal.id, "clearcoatNormal")] = SocketRef(ccnNormal.id, "normal")
+        clearcoatNormalDoc.root = ccng
+        try expectMetalCompiles(clearcoatNormalDoc)
     }
 
     /// Writes `doc`'s exported `.metal` to a temp file and runs `xcrun -sdk macosx metal -c` over
@@ -173,7 +206,8 @@ import Testing
 /// `terminationStatus == 0`, which would not catch a *warning* (a `var` the snippet never mutates
 /// typechecks fine — it only warns). This one also fails on any `warning:` line on stderr.
 @Suite struct MaterialExportSwiftTypecheckTests {
-    private func doc(exportName: String, offset: Bool, texture: Bool, live: Bool = false) -> ShaderDocument {
+    private func doc(exportName: String, offset: Bool, texture: Bool, live: Bool = false,
+                     clearcoatNormal: Bool = false) -> ShaderDocument {
         var d = ShaderDocument()
         d.settings.target = .realityKit
         d.settings.exportName = exportName
@@ -200,6 +234,16 @@ import Testing
             g.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(f.id, "out")
             d.settings.liveParameters = [ParamPath(node: f.id, param: "value")]
         }
+        if clearcoatNormal {
+            // Task 13 (spec §24.7): the availability note this branch adds to `make()`'s doc
+            // comment must itself still typecheck as a doc comment — a malformed one would not
+            // fail `swiftc -typecheck`, so this exists mainly to keep the branch exercised here
+            // rather than only asserted as text in `ClearcoatTests`.
+            d.settings.lightingModel = .clearcoat
+            let n = NodeInstance(id: NodeID(), kind: .builtin("input.normal3d"), position: .zero)
+            g.nodes[n.id] = n
+            g.inputs[SocketRef(terminal.id, "clearcoatNormal")] = SocketRef(n.id, "normal")
+        }
         d.root = g
         return d
     }
@@ -213,16 +257,18 @@ import Testing
         let sdk = capture(["--show-sdk-path", "--sdk", "macosx"])?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let sdk, !sdk.isEmpty else { return }
 
-        let variants: [(name: String, offset: Bool, texture: Bool, live: Bool)] = [
-            ("noGeometryNoTexture", false, false, false),
-            ("geometryOnly", true, false, false),
-            ("textureOnly", false, true, false),
-            ("geometryAndTexture", true, true, false),
-            ("live", false, false, true),
-            ("liveAndTexture", false, true, true),
+        let variants: [(name: String, offset: Bool, texture: Bool, live: Bool, clearcoatNormal: Bool)] = [
+            ("noGeometryNoTexture", false, false, false, false),
+            ("geometryOnly", true, false, false, false),
+            ("textureOnly", false, true, false, false),
+            ("geometryAndTexture", true, true, false, false),
+            ("live", false, false, true, false),
+            ("liveAndTexture", false, true, true, false),
+            ("clearcoatNormalWired", false, false, false, true),
         ]
         for v in variants {
-            let d = doc(exportName: v.name, offset: v.offset, texture: v.texture, live: v.live)
+            let d = doc(exportName: v.name, offset: v.offset, texture: v.texture, live: v.live,
+                       clearcoatNormal: v.clearcoatNormal)
             let shader = try ShaderGenerator.generate(d, target: d.settings.target)
             let snippet = MaterialExport.swiftSnippet(for: shader, document: d, registry: .builtin)
 

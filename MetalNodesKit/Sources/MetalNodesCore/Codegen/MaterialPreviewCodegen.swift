@@ -66,6 +66,21 @@ public enum MaterialPreviewCodegen {
         return f0 + (1.0 - f0) * pow(saturate(1.0 - vdoth), 5.0);
     }
     """
+
+    /// The preview's clearcoat approximation (spec §24.7): a second, tighter GGX specular lobe over
+    /// the base response, reusing the same distribution/visibility/Fresnel helpers above. A
+    /// clearcoat is a thin dielectric — fixed F0 of 0.04, scaled by the coat's own strength — not
+    /// RealityKit's actual clearcoat model, which this only approximates.
+    static let clearcoatHelper = """
+    static inline float3 mn_clearcoatLobe(float3 n, float3 v, float3 l, float strength, float roughness) {
+        float3 h = normalize(v + l);
+        float a = max(roughness * roughness, 1e-3);
+        float d = mn_ggx_distribution(saturate(dot(n, h)), a);
+        float vis = mn_smith_visibility(saturate(dot(n, v)) + 1e-5, saturate(dot(n, l)), a);
+        // A clearcoat is a thin dielectric: fixed F0 of 0.04, scaled by the coat's strength.
+        return mn_schlick_fresnel(float3(0.04), saturate(dot(v, h))) * d * vis * strength;
+    }
+    """
 }
 
 extension MaterialPreviewCodegen {
@@ -175,7 +190,8 @@ extension MaterialPreviewCodegen {
                                     + groupFunctions.flatMap(\.requiredStdlib)) {
             b.add(f.source + "\n")
         }
-        if lighting == .lit { b.add(shadingHelpers + "\n") }
+        if lighting == .lit || lighting == .clearcoat { b.add(shadingHelpers + "\n") }
+        if lighting == .clearcoat { b.add(clearcoatHelper + "\n") }
         for f in groupFunctions { b.add(f.source, map: f.lineMap) }
 
         // Vertex stage.
@@ -235,7 +251,7 @@ extension MaterialPreviewCodegen {
         add("    float4 baseColor = \(value("baseColor", "float4(0.8, 0.8, 0.8, 1.0)"));", terminal)
         add("    float4 emissive = \(viewerExpression ?? value("emissive", "float4(0.0, 0.0, 0.0, 1.0)"));", terminal)
         add("    float opacity = \(value("opacity", "1.0"));", terminal)
-        guard lighting == .lit else {
+        guard lighting == .lit || lighting == .clearcoat else {
             add("    return float4(emissive.rgb, opacity);", terminal)
             return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
         }
@@ -259,7 +275,18 @@ extension MaterialPreviewCodegen {
         add("    float3 diffuse = baseColor.rgb * (1.0 - metallic) / 3.14159265;")
         add("    float3 direct = (diffuse + spec) * ndotl * 3.0;")
         add("    float3 ambient = baseColor.rgb * (1.0 - metallic) * 0.12 * occlusion;")
-        add("    return float4(direct + ambient + emissive.rgb, opacity);", terminal)
+        guard lighting == .clearcoat else {
+            add("    return float4(direct + ambient + emissive.rgb, opacity);", terminal)
+            return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
+        }
+        // The crudest part of the approximation: a second, tighter GGX lobe over the base response,
+        // lit by the same key light and shaped by its own strength/roughness/normal (spec §24.7).
+        add("    float mnClearcoatStrength = saturate(\(value("clearcoat", "0.0")));", terminal)
+        add("    float mnClearcoatRoughness = clamp(\(value("clearcoatRoughness", "0.0")), 0.03, 1.0);", terminal)
+        add("    float3 mnClearcoatTangentNormal = \(value("clearcoatNormal", "float3(0.0, 0.0, 1.0)"));", terminal)
+        add("    float3 nc = normalize(basis * normalize(mnClearcoatTangentNormal));")
+        add("    float3 clearcoatColor = mn_clearcoatLobe(nc, v, l, mnClearcoatStrength, mnClearcoatRoughness) * ndotl;")
+        add("    return float4(direct + ambient + clearcoatColor + emissive.rgb, opacity);", terminal)
         return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
     }
 

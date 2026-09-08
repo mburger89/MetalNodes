@@ -16,15 +16,16 @@ public enum MaterialStage: String, Codable, Sendable, CaseIterable, Hashable {
     }
 }
 
-/// `CustomMaterial.LightingModel`, minus `.clearcoat` — that model only unlocks setters no socket
-/// produces, so offering it would change nothing (spec §23.2).
+/// `CustomMaterial.LightingModel` (spec §23.2). `.clearcoat` was deferred until the terminal grew
+/// the sockets its setters need — see spec §24.7 for the preview's second-lobe approximation of it.
 public enum MaterialLightingModel: String, Codable, Sendable, CaseIterable, Hashable {
-    case lit, unlit
+    case lit, unlit, clearcoat
 
     public var title: String {
         switch self {
         case .lit: "Lit (PBR)"
         case .unlit: "Unlit"
+        case .clearcoat: "Clearcoat"
         }
     }
 

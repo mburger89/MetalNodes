@@ -12,7 +12,7 @@ import Metal
     /// the two axes that do change the generated program are lighting model and whether a
     /// geometry modifier is present. Swift Testing's `arguments:` cross-product overload takes at
     /// most two collections, which is the other reason this stays two-dimensional.
-    @Test(arguments: [MaterialLightingModel.lit, .unlit], [true, false])
+    @Test(arguments: [MaterialLightingModel.lit, .unlit, .clearcoat], [true, false])
     func everyThreeDimensionalProgramCompiles(_ lighting: MaterialLightingModel,
                                               _ withGeometry: Bool) async throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -45,6 +45,47 @@ import Metal
             return
         }
         #expect(pipeline.depthStencilState != nil)
+    }
+
+    /// `everyThreeDimensionalProgramCompiles` above exercises `.clearcoat` with its three clearcoat
+    /// sockets left at their defaults, which proves the *guard* (spec §24.7's second lobe still
+    /// compiles when unused) but not the *lobe itself* — a Metal source string can contain
+    /// `mn_clearcoatLobe(...)` and still fail to link if the call site's types are wrong. This test
+    /// wires Clearcoat, Clearcoat Roughness and Clearcoat Normal to real nodes so the generated
+    /// `nc`/`mnClearcoatStrength`/`mnClearcoatRoughness` locals and the `mn_clearcoatLobe` call are
+    /// genuinely reached by the GPU compiler, not merely present as dead text.
+    @Test func theClearcoatLobeCompilesWhenAllThreeSocketsAreWired() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        doc.settings.lightingModel = .clearcoat
+        var g = Graph()
+        let terminal = NodeInstance(id: NodeID(), kind: .builtin("output.material"), position: .zero)
+        var color = NodeInstance(id: NodeID(), kind: .builtin("input.color"), position: .zero)
+        color.params["value"] = .float4(.init(0.2, 0.6, 1, 1))
+        var strength = NodeInstance(id: NodeID(), kind: .builtin("input.float"), position: .zero)
+        strength.params["value"] = .float(0.8)
+        var roughness = NodeInstance(id: NodeID(), kind: .builtin("input.float"), position: .zero)
+        roughness.params["value"] = .float(0.1)
+        let normal = NodeInstance(id: NodeID(), kind: .builtin("input.normal3d"), position: .zero)
+        for n in [terminal, color, strength, roughness, normal] { g.nodes[n.id] = n }
+        g.inputs[SocketRef(terminal.id, "baseColor")] = SocketRef(color.id, "out")
+        g.inputs[SocketRef(terminal.id, "clearcoat")] = SocketRef(strength.id, "out")
+        g.inputs[SocketRef(terminal.id, "clearcoatRoughness")] = SocketRef(roughness.id, "out")
+        g.inputs[SocketRef(terminal.id, "clearcoatNormal")] = SocketRef(normal.id, "normal")
+        doc.root = g
+
+        let shader = try ShaderGenerator.generate(doc, target: .realityKit)
+        #expect(shader.source.contains("mn_clearcoatLobe("))
+        let compiler = try ShaderCompiler(device: device)
+        let result = await compiler.compile(shader, generation: 1)
+        guard case .success = result else {
+            Issue.record("clearcoat lobe compile failed: \(result)")
+            return
+        }
     }
 
     /// Every surface-legal 3D input node must genuinely reach the terminal and produce its own
