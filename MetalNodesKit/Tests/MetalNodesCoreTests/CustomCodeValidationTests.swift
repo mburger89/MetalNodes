@@ -92,6 +92,53 @@ import Testing
         #expect(errors(expressionDoc("float4(1.0, 0.0, 0.0, 1.0)")).isEmpty)
     }
 
+    /// Task 9 fix round 1 (MINOR 3): a scope-breaker diagnostic previously had no line at all —
+    /// `userLine` was always `nil`, even though `MSLScanner.Violation.line` already carried the
+    /// answer. A bare `return` on a definition's second line must report `userLine == 2` and
+    /// `definition` set to that definition, so a bare `return`, a `#define`, or an unbalanced brace
+    /// lands on the user's own line, not on no line at all.
+    @Test func aDefinitionDiagnosticCarriesTheUsersLineNumber() {
+        var doc = ShaderDocument()
+        var def = GroupDefinition(name: "W")
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.body = .msl("out = 1.0;\nreturn;")
+        doc.definitions[def.id] = def
+        var g = Graph()
+        let t = NodeInstance(kind: .builtin("output.fragment"), position: .zero)
+        g.nodes[t.id] = t
+        doc.root = g
+        let d = errors(doc).first { $0.message.lowercased().contains("return") }
+        #expect(d?.userLine == 2)
+        #expect(d?.definition == def.id)
+    }
+
+    /// The same, for an Expression's own formula — anchored by `node` (already asserted above),
+    /// never by `definition`, even when the Expression's diagnostic carries a line.
+    @Test func anExpressionFormulaDiagnosticCarriesTheUsersLineNumber() {
+        let doc = expressionDoc("return a;")
+        let d = errors(doc).first { $0.message.lowercased().contains("return") }
+        #expect(d?.userLine == 1)
+        #expect(d?.definition == nil)
+    }
+
+    /// The CRLF defect Task 9 fixed at `LoopHardening.hardened`'s boundary has a twin here:
+    /// `MSLScanner.tokenise` folds a `\r\n` pair into one `Character`, so without normalising the
+    /// text handed to the scanner, this diagnostic would report line 0 for a violation that is
+    /// really on the body's second physical line.
+    @Test func aCRLFDefinitionBodyStillReportsThePhysicalLineNumber() {
+        var doc = ShaderDocument()
+        var def = GroupDefinition(name: "W")
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.body = .msl("out = 1.0;\r\nreturn;")
+        doc.definitions[def.id] = def
+        var g = Graph()
+        let t = NodeInstance(kind: .builtin("output.fragment"), position: .zero)
+        g.nodes[t.id] = t
+        doc.root = g
+        let d = errors(doc).first { $0.message.lowercased().contains("return") }
+        #expect(d?.userLine == 2)
+    }
+
     /// A definition nothing instantiates still validates — a broken body the user is mid-edit on
     /// should show its error, not hide until wired.
     @Test func anUninstantiatedDefinitionIsStillChecked() {

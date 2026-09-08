@@ -129,7 +129,7 @@ extension MaterialCodegen {
         }
         b.add("    auto surface = \(EmitEnvironment.materialSurfaceAccessor);")
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
-            b.add("    " + line, owner: surface.lineOwners[i])
+            b.add(bodyLine: "    " + line, owner: surface.lineOwners[i], origin: surface.lineOrigins[i])
         }
         for socket in liveSurfaceSockets(lighting) {
             guard let e = surface.inputExpressions[terminal]?[socket],
@@ -148,7 +148,7 @@ extension MaterialCodegen {
             }
             b.add("    auto geo = \(EmitEnvironment.materialGeometryAccessor);")
             for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
-                b.add("    " + line, owner: geometry.lineOwners[i])
+                b.add(bodyLine: "    " + line, owner: geometry.lineOwners[i], origin: geometry.lineOrigins[i])
             }
             if let e = geometry.inputExpressions[terminal]?["positionOffset"],
                let statement = setterStatement(socket: "positionOffset", expression: e) {

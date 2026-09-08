@@ -122,7 +122,9 @@ public enum GroupCodegen {
             params += layer ? ["SwiftUI::Layer layer", "float2 position"]
                             : emitted.textureRequests.map { "texture2d<float> \($0.parameterName)" }
             b.add("\(outStruct) \(fnName)(\(params.joined(separator: ", "))) {")
-            for (i, line) in emitted.bodyLines.enumerated() { b.add("    " + line, owner: emitted.lineOwners[i]) }
+            for (i, line) in emitted.bodyLines.enumerated() {
+                b.add(bodyLine: "    " + line, owner: emitted.lineOwners[i], origin: emitted.lineOrigins[i])
+            }
             if let viewed {
                 writeEpilogue(&b, outStruct: outStruct, outputs: outputs, resultVar: "out") { _ in viewed.variable }
             } else {

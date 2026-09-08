@@ -41,6 +41,15 @@ public struct LineMap: Sendable, Hashable {
     /// The 1-based line of the user's own text that generated `line`, or `nil` when `line` did not
     /// come from user-authored code (scaffolding the emitter wrote, or a line `LoopHardening`
     /// inserted).
+    ///
+    /// **Numbering obligation for any consumer that shows this against the user's own text (e.g. a
+    /// code editor's gutter):** this number counts *physical* lines, because `LoopHardening.hardened`
+    /// normalises `\r\n`/`\r` to `\n` before splitting — Swift folds a `\r\n` pair into a single
+    /// `Character`, so counting on the raw stored text would undercount. `GroupDefinition.body`
+    /// itself is never rewritten (only the generated copy is), so it still stores whatever line
+    /// endings the user pasted. A consumer that numbers the editor's own gutter by splitting
+    /// `body`'s raw string on `"\n"` will therefore disagree with this method for a CRLF body,
+    /// unless it normalises identically first (spec §24.4, Task 9).
     public func userLine(forLine line: Int) -> Int? {
         for e in userEntries where e.range.contains(line) {
             let i = line - e.range.lowerBound

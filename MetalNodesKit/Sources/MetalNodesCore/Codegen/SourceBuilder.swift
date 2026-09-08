@@ -44,6 +44,19 @@ struct SourceBuilder {
         if let owner { own(first...last, owner) }
     }
 
+    /// Appends one already-indented `Emitter.Output.bodyLines` line, choosing the plain or the
+    /// user-text-recording path by `origin` — the single seam every consumer of an `Emitter.Output`
+    /// (a program's `shaderMain`, a group function's body, a stitchable export, a RealityKit stage)
+    /// runs its lines through, so an Expression node's own formula maps back to the user's line
+    /// wherever it ends up spliced, without repeating the branch at each call site (spec §24.4,
+    /// Task 9).
+    mutating func add(bodyLine line: String, owner: NodeID?, origin: Emitter.LineOrigin) {
+        switch origin {
+        case .generated: add(line, owner: owner)
+        case .user(let userLine): add(userText: [line], origins: [userLine], owner: owner)
+        }
+    }
+
     /// Appends `chunk` plus a trailing newline; returns the last line number it occupies.
     @discardableResult private mutating func append(_ chunk: String) -> Int {
         let count = chunk.split(separator: "\n", omittingEmptySubsequences: false).count

@@ -255,10 +255,12 @@ public enum ShaderGenerator {
                                    env: .fragment,
                                    reserved: viewer == nil ? UniformLayoutBuilder.standardReserved : UniformLayoutBuilder.viewerReserved,
                                    functions: functions)
-        var body = zip(emitted.bodyLines, emitted.lineOwners).map { (line: $0, owner: $1) }
+        var body = emitted.bodyLines.indices.map {
+            (line: emitted.bodyLines[$0], owner: emitted.lineOwners[$0], origin: emitted.lineOrigins[$0])
+        }
         if let v = viewer, let variable = emitted.outputVars[v], let type = resolved[v.node]?.outputTypes[v.socket],
            let wrap = ViewerWrap.statement(variable: variable, type: type) {
-            body.append((wrap, v.node))
+            body.append((wrap, v.node, .generated))
         }
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + groupFunctions.flatMap(\.requiredStdlib),
                                 functions: groupFunctions, body: body, textures: emitted.textureRequests)
@@ -280,7 +282,7 @@ public enum ShaderGenerator {
     /// The shape of every fragment program: includes, the uniform struct, `VertexOut`, the stdlib
     /// closure, the group functions, then `shaderMain`'s body.
     static func fragmentProgram(layout: UniformLayout, stdlib: [String], functions: [GroupFunction],
-                                body: [(line: String, owner: NodeID?)],
+                                body: [(line: String, owner: NodeID?, origin: Emitter.LineOrigin)],
                                 textures: [TextureSlot] = []) -> SourceBuilder {
         var b = SourceBuilder()
         b.add("#include <metal_stdlib>\nusing namespace metal;\n")
@@ -291,7 +293,9 @@ public enum ShaderGenerator {
         // statements inside a definition addressable from the program's lines (spec §21.8).
         for f in functions { b.add(f.source, map: f.lineMap) }
         b.add(fragmentSignature(textures: textures))
-        for statement in body { b.add("    " + statement.line, owner: statement.owner) }
+        for statement in body {
+            b.add(bodyLine: "    " + statement.line, owner: statement.owner, origin: statement.origin)
+        }
         b.add("}")
         return b
     }
@@ -335,7 +339,7 @@ public enum ShaderGenerator {
                                               textures: forExport ? [] : textures, forExport: forExport) + " {")
             b.add("    float2 uv = float2(position.x / size.x, 1.0 - position.y / size.y);")
             for (i, line) in e.bodyLines.enumerated() where e.lineOwners[i] != terminal {
-                b.add("    " + line, owner: e.lineOwners[i])
+                b.add(bodyLine: "    " + line, owner: e.lineOwners[i], origin: e.lineOrigins[i])
             }
             b.add("    " + StitchableCodegen.returnStatement(kind: kind, color: color), owner: terminal)
             b.add("}")

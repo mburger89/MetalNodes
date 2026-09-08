@@ -47,17 +47,24 @@ public enum ExpressionNode {
     /// unlike a `\b`-bounded regex, so is a real swizzle like `col.rgb` (`\b` is a Unicode word
     /// boundary, and `.` between letters does not break there, so a regex route silently never
     /// matches `col` in `col.rgb` at all).
-    static func template(for node: NodeInstance) -> String {
+    ///
+    /// `userLines` is `LoopHardening.hardened`'s own origins array, unchanged in length: wrapping
+    /// the hardened text in `{out.out} = … ;` only edits the *content* of the first and last line,
+    /// never the line count, so index `i` of `userLines` still names the origin of line `i` of
+    /// `text` (spec §24.4, Task 9). The formula field is `.text(multiline: false)`, so in the
+    /// ordinary case there is exactly one user line and `userLines == [0]` — a single-line formula
+    /// carries no *information* in that `0` beyond "this line is the user's own text"; the one case
+    /// where it grows past one element is a formula that itself writes a full one-line braced loop
+    /// (legal MSL, accepted by `MSLScanner.scopeBreakers`), which `LoopHardening` still hardens and
+    /// therefore still splits across lines here exactly as it would inside a Custom MSL body.
+    static func template(for node: NodeInstance) -> (text: String, userLines: [Int?]) {
         let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
         let trimmed = formula.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "{out.out} = 0.0;" }
-        // A one-line formula (the field is `.text(multiline: false)`) cannot contain a loop
-        // today, so `LoopHardening` never actually fires on this path — but calling it costs
-        // nothing and keeps the guarantee "every emitted loop is capped" true even if this field
-        // ever grows into a multi-line body.
-        let hardened = LoopHardening.harden(trimmed)
-        let body = MSLScanner.rewritingIdentifiers(in: hardened) { "{in.\($0)}" }
-        return "{out.out} = \(body);"
+        // Nothing was typed, so there is no user line to point a diagnostic at — `nil`, not `0`.
+        guard !trimmed.isEmpty else { return ("{out.out} = 0.0;", [nil]) }
+        let hardened = LoopHardening.hardened(trimmed)
+        let body = MSLScanner.rewritingIdentifiers(in: hardened.text) { "{in.\($0)}" }
+        return ("{out.out} = \(body);", hardened.userLines)
     }
 
     /// The shape of one instance: sockets from its formula, output from its type param.

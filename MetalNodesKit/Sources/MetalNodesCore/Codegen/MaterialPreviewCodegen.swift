@@ -73,9 +73,9 @@ extension MaterialPreviewCodegen {
     /// runs the geometry stage's statements, adds the resulting model-space offset, and interpolates
     /// everything the surface stage can read.
     static func vertexFunction(geometry: Emitter.Output, terminal: NodeID,
-                               textures: [TextureSlot]) -> [(line: String, owner: NodeID?)] {
-        var out: [(String, NodeID?)] = []
-        func add(_ l: String, _ o: NodeID? = nil) { out.append((l, o)) }
+                               textures: [TextureSlot]) -> [(line: String, owner: NodeID?, origin: Emitter.LineOrigin)] {
+        var out: [(String, NodeID?, Emitter.LineOrigin)] = []
+        func add(_ l: String, _ o: NodeID? = nil, _ origin: Emitter.LineOrigin = .generated) { out.append((l, o, origin)) }
         add("    MeshVertex vert = verts[vid];")
         add("    float3 offset = float3(0.0);")
         let offsetExpression = geometry.inputExpressions[terminal]?["positionOffset"]
@@ -104,7 +104,7 @@ extension MaterialPreviewCodegen {
             add("    MNGeometryParams params = MNGeometryParams{ u };")
         }
         for (i, line) in geometry.bodyLines.enumerated() where geometry.lineOwners[i] != terminal {
-            add("    " + line, geometry.lineOwners[i])
+            add("    " + line, geometry.lineOwners[i], geometry.lineOrigins[i])
         }
         if let e = offsetExpression {
             add("    offset = \(e);", terminal)
@@ -129,7 +129,7 @@ extension MaterialPreviewCodegen {
         add("    o.uv = vert.uv;")
         add("    o.color = vert.color;")
         add("    return o;")
-        return out.map { (line: $0.0, owner: $0.1) }
+        return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
     }
 
     /// The shim the geometry statements read. Its accessor names match
@@ -186,7 +186,7 @@ extension MaterialPreviewCodegen {
         vertexParams += textures.map { "texture2d<float> \($0.fragmentName) [[texture(\($0.index))]]" }
         b.add("vertex VertexOut \(vertexFunctionName)(" + vertexParams.joined(separator: ",\n" + String(repeating: " ", count: 24)) + ") {")
         for s in vertexFunction(geometry: geometry, terminal: terminal, textures: textures) {
-            b.add(s.line, owner: s.owner)
+            b.add(bodyLine: s.line, owner: s.owner, origin: s.origin)
         }
         b.add("}\n")
 
@@ -198,7 +198,7 @@ extension MaterialPreviewCodegen {
         b.add("fragment float4 \(ShaderGenerator.fragmentFunctionName)(" + fragmentParams.joined(separator: ",\n" + String(repeating: " ", count: 25)) + ") {")
         for line in fragmentBody(surface: surface, terminal: terminal, lighting: lighting,
                                  viewerExpression: viewerExpression) {
-            b.add(line.line, owner: line.owner)
+            b.add(bodyLine: line.line, owner: line.owner, origin: line.origin)
         }
         b.add("}")
         return b
@@ -211,9 +211,9 @@ extension MaterialPreviewCodegen {
     /// value flat on the mesh (spec §23.5).
     static func fragmentBody(surface: Emitter.Output, terminal: NodeID,
                              lighting: MaterialLightingModel,
-                             viewerExpression: String? = nil) -> [(line: String, owner: NodeID?)] {
-        var out: [(String, NodeID?)] = []
-        func add(_ l: String, _ o: NodeID? = nil) { out.append((l, o)) }
+                             viewerExpression: String? = nil) -> [(line: String, owner: NodeID?, origin: Emitter.LineOrigin)] {
+        var out: [(String, NodeID?, Emitter.LineOrigin)] = []
+        func add(_ l: String, _ o: NodeID? = nil, _ origin: Emitter.LineOrigin = .generated) { out.append((l, o, origin)) }
         let e = surface.inputExpressions[terminal] ?? [:]
         // `params` in the surface environment is RealityKit's; here the same accessor names are
         // served by a shim built from the interpolants. Declared only when a statement actually
@@ -229,7 +229,7 @@ extension MaterialPreviewCodegen {
             add("    MNSurface params = MNSurface{ in, cam, u };")
         }
         for (i, line) in surface.bodyLines.enumerated() where surface.lineOwners[i] != terminal {
-            add("    " + line, surface.lineOwners[i])
+            add("    " + line, surface.lineOwners[i], surface.lineOrigins[i])
         }
         func value(_ socket: String, _ fallback: String) -> String { e[socket] ?? fallback }
         add("    float4 baseColor = \(value("baseColor", "float4(0.8, 0.8, 0.8, 1.0)"));", terminal)
@@ -237,7 +237,7 @@ extension MaterialPreviewCodegen {
         add("    float opacity = \(value("opacity", "1.0"));", terminal)
         guard lighting == .lit else {
             add("    return float4(emissive.rgb, opacity);", terminal)
-            return out.map { (line: $0.0, owner: $0.1) }
+            return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
         }
         add("    float3 tangentNormal = \(value("normal", "float3(0.0, 0.0, 1.0)"));", terminal)
         add("    float roughness = clamp(\(value("roughness", "0.5")), 0.03, 1.0);", terminal)
@@ -260,7 +260,7 @@ extension MaterialPreviewCodegen {
         add("    float3 direct = (diffuse + spec) * ndotl * 3.0;")
         add("    float3 ambient = baseColor.rgb * (1.0 - metallic) * 0.12 * occlusion;")
         add("    return float4(direct + ambient + emissive.rgb, opacity);", terminal)
-        return out.map { (line: $0.0, owner: $0.1) }
+        return out.map { (line: $0.0, owner: $0.1, origin: $0.2) }
     }
 
     /// The surface shim: RealityKit's `params.geometry().x()` accessors served from interpolants.

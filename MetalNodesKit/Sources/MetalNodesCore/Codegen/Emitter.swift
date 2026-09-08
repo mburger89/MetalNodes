@@ -2,9 +2,21 @@ import Foundation
 
 /// Turns resolved nodes into SSA statements. Internal; `ShaderGenerator` is the API.
 enum Emitter {
+    /// Where one `Output.bodyLines` line's own text came from (spec §24.4, Task 9). Every line the
+    /// emitter itself wrote — a declaration, a group-call, a copy out of a result struct — is
+    /// `.generated`; the one exception is an Expression node's own substituted formula, which is
+    /// `.user`, carrying the 0-based line of the user's formula it came from (`nil` for a line
+    /// `LoopHardening` inserted). A caller that wants a compiler diagnostic to resolve back to the
+    /// user's own line records `.user` lines with `SourceBuilder.add(userText:origins:owner:)`
+    /// instead of the plain `add(_:owner:)` every `.generated` line still uses.
+    enum LineOrigin: Sendable, Equatable {
+        case generated
+        case user(Int?)
+    }
     struct Output {
         var bodyLines: [String] = []            // statements inside shaderMain, unindented
         var lineOwners: [NodeID?] = []          // parallel to bodyLines
+        var lineOrigins: [LineOrigin] = []      // parallel to bodyLines
         var layout: UniformLayout
         var requiredStdlib: [String] = []
         var outputVars: [SocketRef: String] = [:]
@@ -175,6 +187,7 @@ enum Emitter {
                 out.outputVars[SocketRef(id, decl.name)] = name
                 out.bodyLines.append("\(r.outputTypes[decl.name]!.mslName) \(name);")
                 out.lineOwners.append(id)
+                out.lineOrigins.append(.generated)
             }
             return outputs
         }
@@ -210,11 +223,22 @@ enum Emitter {
                                       types: r.generics, sys: env.readableSys, texture: texture)
 
                 let lines: [String]
+                let lineOrigins: [LineOrigin]
                 if isExpression {
                     // The template is the instance's formula with each identifier rewritten to the
                     // placeholder the substituter already understands, so one substitution path
-                    // serves both library bodies and user formulas (spec §24.2).
-                    lines = substitute(ExpressionNode.template(for: inst), ctx)
+                    // serves both library bodies and user formulas (spec §24.2). `templated.userLines`
+                    // is exactly `LoopHardening.hardened`'s own origins array (Task 9): wrapping the
+                    // hardened text in `{out.out} = … ;` only touches the first/last line's content,
+                    // never the line count, so it lines up 1:1 with `lines` once substitution has run
+                    // — substitution never introduces or removes a newline (every placeholder
+                    // resolves to a single-line expression), which the precondition below enforces
+                    // rather than assumes.
+                    let templated = ExpressionNode.template(for: inst)
+                    lines = substitute(templated.text, ctx)
+                    precondition(lines.count == templated.userLines.count,
+                                "Expression template's line count must match its userLines origins")
+                    lineOrigins = templated.userLines.map { .user($0) }
                 } else {
                     switch def.body {
                     case .template(let t): lines = substitute(t, ctx)
@@ -226,8 +250,11 @@ enum Emitter {
                         lines = substitute(def.variantCase(for: inst).flatMap { table[$0] } ?? "", ctx)
                     case .custom(let f): lines = f(ctx)
                     }
+                    lineOrigins = Array(repeating: .generated, count: lines.count)
                 }
-                for l in lines { out.bodyLines.append(l); out.lineOwners.append(id) }
+                for (l, o) in zip(lines, lineOrigins) {
+                    out.bodyLines.append(l); out.lineOwners.append(id); out.lineOrigins.append(o)
+                }
 
             case .groupInput:
                 // Each exposed input arrives as a function parameter (spec §20.4).
@@ -236,6 +263,7 @@ enum Emitter {
                 for decl in declared(s.outputs) {
                     out.bodyLines.append("\(outputs[decl.name]!) = in_\(decl.name);")
                     out.lineOwners.append(id)
+                    out.lineOrigins.append(.generated)
                 }
 
             case .groupOutput:
@@ -267,18 +295,21 @@ enum Emitter {
                 }
                 out.bodyLines.append("\(callee.structName) \(result) = \(callee.name)(\(args.joined(separator: ", ")));")
                 out.lineOwners.append(id)
+                out.lineOrigins.append(.generated)
                 if let viewed = fn.viewedType {
                     // A view variant yields one socket, `value`: the viewed node's output (spec §20.5).
                     let name = "v\(varCounter)"; varCounter += 1
                     out.outputVars[SocketRef(id, "value")] = name
                     out.bodyLines.append("\(viewed.mslName) \(name) = \(result).value;")
                     out.lineOwners.append(id)
+                    out.lineOrigins.append(.generated)
                     continue
                 }
                 let outputs = declareOutputs(id, s.outputs, r)
                 for decl in s.outputs {
                     out.bodyLines.append("\(outputs[decl.name]!) = \(result).\(decl.name);")
                     out.lineOwners.append(id)
+                    out.lineOrigins.append(.generated)
                 }
             }
         }

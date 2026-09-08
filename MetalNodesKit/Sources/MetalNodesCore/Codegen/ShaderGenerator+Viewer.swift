@@ -55,8 +55,10 @@ extension ShaderGenerator {
               let wrap = ViewerWrap.statement(variable: variable, type: type) else {
             throw .invalid([Diagnostic(.error, "The viewed socket no longer exists", node: v.node, socket: v.socket)])
         }
-        var body = zip(emitted.bodyLines, emitted.lineOwners).map { (line: $0, owner: $1) }
-        body.append((wrap, v.node))
+        var body = emitted.bodyLines.indices.map {
+            (line: emitted.bodyLines[$0], owner: emitted.lineOwners[$0], origin: emitted.lineOrigins[$0])
+        }
+        body.append((wrap, v.node, .generated))
 
         let all = groupFunctions + variants
         let b = fragmentProgram(layout: emitted.layout, stdlib: emitted.requiredStdlib + all.flatMap(\.requiredStdlib),
@@ -83,10 +85,10 @@ extension ShaderGenerator {
         args += outer.inputs.map(defaultArgument)
         args += outer.uniformParams.map { EmitEnvironment.fragment.uniform(layout.field(for: $0.path)!) }
         args += textures.map(\.fragmentName)
-        let body: [(line: String, owner: NodeID?)] = [
-            ("\(outer.structName) r0 = \(outer.name)(\(args.joined(separator: ", ")));", v.node),
-            ("\(type.mslName) v0 = r0.value;", v.node),
-            (wrap, v.node),
+        let body: [(line: String, owner: NodeID?, origin: Emitter.LineOrigin)] = [
+            ("\(outer.structName) r0 = \(outer.name)(\(args.joined(separator: ", ")));", v.node, .generated),
+            ("\(type.mslName) v0 = r0.value;", v.node, .generated),
+            (wrap, v.node, .generated),
         ]
         let all = groupFunctions + variants
         let b = fragmentProgram(layout: layout, stdlib: all.flatMap(\.requiredStdlib),
