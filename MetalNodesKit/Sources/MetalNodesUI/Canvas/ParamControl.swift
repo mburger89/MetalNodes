@@ -16,6 +16,9 @@ struct ParamControl: View {
     /// is no chooser at all (the node body's compact well), which hides them.
     var onChooseImage: ((ImageSource) -> Void)? = nil
 
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
     var body: some View {
         switch kind {
         case .value(let type, let range):
@@ -30,11 +33,41 @@ struct ParamControl: View {
             .font(.caption)
         case .asset:
             imageWell
-        case .text:
-            // Task 15 (spec §24.2) builds the real formula field. This arm exists so the switch
-            // stays exhaustive; no `.text` param is placed on a node until then.
-            EmptyView()
+        case .text(let multiline):
+            textField(multiline)
         }
+    }
+
+    /// A code field. It commits on Return or focus loss rather than per keystroke: a half-typed
+    /// formula is a compile error, and recompiling on every character would flood the canvas with
+    /// red (spec §24.2).
+    @ViewBuilder
+    private func textField(_ multiline: Bool) -> some View {
+        let current: String = { if case .text(let s) = value { return s } else { return "" } }()
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption).foregroundStyle(DraculaToken.muted.color)
+            TextField(label, text: $draft, axis: multiline ? .vertical : .horizontal)
+                .lineLimit(multiline ? 3...12 : 1...1)
+                .font(.system(.caption, design: .monospaced))
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+                #if !os(macOS)
+                .textInputAutocapitalization(.never)
+                #endif
+                .onSubmit { commitDraft() }
+                .onChange(of: focused) { _, now in
+                    onEditing?(now)
+                    if !now { commitDraft() }
+                }
+                .focused($focused)
+                .onAppear { draft = current }
+                .onChange(of: current) { _, new in if !focused { draft = new } }
+        }
+    }
+
+    private func commitDraft() {
+        if case .text(let s) = value, s == draft { return }
+        onChange(.text(draft))
     }
 
     /// The image well (spec §21.2): the imported image's thumbnail, a chooser to import another,

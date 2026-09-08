@@ -344,6 +344,16 @@ public final class EditorModel {
             document[path] = g
         case .setParam(let id, let key, let value):
             document[path].nodes[id]?.params[key] = value
+            // A param can change a node's shape (the Expression node's formula does, spec §24.2).
+            // An edge into a socket the new shape does not declare would be unreachable and
+            // uninspectable — prune it here, inside the same change, so undo restores both.
+            if !value.isUniformable, let n = document[path].nodes[id],
+               let newShape = document.shape(of: n, in: path, registry: registry) {
+                let live = Set(newShape.inputs.map(\.name))
+                document[path].inputs = document[path].inputs.filter {
+                    $0.key.node != id || live.contains($0.key.socket)
+                }
+            }
         case .setTitle(let id, let title):
             document[path].nodes[id]?.customTitle = title.flatMap { $0.isEmpty ? nil : $0 }
         case .connect(let from, let to):
@@ -623,6 +633,13 @@ public final class EditorModel {
     }
 
     public var errorNodes: Set<NodeID> { Set(diagnostics.filter { $0.severity == .error }.compactMap(\.node)) }
+
+    /// Diagnostics to show against one node, optionally narrowed to one socket or param.
+    /// `Diagnostic.socket` is a plain `String?` (`Diagnostic.swift:8`) — there is no `SocketID`
+    /// type. Passing `nil` returns every diagnostic on the node, socket-scoped ones included.
+    public func diagnostics(for node: NodeID, socket: String? = nil) -> [Diagnostic] {
+        diagnostics.filter { $0.node == node && (socket == nil || $0.socket == socket) }
+    }
 
     public func exportFiles() throws(GenerationError) -> [ExportFile] {
         try ShaderExport.files(for: document, registry: registry)

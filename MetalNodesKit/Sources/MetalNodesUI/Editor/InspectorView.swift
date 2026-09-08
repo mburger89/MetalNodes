@@ -117,6 +117,12 @@ public struct InspectorView: View {
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
                          image: model.assetThumbnail(for: value),
                          onChooseImage: { source in chooseImage(id, p.name, source) })
+            ForEach(model.diagnostics(for: id, socket: p.name), id: \.self) { d in
+                Label(d.message, systemImage: d.severity == .error ? "xmark.octagon" : "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(d.severity == .error ? DraculaToken.red.color : DraculaToken.yellow.color)
+                    .textSelection(.enabled)
+            }
         }
 
         // A pseudo-node's "outputs" are the definition's inputs and carry no ◉ (spec §20.8).

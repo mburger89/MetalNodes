@@ -21,7 +21,11 @@ enum NodeGeometry {
     /// Rows `NodeView` actually lays out: params with `showsInBody == false` live in the
     /// inspector only, so they take no vertical space here (spec §19.5).
     static func bodyRows(_ shape: NodeShape) -> Int {
-        shape.inputs.count + shape.params.filter(\.showsInBody).count + shape.outputs.count
+        let paramRows = shape.params.filter(\.showsInBody).reduce(0) { total, p in
+            if case .text(let multiline) = p.kind, multiline { return total + 3 }
+            return total + 1
+        }
+        return shape.inputs.count + paramRows + shape.outputs.count
     }
 
     static func estimatedSize(for shape: NodeShape) -> CGSize {
