@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 public struct EditorModelKey: FocusedValueKey {
     public typealias Value = EditorModel
@@ -31,6 +34,29 @@ public struct EditorCommands: Commands {
     /// `CommandGroup`, fix round 3.**
     private var canvasFocusedOrEditingCode: Bool { canvasFocused || (model?.isEditingCode ?? false) }
 
+    #if os(macOS)
+    /// True while an AppKit text view (a `TextField`'s field editor, a `TextEditor`'s `NSTextView`)
+    /// is the key window's first responder. `NSTextView` is an `NSText`, so one check covers both.
+    private var textViewIsFirstResponder: Bool { NSApp.keyWindow?.firstResponder is NSText }
+    private var undoDisabled: Bool { model == nil }
+    private var redoDisabled: Bool { model == nil }
+
+    private func undoCommand() {
+        if textViewIsFirstResponder { _ = NSApp.sendAction(Selector(("undo:")), to: nil, from: nil); return }
+        if canvasFocused, model?.canUndo == true { model?.undo() }
+    }
+
+    private func redoCommand() {
+        if textViewIsFirstResponder { _ = NSApp.sendAction(Selector(("redo:")), to: nil, from: nil); return }
+        if canvasFocused, model?.canRedo == true { model?.redo() }
+    }
+    #else
+    private var undoDisabled: Bool { !((model?.canUndo ?? false) && canvasFocused) }
+    private var redoDisabled: Bool { !((model?.canRedo ?? false) && canvasFocused) }
+    private func undoCommand() { model?.undo() }
+    private func redoCommand() { model?.redo() }
+    #endif
+
     public var body: some Commands {
         CommandGroup(after: .saveItem) {
             Button("Export Shader…") { model?.requestExport() }
@@ -45,31 +71,25 @@ public struct EditorCommands: Commands {
         // and `UndoManager` composes the menu title from it. Reading `canUndo`/`canRedo` in the
         // same body is what re-evaluates these — they touch `undoStackVersion` (spec §18.6).
         //
-        // DELIBERATELY still `canvasFocused` alone, not `canvasFocusedOrEditingCode` (fix round 3
-        // reverts fix round 2's widening here — Exit Group below keeps it, this does not, and that
-        // split is intentional, not an inconsistency to "fix" again). `CommandGroup(replacing:
-        // .undoRedo)` REPLACES AppKit's own nil-targeted Undo/Redo items with these fixed-action
-        // ones. A nil-targeted item is exactly what lets a focused `NSTextView`'s own field editor
-        // win a key equivalent — AppKit resolves a nil target down the responder chain from the
-        // first responder before the item's declared action ever runs. Once replaced, that
-        // mechanism is gone: an *enabled* `Button { model?.undo() }` fires unconditionally on ⌘Z,
-        // first responder or not, so widening this gate to `isEditingCode` would make ⌘Z reach
-        // `model.undo()` even while the user is mid-keystroke inside `TextEditor`. Combined with
-        // `CodeEditorView`'s own `.onChange(of: model.codeBody(for:))` watcher (fix round 1's
-        // Critical 1 fix), a popped step touching this definition's body would reseed `draft` and
-        // drop focus — discarding whatever the user had just typed and kicking them out of the
-        // editor mid-edit. Leaving this gate exactly as it already was is what keeps ⌘Z inside the
-        // editor doing field-editor *text* undo (the field editor is first responder, so the
-        // disabled menu item never fires and the text view's own local undo handles the key
-        // natively) — a document undo is still reachable by clicking out of the editor first, same
-        // as it always was for any other text field on the canvas.
+        // macOS (spec §25.2, handoff §15.5 item 9): the items stay enabled, and the *action*
+        // decides. With a text view as first responder — a node parameter field, the inspector's
+        // formula field, the code editor — ⌘Z is forwarded down the responder chain as `undo:`,
+        // so the field editor's own text undo fires; nothing reaches the model, which is what
+        // keeps ruling 26's data-loss path closed (a document undo can never reseed the code
+        // editor's draft mid-keystroke, because it is never called from here while one is
+        // focused). Otherwise the document undo runs exactly as before, gated on the canvas.
+        // Before M9 the items were *disabled* while a field was focused, and a disabled menu item
+        // swallows its key equivalent — ⌘Z did nothing at all inside any text view.
+        //
+        // iPadOS keeps the pre-M9 gating (recorded as unverified in handoff §16): UIKit's text
+        // views route ⌘Z through their own key commands, and this milestone verifies macOS only.
         CommandGroup(replacing: .undoRedo) {
-            Button(model?.undoManager.undoMenuItemTitle ?? "Undo") { model?.undo() }
+            Button(model?.undoManager.undoMenuItemTitle ?? "Undo") { undoCommand() }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(!((model?.canUndo ?? false) && canvasFocused))
-            Button(model?.undoManager.redoMenuItemTitle ?? "Redo") { model?.redo() }
+                .disabled(undoDisabled)
+            Button(model?.undoManager.redoMenuItemTitle ?? "Redo") { redoCommand() }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
-                .disabled(!((model?.canRedo ?? false) && canvasFocused))
+                .disabled(redoDisabled)
         }
         // iPad's Edit ▸ Cut / Copy / Paste / Delete / Select All (spec §22.5, and the ruling in the
         // M6 plan's Task 9: SwiftUI Commands, not a UIKit responder). macOS keeps the responder
