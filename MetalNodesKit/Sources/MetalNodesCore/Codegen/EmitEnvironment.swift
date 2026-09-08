@@ -265,20 +265,24 @@ public struct EmitEnvironment: Sendable {
     /// list picks — 0 is `.x`, 1 is `.y`, and so on — so up to four parameters can animate from
     /// Swift without a re-export.
     ///
-    /// Gated on `f.type == .float`: `MaterialValidation.liveParameterDiagnostics` refuses a
-    /// non-float live path before this ever runs, but if that check ever missed one (or a caller
+    /// Gated on `layout.liveField(for: path) != nil`, not a re-spelled `f.type == .float`: if
+    /// `MaterialValidation.liveParameterDiagnostics` ever missed a non-float live path (or a caller
     /// reaches this without validating first), the wrong move is to fall through to a normal baked
     /// literal, not to spell `custom_parameter().x` for a `float2` field — `length(float)` is
     /// ambiguous MSL, and a silently mistyped accessor is worse than a value that just doesn't
-    /// animate. Snapshotted against `layout` up front so the returned closure captures only strings
-    /// and stays `Sendable`.
+    /// animate. `liveField(for:)` is the one place that question is asked — `MaterialExport.liveParameters`
+    /// asks the identical question of the identical function, so the two can't drift the way two
+    /// independently spelled copies of "is this field legal to substitute" already did once
+    /// (`vector.dot`, fix round 2). Snapshotted against `layout` up front so the returned closure
+    /// captures only strings and stays `Sendable`.
     public static func bakedUniforms(layout: UniformLayout, document: ShaderDocument,
                                      registry: NodeRegistry) -> @Sendable (UniformField) -> String {
         let live = document.settings.liveParameters
         var mutableLiterals: [String: String] = [:]
         for f in layout.fields {
             guard let path = f.path else { continue }
-            if f.type == .float, let index = live.firstIndex(of: path), index < liveParameterComponents.count {
+            if let index = live.firstIndex(of: path), index < liveParameterComponents.count,
+               layout.liveField(for: path) != nil {
                 mutableLiterals[f.name] = "params.uniforms().custom_parameter().\(liveParameterComponents[index])"
                 continue
             }

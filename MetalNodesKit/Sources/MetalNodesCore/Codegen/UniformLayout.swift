@@ -32,6 +32,26 @@ public struct UniformLayout: Sendable, Hashable {
 
     public func field(for path: ParamPath) -> UniformField? { byPath[path].map { fields[$0] } }
 
+    /// `field(for:)`, narrowed to the one further question that decides whether a path marked live
+    /// (`DocumentSettings.liveParameters`, spec §24.6) can actually read the `CustomMaterial`'s
+    /// `float4` there: the field must exist — something in the graph requests it, or a rewired or
+    /// hand-edited path requests nothing — and it must be `.float`, since a `float2`/`float3`/
+    /// `float4`/`.color`/`.int`/`.bool` field has no legal single-component read from that `float4`.
+    ///
+    /// This is the *one* place that second question is asked. `EmitEnvironment.bakedUniforms`'s
+    /// substitution and `MaterialExport.liveParameters`'s export filter both call this rather than
+    /// each re-spelling `field(for: path)?.type == .float` inline — two copies of that condition
+    /// drifted apart once already (`vector.dot`, fix round 2): the export's filter checked field
+    /// existence alone while the emitter's substitution also checked `.float`, and a live path whose
+    /// generic input resolved to a vector slipped through the export's weaker filter and was
+    /// documented and seeded for a component the `.metal` never actually read live. A single
+    /// predicate can't drift from itself; asserting by doc comment that two independent spellings
+    /// "happen to agree" is the same shape of bug this method exists to close, one level up.
+    public func liveField(for path: ParamPath) -> UniformField? {
+        guard let f = field(for: path), f.type == .float else { return nil }
+        return f
+    }
+
     /// Names of the path-less (reserved) fields, in struct order.
     public var reservedNames: [String] { fields.filter { $0.path == nil }.map(\.name) }
 
