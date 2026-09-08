@@ -117,7 +117,12 @@ public struct InspectorView: View {
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
                          image: model.assetThumbnail(for: value),
                          onChooseImage: { source in chooseImage(id, p.name, source) })
-            ForEach(model.diagnostics(for: id, socket: p.name), id: \.self) { d in
+            // `id: \.offset`, not `\.self`: two distinct errors on the same formula (`return a;
+            // return b;`) can be byte-identical `Diagnostic` values — same severity, message,
+            // node, socket, userLine — and `Diagnostic` being `Hashable` is exactly what makes
+            // that collision possible. `id: \.self` would fold both into one SwiftUI row, so the
+            // user would see one error where the compiler reported two (Task 15 fix round 1).
+            ForEach(Array(model.diagnostics(for: id, socket: p.name).enumerated()), id: \.offset) { _, d in
                 Label(d.message, systemImage: d.severity == .error ? "xmark.octagon" : "exclamationmark.triangle")
                     .font(.caption2)
                     .foregroundStyle(d.severity == .error ? DraculaToken.red.color : DraculaToken.yellow.color)

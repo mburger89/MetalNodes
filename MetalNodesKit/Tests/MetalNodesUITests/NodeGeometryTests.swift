@@ -133,6 +133,40 @@ import MetalNodesCore
         #expect(NodeGeometry.estimatedSize(for: NodeShape(def: ramp)).height == 108)
     }
 
+    /// A probe shape with 1 input, 1 multiline `.text` param, 1 output: Task 15's code-editor
+    /// reuse (Task 17) needs a multiline param to take 3 rows, not 1. `bodyRows` reverted
+    /// wholesale to its pre-Task-15 one-liner (`inputs.count + params.filter(showsInBody).count +
+    /// outputs.count`) still passes every other test in this file, since none of them exercise a
+    /// multiline `.text` param — this is the one that would catch that regression.
+    private var multilineProbe: NodeShape {
+        NodeShape(title: "Probe", category: .utility,
+                  inputs: [SocketDecl(name: "in", type: .concrete(.float))],
+                  outputs: [SocketDecl(name: "out", type: .concrete(.float))],
+                  params: [ParamDecl(name: "body", label: "Body", kind: .text(multiline: true), defaultValue: .text(""))])
+    }
+
+    @Test func bodyRowsCountsAMultilineTextParamAsThreeRows() {
+        // 1 input + 3 (the multiline param) + 1 output
+        #expect(NodeGeometry.bodyRows(multilineProbe) == 5)
+    }
+
+    /// `bodyRows` and `socketAnchor` must agree on how many rows a body's params occupy — Task 15
+    /// fix round 1's IMPORTANT 1: `socketAnchor` used to add the *raw* param count (1) rather
+    /// than the row-aware count (3) when offsetting the output row, so a culled or low-LOD node's
+    /// wire endpoint landed 44 pt above where `estimatedSize`'s hit rect actually put the dot.
+    @Test func socketAnchorAgreesWithBodyRowsForAMultilineParam() throws {
+        let shape = multilineProbe
+        let node = NodeInstance(kind: .builtin("utility.probe"), position: .zero)
+        var g = Graph()
+        g.nodes[node.id] = node
+        let shapes: (NodeInstance) -> NodeShape? = { _ in shape }
+        let anchor = try #require(NodeGeometry.socketAnchor(for: SocketRef(node.id, "out"), in: g, shapes: shapes))
+        // header 26 + padding/2 8 + row(above: 1 input + 3 param rows = 4) × 22 + (22-6)/2 8 = 130
+        #expect(anchor.y == 130)
+        // `estimatedSize`'s height must reach at least as far as the socket it draws.
+        #expect(NodeGeometry.estimatedSize(for: shape).height > anchor.y)
+    }
+
     /// A group instance lays out its definition's exposed sockets, and a pseudo-node mirrors them
     /// (`GroupInput`'s outputs are the definition's inputs) — both have to get real frames, or
     /// culling, marquee hits and zoom-to-fit skip them entirely (spec §20.2).

@@ -23,9 +23,9 @@ import CoreGraphics
     }
 
     /// A single-line text param takes exactly one row, like any other body param.
-    @Test func aTextParamTakesTheRowsItNeeds() {
+    @Test func aTextParamTakesTheRowsItNeeds() throws {
         let (m, id) = model(formula: "a + b")
-        let shape = m.shape(of: m.document.root.nodes[id]!)!
+        let shape = try #require(m.shape(of: m.document.root.nodes[id]!))
         // 2 inputs (a, b) + 2 body params (formula, type) + 1 output
         #expect(NodeGeometry.bodyRows(shape) == 5)
     }
@@ -41,6 +41,13 @@ import CoreGraphics
 
     /// The wire into `b` has nowhere to land once `b` is gone. Leaving it would put an edge in the
     /// document naming a socket no shape declares — exactly the corruption class M7 closed.
+    ///
+    /// Also proves the prune is *scoped to the edited node*: a second, unrelated pair of nodes is
+    /// wired into a `math.math` socket also named "b" — a name that is not live on the edited
+    /// node's new shape either. A prune predicate that checked only "is this socket name live
+    /// on *some* node" (dropping the `$0.key.node != id` half of the filter) would delete that
+    /// wire too, even though it belongs to a different node entirely; only the node-scoping
+    /// distinguishes the two (Task 15 fix round 1, MINOR 4).
     @Test func aWireIntoADroppedSocketIsPruned() {
         let (m, id) = model(formula: "a + b")
         var src = NodeInstance(kind: .builtin("input.float"), position: .zero)
@@ -49,9 +56,17 @@ import CoreGraphics
         m.apply(.connect(from: SocketRef(src.id, "out"), to: SocketRef(id, "b")))
         #expect(m.document.root.inputs[SocketRef(id, "b")] != nil)
 
+        var otherSrc = NodeInstance(kind: .builtin("input.float"), position: .zero)
+        otherSrc.params["value"] = .float(3)
+        let other = NodeInstance(kind: .builtin("math.math"), position: .zero)
+        m.apply(.addNode(otherSrc))
+        m.apply(.addNode(other))
+        m.apply(.connect(from: SocketRef(otherSrc.id, "out"), to: SocketRef(other.id, "b")))
+
         m.apply(.setParam(id, ExpressionNode.formulaParam, .text("a * 2.0")))
         #expect(m.document.root.inputs[SocketRef(id, "b")] == nil)
         #expect(m.document.root.inputs[SocketRef(id, "a")] == nil)  // was never wired
+        #expect(m.document.root.inputs[SocketRef(other.id, "b")] == SocketRef(otherSrc.id, "out"))  // untouched: different node
     }
 
     /// Undo restores both the formula and the wire it dropped.

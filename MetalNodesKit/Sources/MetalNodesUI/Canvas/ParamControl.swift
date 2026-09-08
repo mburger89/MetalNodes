@@ -44,24 +44,56 @@ struct ParamControl: View {
     @ViewBuilder
     private func textField(_ multiline: Bool) -> some View {
         let current: String = { if case .text(let s) = value { return s } else { return "" } }()
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(DraculaToken.muted.color)
-            TextField(label, text: $draft, axis: multiline ? .vertical : .horizontal)
-                .lineLimit(multiline ? 3...12 : 1...1)
-                .font(.system(.caption, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                #if !os(macOS)
-                .textInputAutocapitalization(.never)
-                #endif
-                .onSubmit { commitDraft() }
-                .onChange(of: focused) { _, now in
-                    onEditing?(now)
-                    if !now { commitDraft() }
-                }
-                .focused($focused)
-                .onAppear { draft = current }
-                .onChange(of: current) { _, new in if !focused { draft = new } }
+        let field = TextField(label, text: $draft, axis: multiline ? .vertical : .horizontal)
+            .lineLimit(multiline ? 3...12 : 1...1)
+            .font(.system(.caption, design: .monospaced))
+            .textFieldStyle(.roundedBorder)
+            .autocorrectionDisabled()
+            // NOT `.smartQuotesDisabled()`/`.smartDashesDisabled()` (fix round 1 asked for
+            // these): neither exists in SwiftUI on macOS or iOS — grepped both platforms'
+            // `SwiftUI.swiftinterface` for "smart", "quotes" and "dashes" and found no such
+            // modifier, environment key, or `TextField` initializer parameter anywhere.
+            // `smartQuotesType`/`smartDashesType` are `UITextInputTraits` on `UITextField`
+            // directly; SwiftUI's `TextField` does not surface them, on either platform, and
+            // suppressing them would need a hand-rolled `NSViewRepresentable`/
+            // `UIViewRepresentable` wrapping the platform text field outright — out of scope for
+            // this fix round. `.autocorrectionDisabled()` (below) is the one suppression that
+            // exists and applies; a formula's real iPadOS hazard — `float3` capitalised,
+            // identifiers "corrected" — is autocorrection/autocapitalisation, not smart
+            // punctuation, and both of those are still disabled.
+            #if !os(macOS)
+            .textInputAutocapitalization(.never)
+            #endif
+            .onSubmit { commitDraft() }
+            .onChange(of: focused) { _, now in
+                // The commit must land *inside* the transaction `onEditing?(true)` opened on
+                // focus gain, so the whole edit — not just its snapshot — closes as one undo
+                // step when `onEditing?(false)` below ends it. Committing after would leave the
+                // transaction's snapshot equal to the still-uncommitted document, so
+                // `endTransaction`'s own `commitUndo` would register nothing, and the actual
+                // write would land as its own separate, untransacted step instead (Task 15 fix
+                // round 1, MUST-FIX 7).
+                if !now { commitDraft() }
+                onEditing?(now)
+            }
+            .focused($focused)
+            .onAppear { draft = current }
+            .onChange(of: current) { _, new in if !focused { draft = new } }
+
+        if multiline {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.caption).foregroundStyle(DraculaToken.muted.color)
+                field
+            }
+        } else {
+            // One row, like every other body control: `NodeGeometry.paramRows` counts a
+            // single-line `.text` param as exactly one row, so it must actually draw as one — a
+            // separate caption line above the field, as the multiline case has room for, would
+            // silently understate the node's real height (Task 15 fix round 1, MUST-FIX 3).
+            HStack(spacing: 4) {
+                Text(label).font(.caption).frame(width: 46, alignment: .leading)
+                field
+            }
         }
     }
 

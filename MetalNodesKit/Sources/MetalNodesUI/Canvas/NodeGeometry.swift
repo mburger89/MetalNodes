@@ -18,14 +18,24 @@ enum NodeGeometry {
     /// A `.dot` node (Reroute) is square and has no header or body (spec §19.5).
     static let dotSize: CGFloat = 24
 
-    /// Rows `NodeView` actually lays out: params with `showsInBody == false` live in the
-    /// inspector only, so they take no vertical space here (spec §19.5).
-    static func bodyRows(_ shape: NodeShape) -> Int {
-        let paramRows = shape.params.filter(\.showsInBody).reduce(0) { total, p in
+    /// Rows a shape's body params take: params with `showsInBody == false` live in the
+    /// inspector only, so they take no vertical space here (spec §19.5). A multiline `.text`
+    /// param (Task 17's code editor reusing `ParamControl`) needs 3; every other param, single-line
+    /// `.text` included, takes the one row every other control does.
+    ///
+    /// Shared by `bodyRows` and `socketAnchor`'s output-row offset — both must agree on how many
+    /// rows a body's params occupy, or a node's estimated height and its socket dots' computed
+    /// positions disagree (Task 15 fix round 1).
+    static func paramRows(_ shape: NodeShape) -> Int {
+        shape.params.filter(\.showsInBody).reduce(0) { total, p in
             if case .text(let multiline) = p.kind, multiline { return total + 3 }
             return total + 1
         }
-        return shape.inputs.count + paramRows + shape.outputs.count
+    }
+
+    /// Rows `NodeView` actually lays out: inputs, then body params, then outputs.
+    static func bodyRows(_ shape: NodeShape) -> Int {
+        shape.inputs.count + paramRows(shape) + shape.outputs.count
     }
 
     static func estimatedSize(for shape: NodeShape) -> CGSize {
@@ -72,7 +82,7 @@ enum NodeGeometry {
             return CGPoint(x: node.position.x, y: centreY(row: i))
         }
         if let i = shape.outputs.firstIndex(where: { $0.name == ref.socket }) {
-            let above = shape.inputs.count + shape.params.filter(\.showsInBody).count
+            let above = shape.inputs.count + paramRows(shape)
             return CGPoint(x: node.position.x + width, y: centreY(row: above + i))
         }
         return nil
