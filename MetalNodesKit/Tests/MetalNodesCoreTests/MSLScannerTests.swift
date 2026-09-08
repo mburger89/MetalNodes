@@ -206,3 +206,28 @@ import Testing
         #expect(MSLScanner.accessorCalls(in: "out = params.geometry();") == ["params.geometry()"])
     }
 }
+
+/// CRLF normalisation is the scanner's job, on every public entry point (spec §25.2, handoff
+/// §15.5 item 6) — a Windows-pasted body must not report line 0 for everything.
+@Suite struct MSLScannerCRLFTests {
+    /// Spec §25.2 (handoff §15.5 item 6): line counting is the scanner's job, on every path — a
+    /// Windows-pasted body must not report line 0 for everything.
+    @Test func scopeBreakersCountCRLFLines() {
+        let v = MSLScanner.scopeBreakers(in: "out = 1.0;\r\nout = 2.0;\r\nreturn;")
+        #expect(v == [MSLScanner.Violation(kind: .bareReturn, line: 2)])
+    }
+
+    @Test func aPreprocessorLineAfterCRLFIsReportedOnItsOwnLine() {
+        let v = MSLScanner.scopeBreakers(in: "out = 1.0;\r\n#include <x>\r\n")
+        #expect(v == [MSLScanner.Violation(kind: .preprocessor("include"), line: 1)])
+    }
+
+    @Test func identifierLinesCountCRLFLines() {
+        #expect(MSLScanner.identifierLines(in: "a\r\n+ b")["b"] == 1)
+    }
+
+    @Test func rewritingIdentifiersSplicesCorrectlyAcrossCRLF() {
+        let out = MSLScanner.rewritingIdentifiers(in: "a\r\n+ b") { "{\($0)}" }
+        #expect(out == "{a}\n+ {b}")
+    }
+}

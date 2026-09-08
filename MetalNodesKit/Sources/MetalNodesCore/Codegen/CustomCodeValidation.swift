@@ -13,7 +13,7 @@ public enum CustomCodeValidation {
         // follows for a compiled program (spec §24.4, Task 9).
         for node in allExpressionNodes(doc) {
             guard case .text(let formula)? = node.params[ExpressionNode.formulaParam] else { continue }
-            out += MSLScanner.scopeBreakers(in: normalisedForScanning(formula)).map {
+            out += MSLScanner.scopeBreakers(in: formula).map {
                 Diagnostic(.error, message(for: $0), node: node.id, socket: ExpressionNode.formulaParam,
                           userLine: $0.line + 1)
             }
@@ -23,7 +23,7 @@ public enum CustomCodeValidation {
         // is editing it now and should see the error now.
         for def in doc.definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
             guard case .msl(let text) = def.body else { continue }
-            out += MSLScanner.scopeBreakers(in: normalisedForScanning(text)).map {
+            out += MSLScanner.scopeBreakers(in: text).map {
                 Diagnostic(.error, "\(def.name): \(message(for: $0))", userLine: $0.line + 1, definition: def.id)
             }
             // The third guard family (spec §24.5): an accessor the body's own environment cannot
@@ -41,7 +41,7 @@ public enum CustomCodeValidation {
             // at line 0. The line is the accessor chain's own, from the same scan the predicate's
             // answer came from.
             if case .missing(let accessor) = EmitEnvironment.groupFunction.canEmit(mslText: text) {
-                let line = MSLScanner.accessorCallSites(in: normalisedForScanning(text))
+                let line = MSLScanner.accessorCallSites(in: text)
                     .first { $0.chain == accessor }?.line
                 out.append(Diagnostic(.error,
                     "\(def.name): \(accessor) is not available inside a group definition — read it in the root graph and pass the value in",
@@ -49,18 +49,6 @@ public enum CustomCodeValidation {
             }
         }
         return out
-    }
-
-    /// `MSLScanner.tokenise` (shared, out of this file's scope to change) counts a physical line by
-    /// `c == "\n"`, and Swift folds a `\r\n` pair into a single `Character` — so a Windows-pasted
-    /// body would otherwise report every `Violation.line` as `0`, the same defect `Task 9` fixed at
-    /// `LoopHardening.hardened`'s own boundary. Normalising a local copy here, purely for the
-    /// scanner's line count, gets a correct `userLine` without touching `MSLScanner.swift` — the
-    /// diagnostic's `node`/`socket`/message still describe the document's own, unmodified text.
-    /// Internal rather than private so `MaterialValidation`'s custom-body rule scans the same
-    /// normalised text and reports the same physical line this file would.
-    static func normalisedForScanning(_ text: String) -> String {
-        text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
     static func message(for v: MSLScanner.Violation) -> String {

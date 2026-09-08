@@ -188,7 +188,7 @@ public enum MaterialValidation {
         guard !fillOnly.isEmpty else { return [] }
         return reachable.flatMap { def -> [Diagnostic] in
             guard case .msl(let text) = def.body else { return [] }
-            let lines = MSLScanner.identifierLines(in: CustomCodeValidation.normalisedForScanning(text))
+            let lines = MSLScanner.identifierLines(in: text)
             return fillOnly.compactMap { param, key -> Diagnostic? in
                 guard let line = lines[param] else { return nil }
                 let problem = "\(def.name) reads \(param), which the \(target.title) target does not provide"

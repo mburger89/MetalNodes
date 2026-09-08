@@ -56,6 +56,19 @@ public enum MSLScanner {
         "smoothstep", "sqrt", "step", "tan", "tanh", "trunc", "isnan", "isinf", "select",
     ]
 
+    /// `\r\n` and `\r` become `\n` before any scan. Swift folds `\r\n` into one `Character`, so a
+    /// Windows-pasted body would otherwise be one giant line to `tokenise` and `stripComments`
+    /// alike — every `Token.line` and `Violation.line` 0 (spec §25.2, handoff §15.5 item 6). Every
+    /// entry point below scans the normalised copy; `LoopHardening.hardened` normalises its own
+    /// copy the same way, because it splices by `Token.start` into *its* text and the two must
+    /// agree. Cheap when there is nothing to do, which is the usual case.
+    static func normalisedLineEndings(_ source: String) -> String {
+        // `utf8`, not `contains("\r")`: a `\r\n` pair is *one* `Character`, so a `Character`-level
+        // search for "\r" would miss exactly the input this function exists for.
+        guard source.utf8.contains(0x0D) else { return source }
+        return source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
     /// A token is a free identifier — a socket, not a keyword/type/stdlib call, a swizzle/member,
     /// or a name bound earlier in the same text — under exactly this rule. `identifiers(in:)` and
     /// `rewritingIdentifiers(in:with:)` both call this so the two can never disagree about which
@@ -98,7 +111,9 @@ public enum MSLScanner {
     /// the untouched text byte-for-byte, which a whole-token regex on `\b` cannot do: `\b` is a
     /// Unicode word boundary, and `.` between two letters is *not* a break there, so `\bcol\b`
     /// never matches inside `col.rgb` at all (spec §24.2).
+    /// The result uses `\n` line endings whatever the input used.
     static func rewritingIdentifiers(in source: String, with replacement: (String) -> String) -> String {
+        let source = normalisedLineEndings(source)
         let chars = Array(source)
         let tokens = tokenise(source)
         let declared = declaredLocals(tokens)
@@ -176,6 +191,7 @@ public enum MSLScanner {
     }
 
     public static func scopeBreakers(in source: String) -> [Violation] {
+        let source = normalisedLineEndings(source)
         var out: [Violation] = []
         let uncommented = stripComments(source)
         for (i, raw) in uncommented.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
@@ -319,7 +335,7 @@ public enum MSLScanner {
     /// text — a `//` or `/*` inside a `"…"` cannot arise in a shader body.
     private static func stripComments(_ source: String) -> String {
         var out = ""
-        let chars = Array(source)
+        let chars = Array(normalisedLineEndings(source))
         var i = 0
         while i < chars.count {
             let c = chars[i]
@@ -356,7 +372,7 @@ public enum MSLScanner {
     static func tokenise(_ source: String) -> [Token] {
         var out: [Token] = []
         var line = 0, afterDot = false
-        let chars = Array(source)
+        let chars = Array(normalisedLineEndings(source))
         var i = 0
         while i < chars.count {
             let c = chars[i]
