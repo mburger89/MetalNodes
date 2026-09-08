@@ -231,8 +231,12 @@ import MetalNodesCore
 
     @Test func theNodeWidensByExactlyTheExtraColumn() throws {
         let material = NodeShape(def: try #require(reg["output.material"]))
-        let column = NodeGeometry.labelColumnWidth(for: material)
-        #expect(NodeGeometry.estimatedSize(for: material).width == NodeGeometry.baseWidth + column - NodeGeometry.minLabelColumn)
+        // Hand-derived, not read from `labelColumnWidth` itself (a test that computes its own
+        // expectation from the function under test can't fail when that function is wrong): the
+        // longest row label is "Clearcoat Roughness", 19 characters. 19 × 6.4 = 121.6, rounded up
+        // to 122, clamped to `maxLabelColumn` 120. The node widens by 120 − 46 = 74 over `baseWidth`.
+        #expect(NodeGeometry.labelColumnWidth(for: material) == 120)
+        #expect(NodeGeometry.estimatedSize(for: material).width == 264)   // 190 + 120 - 46
         #expect(NodeGeometry.estimatedSize(for: material).height
                 == NodeGeometry.headerHeight + NodeGeometry.bodyPadding + CGFloat(NodeGeometry.bodyRows(material)) * NodeGeometry.rowHeight)
     }
