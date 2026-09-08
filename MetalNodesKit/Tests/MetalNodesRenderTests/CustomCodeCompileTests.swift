@@ -72,6 +72,10 @@ import Metal
         var def = GroupDefinition(name: "Custom Code")
         def.inputs = [SocketDecl(name: "a", label: "A", type: .concrete(.float), default: .value(.float(0)))]
         def.outputs = [SocketDecl(name: "out", label: "Out", type: .concrete(.float))]
+        // A copy, not a reference: this target cannot import `MetalNodesUI`, so it cannot read
+        // `EditorModel.customCodeStarter` directly. Keep this text in sync with that constant by
+        // hand — the only tripwire otherwise is a substring assertion in a *different* target
+        // (`CustomCodeEditorTests.aNewDefinitionStartsWithOneInputOneOutputAndAWorkingBody`).
         def.body = .msl("""
         // Your code runs inside a function. Inputs are parameters; assign to the outputs.
         out = in_a * 2.0;

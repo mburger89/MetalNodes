@@ -195,6 +195,12 @@ extension EditorModel {
         }
         let n = NodeInstance(kind: .group(id), position: point)
         apply(.addNode(n))
+        // `apply` can refuse the whole change without this call ever being told — most concretely
+        // the HARD REQUIREMENT gate, inside a `.msl` definition's inert "canvas". Reporting success
+        // for a node that was never actually inserted would be worse than the honest `nil` above:
+        // the caller (a palette drag-and-drop, `GraphCanvasView.swift`) would report an accepted
+        // drop that did nothing, and `select` below would select a phantom id.
+        guard graph.nodes[n.id] != nil else { return nil }
         select(n.id)
         return n.id
     }

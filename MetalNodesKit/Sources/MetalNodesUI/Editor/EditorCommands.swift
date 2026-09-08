@@ -83,12 +83,6 @@ public struct EditorCommands: Commands {
             Button("Group") { model?.groupSelection() }
                 .keyboardShortcut("g", modifiers: .command)
                 .disabled(!canvasFocused || (model?.editableSelection.isEmpty ?? true))
-            // A Custom MSL node (spec §24.3): unlike Group, it needs no selection to come from —
-            // it starts empty and the user writes into it. Routed through `requestCanvas`, like
-            // Paste and Add Sticky Note, so it lands at the viewport's centre.
-            Button("New Custom Code Node") { model?.requestCanvas(.newCustomCode) }
-                .keyboardShortcut("n", modifiers: [.control, .command])
-                .disabled(!canvasFocused)
             Button("Ungroup") { model?.ungroupSelection() }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .disabled(!canvasFocused || model?.selectedInstance == nil)
@@ -100,6 +94,13 @@ public struct EditorCommands: Commands {
             Button("Exit Group") { model?.exitGroup() }
                 .keyboardShortcut(.upArrow, modifiers: .command)
                 .disabled(!canvasFocused || !(model?.canExitGroup ?? false))
+            Divider()
+            // A Custom MSL node (spec §24.3): unlike Group, it needs no selection to come from —
+            // it starts empty and the user writes into it. Routed through `requestCanvas`, like
+            // Paste and Add Sticky Note, so it lands at the viewport's centre.
+            Button("New Custom Code Node") { model?.requestCanvas(.newCustomCode) }
+                .keyboardShortcut("n", modifiers: [.control, .command])
+                .disabled(!canvasFocused)
             // Comments (spec §21.4). The note lands at the viewport's centre, which only the
             // canvas knows, so it goes through `canvasRequest` the way palette placement does.
             Divider()

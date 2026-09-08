@@ -30,8 +30,9 @@ struct CanvasContextMenu: View {
     }
 
     /// "New Custom Code Node" only makes sense with nothing under the press — a node, socket,
-    /// comment or wire already has its own menu of things to act on it. The same "empty canvas"
-    /// reading `adoptedNode` gives `nil` for (spec §24.3).
+    /// comment or wire already has its own menu of things to act on it (spec §24.3). Unlike
+    /// `adoptedNode`, which also reads a comment, a wire and an already-selected node as "leave
+    /// things alone", this is stricter: only a genuinely empty canvas (`nil` or `.empty`) shows it.
     nonisolated static func showsNewCustomCodeNode(hit: CanvasHit?) -> Bool {
         switch hit {
         case nil, .empty?: true

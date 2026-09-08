@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import CoreGraphics
 @testable import MetalNodesUI
 @testable import MetalNodesCore
@@ -84,6 +85,14 @@ import CoreGraphics
     /// A plain node-graph edit issued while a `.msl` definition is the active graph must be
     /// refused outright: no document mutation, no undo entry, not merely "absorbed" into a
     /// structurally-equal document that happens not to register an undo step.
+    ///
+    /// `.addNode` alone does not pin this: `GroupDefinition.graph`'s silent-drop setter already
+    /// absorbs it on its own (the getter hands back a throwaway empty `Graph()`, the node is added
+    /// to *that*, and the setter then drops the whole thing) — this assertion holds even with the
+    /// gate in `apply` deleted. `.insert(assets:)` is the one write the drop cannot reach:
+    /// `document.settings.assets[id]` and `EditorModel.textures[id]` are written directly in
+    /// `perform`, never through `document[path]`, so only the gate stops them. Both are asserted so
+    /// deleting the gate fails this test (verified).
     @Test func aCanvasEditInsideACodeDefinitionIsRefused() throws {
         let m = model()
         let id = try #require(m.newCustomCodeDefinition(at: .zero))
@@ -93,6 +102,14 @@ import CoreGraphics
         let versionBefore = m.undoStackVersion
         m.apply(.addNode(NodeInstance(kind: .builtin("input.uv"), position: .zero)))
         #expect(m.document == before)
+        #expect(m.undoStackVersion == versionBefore)
+
+        let assetID = AssetID()
+        let info = AssetInfo(name: "leaked", pixelSize: CGSize(width: 4, height: 4), fileExtension: "png")
+        m.apply(.insert(nodes: [], edges: [], assets: [assetID: (info: info, data: Data([1, 2, 3, 4]))]))
+        #expect(m.document == before)
+        #expect(m.document.settings.assets[assetID] == nil)
+        #expect(m.textures[assetID] == nil)
         #expect(m.undoStackVersion == versionBefore)
     }
 
@@ -110,5 +127,26 @@ import CoreGraphics
         let created = m.newCustomCodeDefinition(at: CGPoint(x: 10, y: 10))
         #expect(created == nil)
         #expect(m.document.definitions.count == definitionsBefore)
+    }
+
+    /// `addInstance(of:at:)` must not report success for a node the gate refused to insert — a
+    /// non-`nil` id the graph never actually holds would tell a palette drag-and-drop it landed
+    /// when it did nothing (spec — Task 16 fix round 1, IMPORTANT 2).
+    @Test func placingAnUnrelatedDefinitionInsideACodeDefinitionIsHonestlyRefused() throws {
+        let m = model()
+        let codeID = try #require(m.newCustomCodeDefinition(at: .zero))
+        // A second, unrelated definition to place — placing `codeID` itself inside its own
+        // definition would also hit the recursion refusal, which already returns `nil` honestly;
+        // this proves the *gate* path is equally honest.
+        var other = GroupDefinition(name: "Other")
+        other.body = .graph(Graph())
+        m.apply(.addDefinition(other))
+        m.editDefinition(codeID)
+        #expect(m.isEditingCode)
+        let nodesBefore = m.graph.nodes.count
+        let placed = m.addInstance(of: other.id, at: .zero)
+        #expect(placed == nil)
+        #expect(m.graph.nodes.count == nodesBefore)
+        #expect(m.notice == nil)
     }
 }

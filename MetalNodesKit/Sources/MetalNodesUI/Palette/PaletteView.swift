@@ -66,10 +66,12 @@ public struct PaletteView: View {
             Circle().fill(DraculaTheme.token(for: def.accent).color).frame(width: 8, height: 8)
             // Code and group definitions are otherwise indistinguishable in this list (spec §24.3).
             if case .msl = def.body {
+                // Not `.accessibilityHidden` — the glyph is the only place this distinction shows,
+                // so hiding it would hide the distinction from VoiceOver too.
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
                     .font(.caption2)
                     .foregroundStyle(DraculaToken.muted.color)
-                    .accessibilityHidden(true)
+                    .accessibilityLabel("Custom code")
             }
             Text(def.name).font(.callout).lineLimit(1)
             Spacer()
