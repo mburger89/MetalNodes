@@ -248,3 +248,28 @@ import Testing
         #expect(out == "{a}\n+ {b}")
     }
 }
+
+/// `scopeBreakers` is memoised per body text (spec §25.3, handoff §15.5 items 11–12).
+@Suite struct MSLScannerScanCacheTests {
+    /// Spec §25.3 (handoff §15.5 items 11–12): a debounced recompile re-scans every authored body;
+    /// with the cache it re-pays only the edited one. Fifty 200-line bodies, scanned twice.
+    @Test func repeatedScansOfTheSameBodiesAreServedFromTheCache() {
+        let bodies = (0..<50).map { n in
+            (0..<200).map { "float v\(n)_\($0) = in_a * \($0).0; // note" }.joined(separator: "\n")
+        }
+        let clock = ContinuousClock()
+        let first = clock.measure { for b in bodies { _ = MSLScanner.scopeBreakers(in: b) } }
+        let second = clock.measure { for b in bodies { _ = MSLScanner.scopeBreakers(in: b) } }
+        #expect(second < first / 10, "first \(first), second \(second)")
+    }
+
+    /// Eviction never changes an answer: after more distinct bodies than the cache holds, the
+    /// first body still scans correctly (it is simply recomputed).
+    @Test func theCacheEvictsWithoutChangingResults() {
+        let first = "out = 1.0;\nreturn;"
+        let before = MSLScanner.scopeBreakers(in: first)
+        for n in 0..<80 { _ = MSLScanner.scopeBreakers(in: "out = \(n).0;") }
+        #expect(MSLScanner.scopeBreakers(in: first) == before)
+        #expect(before == [MSLScanner.Violation(kind: .bareReturn, line: 1)])
+    }
+}

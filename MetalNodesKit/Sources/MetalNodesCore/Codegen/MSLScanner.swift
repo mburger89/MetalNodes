@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A token scan over user-written MSL (spec §24.4). Deliberately *not* a parser: it answers
 /// questions that tokens can answer — which identifiers are free, whether the text breaks out of
@@ -190,7 +191,40 @@ public enum MSLScanner {
             || s == "long" || s == "char" || s == "double"
     }
 
+    /// A bounded, insertion-ordered memo. Content-keyed, so a document reload needs no
+    /// invalidation; bounded, so an editing session cannot grow it without limit (spec §25.3).
+    struct ScanCache<Value> {
+        let capacity: Int
+        private var order: [String] = []
+        private var values: [String: Value] = [:]
+
+        init(capacity: Int) { self.capacity = capacity }
+
+        mutating func value(for key: String, compute: () -> Value) -> Value {
+            if let hit = values[key] { return hit }
+            let v = compute()
+            values[key] = v
+            order.append(key)
+            if order.count > capacity {
+                values[order.removeFirst()] = nil
+            }
+            return v
+        }
+    }
+
+    /// `scopeBreakers` memoised per body text. ~600 ns per character over three passes, re-paid on
+    /// every debounced recompile for every authored body (handoff §15.5 item 11); with this only
+    /// the edited body is scanned again. Sixty-four entries covers more definitions than any
+    /// document has held; the lock is uncontended in practice (validation runs on one task).
+    private static let scopeBreakerCache = Mutex(ScanCache<[Violation]>(capacity: 64))
+
     public static func scopeBreakers(in source: String) -> [Violation] {
+        scopeBreakerCache.withLock { cache in
+            cache.value(for: source) { uncachedScopeBreakers(in: source) }
+        }
+    }
+
+    private static func uncachedScopeBreakers(in source: String) -> [Violation] {
         let source = normalisedLineEndings(source)
         var out: [Violation] = []
         let uncommented = stripComments(source)
