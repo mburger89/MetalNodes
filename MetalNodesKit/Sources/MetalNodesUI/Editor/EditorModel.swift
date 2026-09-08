@@ -414,11 +414,15 @@ public final class EditorModel {
             // Under a stitchable target `exportName` also names the generated function, so a rename
             // changes the source too (spec §19.4). The lighting model selects which setters the
             // material emits and whether the preview carries the GGX helpers at all (spec §23.8),
-            // so it changes the source under the RealityKit target.
+            // so it changes the source under the RealityKit target. `liveParameters` changes what
+            // the *export* spells for a baked field (spec §24.6) — the preview never reads it
+            // (`EmitEnvironment.bakedUniforms` is export-only) — but `generatedSource`/`exportSource`
+            // are produced by the same compile pass, so a change here still needs one.
             recompile = s.fastMath != document.settings.fastMath
                 || s.target != document.settings.target
                 || (s.target.stitchableKind != nil && s.exportName != document.settings.exportName)
                 || (s.target == .realityKit && s.lightingModel != document.settings.lightingModel)
+                || (s.target == .realityKit && s.liveParameters != document.settings.liveParameters)
             document.settings = s
         case .addSticky(let note):
             document[path].stickies[note.id] = note
@@ -476,6 +480,26 @@ public final class EditorModel {
         pruneSelection()
         pruneCommentSelection()
         _ = pruneViewer()
+        pruneLiveParameters()
+    }
+
+    /// A live parameter names a node by id (spec §24.6). Once that node is gone — deleted outright,
+    /// or carried off with a whole definition — the export would otherwise emit
+    /// `params.uniforms().custom_parameter().x` for a slot nothing in the graph writes anymore.
+    /// Called from every case that can remove a node, the same way `pruneViewer`/`pruneSelection`
+    /// are: unlike those, this is document data rather than view state, so it does not go through
+    /// `.setSettings` and carries no separate undo step of its own — it lands in the same undo
+    /// group as whatever removal triggered it.
+    private func pruneLiveParameters() {
+        // `doc` is a snapshot read before the mutation below, not `document` itself: the removal
+        // closure's own lookups must not reach back through `self.document` while
+        // `document.settings.liveParameters` is under exclusive access for the `removeAll`, or the
+        // runtime traps on the overlapping access.
+        let doc = document
+        document.settings.liveParameters.removeAll {
+            guard let id = $0.instancePath.first else { return true }
+            return doc.node(id) == nil
+        }
     }
 
     /// Selection may only reference nodes of the active graph (spec §18.3, §20.3).

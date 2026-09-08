@@ -252,13 +252,23 @@ public struct EmitEnvironment: Sendable {
         sys.compactMapValues { $0.readable ? $0.spelling : nil }
     }
 
-    /// Uniform reads spelled as the value the document holds right now (spec §23.6). Snapshotted
-    /// against `layout` up front so the returned closure captures only strings and stays `Sendable`.
+    /// Uniform reads spelled as the value the document holds right now (spec §23.6), except a field
+    /// whose path is one of `document.settings.liveParameters` (spec §24.6): that one reads the
+    /// `CustomMaterial`'s single `float4` instead of a literal, at the component its index in the
+    /// list picks — 0 is `.x`, 1 is `.y`, and so on — so up to four parameters can animate from
+    /// Swift without a re-export. Snapshotted against `layout` up front so the returned closure
+    /// captures only strings and stays `Sendable`.
     public static func bakedUniforms(layout: UniformLayout, document: ShaderDocument,
                                      registry: NodeRegistry) -> @Sendable (UniformField) -> String {
+        let live = document.settings.liveParameters
+        let components = ["x", "y", "z", "w"]
         var mutableLiterals: [String: String] = [:]
         for f in layout.fields {
             guard let path = f.path else { continue }
+            if let index = live.firstIndex(of: path), index < components.count {
+                mutableLiterals[f.name] = "params.uniforms().custom_parameter().\(components[index])"
+                continue
+            }
             let value = ParamValues.value(for: path, in: document, registry: registry)
             mutableLiterals[f.name] = value.map { ParamValues.mslLiteral($0, as: f.type) }
                 ?? ParamValues.mslLiteral(.float(0), as: f.type)

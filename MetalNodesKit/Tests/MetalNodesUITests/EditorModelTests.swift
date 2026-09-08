@@ -133,12 +133,34 @@ actor SwitchableCompiler: ShaderCompiling {
         #expect(await recompiles(.sample()) { $0.target = .stitchable(.colorEffect) })
         #expect(await recompiles(stitchable) { $0.exportName = "renamed" })
         #expect(await recompiles(.realityKitMaterial()) { $0.lightingModel = .unlit })
+        // liveParameters only changes what the export spells for a baked field (spec §24.6) — the
+        // preview itself never reads it — but the export is produced by the same compile pass as
+        // the preview, so marking a parameter live still needs a rebuild.
+        let material = ShaderDocument.realityKitMaterial()
+        let liveFloat = material.root.nodes.values.first { $0.kind == .builtin("input.float") }!
+        #expect(await recompiles(material) { $0.liveParameters = [ParamPath(node: liveFloat.id, param: "value")] })
 
         // Does not reach codegen — must not rebuild.
         #expect(await recompiles(.sample()) { $0.previewSize = CGSize(width: 256, height: 256) } == false)
         #expect(await recompiles(.sample()) { $0.timeMode = .fixedRate } == false)
         // The export name names no function in a fragment program.
         #expect(await recompiles(.sample()) { $0.exportName = "renamed" } == false)
+        // Not under the RealityKit target: nothing reads `custom_parameter()` there either.
+        #expect(await recompiles(.sample()) { $0.liveParameters = [ParamPath(node: NodeID(), param: "value")] } == false)
+    }
+
+    /// A live parameter naming a node that is then deleted would otherwise leave the export
+    /// spelling `params.uniforms().custom_parameter().x` for a slot nothing writes (spec §24.6).
+    @Test func removingALiveParametersNodePrunesTheSetting() async {
+        let m = EditorModel(document: .realityKitMaterial(), compiler: RecordingCompiler())
+        m.debounceInterval = .milliseconds(5)
+        let f = node(m, "input.float")
+        var s = m.document.settings
+        s.liveParameters = [ParamPath(node: f.id, param: "value")]
+        m.apply(.setSettings(s))
+        #expect(m.document.settings.liveParameters == [ParamPath(node: f.id, param: "value")])
+        m.apply(.removeNodes([f.id]))
+        #expect(m.document.settings.liveParameters.isEmpty)
     }
 
     @Test func previewSizeOnlyChangeDoesNotRecompile() async {

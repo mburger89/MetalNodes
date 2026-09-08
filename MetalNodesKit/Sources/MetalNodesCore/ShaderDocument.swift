@@ -127,11 +127,15 @@ public struct DocumentSettings: Sendable, Hashable {
     public var exportName: String = "metalNodesShader"
     /// The imported images this document references (spec §21.2). Never auto-pruned.
     public var assets: [AssetID: AssetInfo] = [:]
+    /// Parameters that animate from Swift rather than baking into the exported `.metal`
+    /// (spec §24.6). Ordered: index 0 is `custom_parameter().x`. At most four — a `CustomMaterial`
+    /// exposes exactly one `float4`.
+    public var liveParameters: [ParamPath] = []
     public init() {}
 }
 
 extension DocumentSettings: Codable {
-    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets, lightingModel }
+    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets, lightingModel, liveParameters }
 
     /// A dictionary keyed by a struct encodes as a flat `[key, value, …]` array, which neither
     /// diffs nor reads well — so `assets` is written as an array of these, sorted by id.
@@ -155,6 +159,7 @@ extension DocumentSettings: Codable {
         exportName = try c.decodeIfPresent(String.self, forKey: .exportName) ?? "metalNodesShader"
         let entries = try c.decodeIfPresent([AssetEntry].self, forKey: .assets) ?? []
         assets = Dictionary(entries.map { ($0.id, $0.info) }, uniquingKeysWith: { $1 })
+        liveParameters = try c.decodeIfPresent([ParamPath].self, forKey: .liveParameters) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -167,6 +172,7 @@ extension DocumentSettings: Codable {
         try c.encode(exportName, forKey: .exportName)
         try c.encode(assets.map { AssetEntry(id: $0.key, info: $0.value) }
             .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .assets)
+        try c.encode(liveParameters, forKey: .liveParameters)
     }
 }
 

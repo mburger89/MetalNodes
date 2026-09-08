@@ -16,6 +16,7 @@ public enum MaterialValidation {
             + definitionNodeDiagnostics(doc, registry: registry, reachable: reachable)
             + textureDiagnostics(doc, reachable: reachable)
             + lightingDiagnostics(doc, terminal: terminal)
+            + liveParameterDiagnostics(doc, registry: registry)
     }
 
     /// Every node of the root and of a reachable definition, each with the graph it lives in.
@@ -249,5 +250,45 @@ public enum MaterialValidation {
             .filter { doc.root.inputs[SocketRef(terminal, $0)] != nil }
         guard !wired.isEmpty else { return [] }
         return [Diagnostic(.warning, "Unlit materials render only Emissive", node: terminal)]
+    }
+
+    // MARK: Rule 6 — live parameters
+
+    /// A `CustomMaterial` exposes exactly one `float4` (spec §24.6), so `settings.liveParameters`
+    /// may hold at most four entries, and every one of them must itself be a float — a live vector
+    /// or texture path has nowhere to go in that single `float4`. The inspector never offers either
+    /// mistake, but a hand-edited or migrated document can carry one anyway.
+    ///
+    /// A path naming a node the document no longer has is *not* this rule's problem: `EditorModel`
+    /// prunes a dangling live parameter the moment its node is deleted
+    /// (`EditorModel.pruneLiveParameters`, called from `pruneAfterRemoval`), the same way it prunes
+    /// a dangling viewer or selection. This rule only judges paths that still resolve.
+    private static func liveParameterDiagnostics(_ doc: ShaderDocument, registry: NodeRegistry) -> [Diagnostic] {
+        let live = doc.settings.liveParameters
+        guard !live.isEmpty else { return [] }
+        var out: [Diagnostic] = []
+        if live.count > 4 {
+            out.append(Diagnostic(.error,
+                "A RealityKit material exposes one float4 — at most four parameters can be live"))
+        }
+        for path in live {
+            guard let type = fieldType(for: path, in: doc, registry: registry), type != .float else { continue }
+            out.append(Diagnostic(.error,
+                "A live parameter must be a float — \(type.rawValue) cannot animate through a RealityKit material's custom float4",
+                node: path.instancePath.first))
+        }
+        return out
+    }
+
+    /// The type a live parameter's path names, resolved the same way `ParamValues.value` finds the
+    /// instance: a declared value param first, then an input socket's own (necessarily concrete —
+    /// nothing wired into it — type). `nil` when the path resolves to neither, which leaves the
+    /// path unjudged rather than wrongly flagged.
+    private static func fieldType(for path: ParamPath, in doc: ShaderDocument, registry: NodeRegistry) -> SocketType? {
+        guard let nodeID = path.instancePath.first, let (inst, gpath) = doc.node(nodeID),
+              let shape = doc.shape(of: inst, in: gpath, registry: registry) else { return nil }
+        if let p = shape.param(named: path.param), case .value(let t, _) = p.kind { return t }
+        if let decl = shape.input(named: path.param), case .concrete(let t) = decl.type { return t }
+        return nil
     }
 }
