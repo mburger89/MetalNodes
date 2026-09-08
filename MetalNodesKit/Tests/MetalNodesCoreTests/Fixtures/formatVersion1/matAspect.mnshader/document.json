@@ -1,0 +1,292 @@
+{
+  "definitions" : [
+    {
+      "accent" : "purple",
+      "graph" : {
+        "edges" : [
+          {
+            "from" : {
+              "node" : "27D1B054-5EC0-40CC-B758-C6BFE43D5FE1",
+              "socket" : "time"
+            },
+            "to" : {
+              "node" : "0FA3B025-91C6-47BD-A267-30608799642A",
+              "socket" : "a"
+            }
+          },
+          {
+            "from" : {
+              "node" : "0FA3B025-91C6-47BD-A267-30608799642A",
+              "socket" : "out"
+            },
+            "to" : {
+              "node" : "43F39571-6284-49B3-B560-39AA44925286",
+              "socket" : "out"
+            }
+          }
+        ],
+        "frames" : [
+
+        ],
+        "nodes" : [
+          {
+            "collapsed" : false,
+            "id" : "0FA3B025-91C6-47BD-A267-30608799642A",
+            "kind" : {
+              "builtin" : {
+                "_0" : "math.math"
+              }
+            },
+            "params" : {
+              "op" : {
+                "enumCase" : {
+                  "_0" : "sine"
+                }
+              }
+            },
+            "position" : [
+              0,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "27D1B054-5EC0-40CC-B758-C6BFE43D5FE1",
+            "kind" : {
+              "builtin" : {
+                "_0" : "input.time"
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              0,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "43F39571-6284-49B3-B560-39AA44925286",
+            "kind" : {
+              "groupOutput" : {
+
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              600,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "FFE54C98-650C-41FB-B3F6-03ECB447661C",
+            "kind" : {
+              "groupInput" : {
+
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              0,
+              0
+            ]
+          }
+        ],
+        "stickies" : [
+
+        ]
+      },
+      "id" : "C6D1C7BB-2B70-440F-B316-0076F8E12808",
+      "inputs" : [
+
+      ],
+      "name" : "Pulse",
+      "outputs" : [
+        {
+          "default" : {
+            "required" : {
+
+            }
+          },
+          "label" : "Out",
+          "name" : "out",
+          "type" : {
+            "concrete" : {
+              "_0" : "float"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "formatVersion" : 1,
+  "root" : {
+    "edges" : [
+      {
+        "from" : {
+          "node" : "6EC7D83F-5723-4E44-99D8-BAC209058D4D",
+          "socket" : "uv"
+        },
+        "to" : {
+          "node" : "600071C5-4CDA-4EBA-A175-CAE92E21A453",
+          "socket" : "v"
+        }
+      },
+      {
+        "from" : {
+          "node" : "5F4426F1-A630-4C8B-BB29-7520C2194760",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "D8BF77B5-CB70-48CE-B89A-530D5CF44A5C",
+          "socket" : "baseColor"
+        }
+      },
+      {
+        "from" : {
+          "node" : "600071C5-4CDA-4EBA-A175-CAE92E21A453",
+          "socket" : "x"
+        },
+        "to" : {
+          "node" : "D8BF77B5-CB70-48CE-B89A-530D5CF44A5C",
+          "socket" : "metallic"
+        }
+      },
+      {
+        "from" : {
+          "node" : "0E5685D4-8413-43E8-B0A3-7BDE0897D980",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "D8BF77B5-CB70-48CE-B89A-530D5CF44A5C",
+          "socket" : "roughness"
+        }
+      }
+    ],
+    "frames" : [
+
+    ],
+    "nodes" : [
+      {
+        "collapsed" : false,
+        "id" : "0E5685D4-8413-43E8-B0A3-7BDE0897D980",
+        "kind" : {
+          "group" : {
+            "_0" : "C6D1C7BB-2B70-440F-B316-0076F8E12808"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "5F4426F1-A630-4C8B-BB29-7520C2194760",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.color"
+          }
+        },
+        "params" : {
+          "value" : {
+            "float4" : {
+              "_0" : [
+                0.2,
+                0.5,
+                0.9,
+                1
+              ]
+            }
+          }
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "600071C5-4CDA-4EBA-A175-CAE92E21A453",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.separate"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "6EC7D83F-5723-4E44-99D8-BAC209058D4D",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.uv"
+          }
+        },
+        "params" : {
+          "mode" : {
+            "enumCase" : {
+              "_0" : "aspect"
+            }
+          }
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "D8BF77B5-CB70-48CE-B89A-530D5CF44A5C",
+        "kind" : {
+          "builtin" : {
+            "_0" : "output.material"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      }
+    ],
+    "stickies" : [
+
+    ]
+  },
+  "settings" : {
+    "assets" : [
+
+    ],
+    "exportName" : "matAspect",
+    "fastMath" : true,
+    "lightingModel" : "lit",
+    "previewSize" : [
+      512,
+      512
+    ],
+    "target" : {
+      "realityKit" : {
+
+      }
+    },
+    "timeMode" : "wallClock"
+  }
+}

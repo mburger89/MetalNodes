@@ -25,6 +25,7 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6), .defaultIsolation(MainActor.self)]
         ),
         .testTarget(name: "MetalNodesCoreTests", dependencies: ["MetalNodesCore"],
+                    resources: [.copy("Fixtures")],
                     swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "MetalNodesRenderTests", dependencies: ["MetalNodesRender"],
                     swiftSettings: [.swiftLanguageMode(.v6)]),

@@ -1,0 +1,98 @@
+{
+  "definitions" : [
+
+  ],
+  "formatVersion" : 1,
+  "root" : {
+    "edges" : [
+      {
+        "from" : {
+          "node" : "00000101-0000-0000-0000-000000000000",
+          "socket" : "uv"
+        },
+        "to" : {
+          "node" : "00000102-0000-0000-0000-000000000000",
+          "socket" : "uv"
+        }
+      }
+    ],
+    "frames" : [
+
+    ],
+    "nodes" : [
+      {
+        "collapsed" : false,
+        "id" : "00000101-0000-0000-0000-000000000000",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.uv"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "00000102-0000-0000-0000-000000000000",
+        "kind" : {
+          "builtin" : {
+            "_0" : "texture.sample"
+          }
+        },
+        "params" : {
+          "asset" : {
+            "asset" : {
+
+            }
+          }
+        },
+        "position" : [
+          300,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "00000103-0000-0000-0000-000000000000",
+        "kind" : {
+          "builtin" : {
+            "_0" : "output.fragment"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          620,
+          0
+        ]
+      }
+    ],
+    "stickies" : [
+
+    ]
+  },
+  "settings" : {
+    "assets" : [
+
+    ],
+    "exportName" : "metalNodesShader",
+    "fastMath" : true,
+    "lightingModel" : "lit",
+    "previewSize" : [
+      512,
+      512
+    ],
+    "target" : {
+      "fragment" : {
+
+      }
+    },
+    "timeMode" : "wallClock"
+  }
+}

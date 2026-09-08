@@ -1,0 +1,236 @@
+{
+  "definitions" : [
+    {
+      "accent" : "purple",
+      "graph" : {
+        "edges" : [
+          {
+            "from" : {
+              "node" : "EBA73E2A-50A0-4CEE-88EC-77915BD233FC",
+              "socket" : "out"
+            },
+            "to" : {
+              "node" : "27A628C6-B808-4ABE-AE61-56DBD3C70E29",
+              "socket" : "out"
+            }
+          },
+          {
+            "from" : {
+              "node" : "783D39EE-5541-4218-89F2-80E3AC2E718D",
+              "socket" : "time"
+            },
+            "to" : {
+              "node" : "EBA73E2A-50A0-4CEE-88EC-77915BD233FC",
+              "socket" : "a"
+            }
+          }
+        ],
+        "frames" : [
+
+        ],
+        "nodes" : [
+          {
+            "collapsed" : false,
+            "id" : "27A628C6-B808-4ABE-AE61-56DBD3C70E29",
+            "kind" : {
+              "groupOutput" : {
+
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              600,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "602631EA-A0C4-41E4-99C9-5D8B4D41D549",
+            "kind" : {
+              "groupInput" : {
+
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              0,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "783D39EE-5541-4218-89F2-80E3AC2E718D",
+            "kind" : {
+              "builtin" : {
+                "_0" : "input.time"
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              0,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "EBA73E2A-50A0-4CEE-88EC-77915BD233FC",
+            "kind" : {
+              "builtin" : {
+                "_0" : "math.math"
+              }
+            },
+            "params" : {
+              "op" : {
+                "enumCase" : {
+                  "_0" : "sine"
+                }
+              }
+            },
+            "position" : [
+              0,
+              0
+            ]
+          }
+        ],
+        "stickies" : [
+
+        ]
+      },
+      "id" : "F367BF8A-41A5-44B3-A1FD-E4A8E87A83CF",
+      "inputs" : [
+
+      ],
+      "name" : "Pulse",
+      "outputs" : [
+        {
+          "default" : {
+            "required" : {
+
+            }
+          },
+          "label" : "Out",
+          "name" : "out",
+          "type" : {
+            "concrete" : {
+              "_0" : "float"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "formatVersion" : 1,
+  "root" : {
+    "edges" : [
+      {
+        "from" : {
+          "node" : "E910B05E-22C3-4D48-8C5C-DFFADBCE170F",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "FEEE4EEC-C8F0-457B-8B6B-AD34DB05606A",
+          "socket" : "baseColor"
+        }
+      },
+      {
+        "from" : {
+          "node" : "7EF80185-ADDC-4CE5-AD66-AADFC33D058B",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "FEEE4EEC-C8F0-457B-8B6B-AD34DB05606A",
+          "socket" : "roughness"
+        }
+      }
+    ],
+    "frames" : [
+
+    ],
+    "nodes" : [
+      {
+        "collapsed" : false,
+        "id" : "7EF80185-ADDC-4CE5-AD66-AADFC33D058B",
+        "kind" : {
+          "group" : {
+            "_0" : "F367BF8A-41A5-44B3-A1FD-E4A8E87A83CF"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "E910B05E-22C3-4D48-8C5C-DFFADBCE170F",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.color"
+          }
+        },
+        "params" : {
+          "value" : {
+            "float4" : {
+              "_0" : [
+                0.2,
+                0.5,
+                0.9,
+                1
+              ]
+            }
+          }
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "FEEE4EEC-C8F0-457B-8B6B-AD34DB05606A",
+        "kind" : {
+          "builtin" : {
+            "_0" : "output.material"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      }
+    ],
+    "stickies" : [
+
+    ]
+  },
+  "settings" : {
+    "assets" : [
+
+    ],
+    "exportName" : "matGroup",
+    "fastMath" : true,
+    "lightingModel" : "lit",
+    "previewSize" : [
+      512,
+      512
+    ],
+    "target" : {
+      "realityKit" : {
+
+      }
+    },
+    "timeMode" : "wallClock"
+  }
+}

@@ -1,0 +1,481 @@
+{
+  "definitions" : [
+    {
+      "accent" : "purple",
+      "graph" : {
+        "edges" : [
+          {
+            "from" : {
+              "node" : "7FE50E49-E124-430E-A79D-A51A45E7C5A8",
+              "socket" : "out"
+            },
+            "to" : {
+              "node" : "1663CDAC-AF5A-4A35-A838-93E162AA7E02",
+              "socket" : "out"
+            }
+          },
+          {
+            "from" : {
+              "node" : "0F7F9B6E-D8E4-49C5-B366-2B82900E65DB",
+              "socket" : "t"
+            },
+            "to" : {
+              "node" : "6802A595-B762-43A4-8AC7-9924E513F0DB",
+              "socket" : "a"
+            }
+          },
+          {
+            "from" : {
+              "node" : "A4758D47-7EF4-4BFC-AD22-270AC52A7472",
+              "socket" : "out"
+            },
+            "to" : {
+              "node" : "6802A595-B762-43A4-8AC7-9924E513F0DB",
+              "socket" : "b"
+            }
+          },
+          {
+            "from" : {
+              "node" : "6802A595-B762-43A4-8AC7-9924E513F0DB",
+              "socket" : "out"
+            },
+            "to" : {
+              "node" : "7FE50E49-E124-430E-A79D-A51A45E7C5A8",
+              "socket" : "a"
+            }
+          }
+        ],
+        "frames" : [
+
+        ],
+        "nodes" : [
+          {
+            "collapsed" : false,
+            "id" : "0F7F9B6E-D8E4-49C5-B366-2B82900E65DB",
+            "kind" : {
+              "groupInput" : {
+
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              0,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "1663CDAC-AF5A-4A35-A838-93E162AA7E02",
+            "kind" : {
+              "groupOutput" : {
+
+              }
+            },
+            "params" : {
+
+            },
+            "position" : [
+              600,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "6802A595-B762-43A4-8AC7-9924E513F0DB",
+            "kind" : {
+              "builtin" : {
+                "_0" : "math.math"
+              }
+            },
+            "params" : {
+              "op" : {
+                "enumCase" : {
+                  "_0" : "multiply"
+                }
+              }
+            },
+            "position" : [
+              220,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "7FE50E49-E124-430E-A79D-A51A45E7C5A8",
+            "kind" : {
+              "builtin" : {
+                "_0" : "math.math"
+              }
+            },
+            "params" : {
+              "op" : {
+                "enumCase" : {
+                  "_0" : "sine"
+                }
+              }
+            },
+            "position" : [
+              400,
+              0
+            ]
+          },
+          {
+            "collapsed" : false,
+            "id" : "A4758D47-7EF4-4BFC-AD22-270AC52A7472",
+            "kind" : {
+              "builtin" : {
+                "_0" : "input.float"
+              }
+            },
+            "params" : {
+              "value" : {
+                "float" : {
+                  "_0" : 0.25
+                }
+              }
+            },
+            "position" : [
+              220,
+              160
+            ]
+          }
+        ],
+        "stickies" : [
+
+        ]
+      },
+      "id" : "BC672DA2-1F63-4D37-AC72-3D1F42342977",
+      "inputs" : [
+        {
+          "default" : {
+            "value" : {
+              "_0" : {
+                "float" : {
+                  "_0" : 0
+                }
+              }
+            }
+          },
+          "label" : "T",
+          "name" : "t",
+          "range" : [
+            -10,
+            10
+          ],
+          "type" : {
+            "concrete" : {
+              "_0" : "float"
+            }
+          }
+        }
+      ],
+      "name" : "Wobble",
+      "outputs" : [
+        {
+          "default" : {
+            "required" : {
+
+            }
+          },
+          "label" : "Out",
+          "name" : "out",
+          "type" : {
+            "concrete" : {
+              "_0" : "float"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "formatVersion" : 1,
+  "root" : {
+    "edges" : [
+      {
+        "from" : {
+          "node" : "14439EDC-D498-4FE9-83FA-9E3010A743F2",
+          "socket" : "uv"
+        },
+        "to" : {
+          "node" : "B69C6FF4-C03E-4CB3-A00C-595BB152D191",
+          "socket" : "v"
+        }
+      },
+      {
+        "from" : {
+          "node" : "C5679965-5018-480E-B89F-A17E8B05F460",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "BDA30F9B-9B6A-4650-9FEE-87AD1B3DEE72",
+          "socket" : "a"
+        }
+      },
+      {
+        "from" : {
+          "node" : "6DA8DC4F-5F8A-4FD3-8F17-B1AF175742F1",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "BDA30F9B-9B6A-4650-9FEE-87AD1B3DEE72",
+          "socket" : "b"
+        }
+      },
+      {
+        "from" : {
+          "node" : "D1975AD8-C53F-4246-B249-EE914245AFD0",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "BDA30F9B-9B6A-4650-9FEE-87AD1B3DEE72",
+          "socket" : "t"
+        }
+      },
+      {
+        "from" : {
+          "node" : "B69C6FF4-C03E-4CB3-A00C-595BB152D191",
+          "socket" : "x"
+        },
+        "to" : {
+          "node" : "C5679965-5018-480E-B89F-A17E8B05F460",
+          "socket" : "x"
+        }
+      },
+      {
+        "from" : {
+          "node" : "B69C6FF4-C03E-4CB3-A00C-595BB152D191",
+          "socket" : "y"
+        },
+        "to" : {
+          "node" : "C5679965-5018-480E-B89F-A17E8B05F460",
+          "socket" : "y"
+        }
+      },
+      {
+        "from" : {
+          "node" : "E623E52F-583A-4FF9-9ADE-54A645400B9A",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "C5679965-5018-480E-B89F-A17E8B05F460",
+          "socket" : "z"
+        }
+      },
+      {
+        "from" : {
+          "node" : "14439EDC-D498-4FE9-83FA-9E3010A743F2",
+          "socket" : "uv"
+        },
+        "to" : {
+          "node" : "D1975AD8-C53F-4246-B249-EE914245AFD0",
+          "socket" : "uv"
+        }
+      },
+      {
+        "from" : {
+          "node" : "BDA30F9B-9B6A-4650-9FEE-87AD1B3DEE72",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "E1DA48B8-FDD1-4FA9-B323-3199495D70D0",
+          "socket" : "color"
+        }
+      },
+      {
+        "from" : {
+          "node" : "C9FF8744-7AB1-4F13-84E8-89C0CF7F39A0",
+          "socket" : "time"
+        },
+        "to" : {
+          "node" : "E623E52F-583A-4FF9-9ADE-54A645400B9A",
+          "socket" : "t"
+        }
+      }
+    ],
+    "frames" : [
+
+    ],
+    "nodes" : [
+      {
+        "collapsed" : false,
+        "id" : "14439EDC-D498-4FE9-83FA-9E3010A743F2",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.uv"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "6DA8DC4F-5F8A-4FD3-8F17-B1AF175742F1",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.color"
+          }
+        },
+        "params" : {
+          "value" : {
+            "float4" : {
+              "_0" : [
+                0.74,
+                0.58,
+                0.98,
+                1
+              ]
+            }
+          }
+        },
+        "position" : [
+          660,
+          360
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "B69C6FF4-C03E-4CB3-A00C-595BB152D191",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.separate"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          220,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "BDA30F9B-9B6A-4650-9FEE-87AD1B3DEE72",
+        "kind" : {
+          "builtin" : {
+            "_0" : "math.mix"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          880,
+          200
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "C5679965-5018-480E-B89F-A17E8B05F460",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.combine"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          660,
+          60
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "C9FF8744-7AB1-4F13-84E8-89C0CF7F39A0",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.time"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          160
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "D1975AD8-C53F-4246-B249-EE914245AFD0",
+        "kind" : {
+          "builtin" : {
+            "_0" : "noise.value"
+          }
+        },
+        "params" : {
+          "scale" : {
+            "float" : {
+              "_0" : 6
+            }
+          }
+        },
+        "position" : [
+          440,
+          360
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "E1DA48B8-FDD1-4FA9-B323-3199495D70D0",
+        "kind" : {
+          "builtin" : {
+            "_0" : "output.fragment"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          1100,
+          200
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "E623E52F-583A-4FF9-9ADE-54A645400B9A",
+        "kind" : {
+          "group" : {
+            "_0" : "BC672DA2-1F63-4D37-AC72-3D1F42342977"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          220,
+          200
+        ]
+      }
+    ],
+    "stickies" : [
+
+    ]
+  },
+  "settings" : {
+    "assets" : [
+
+    ],
+    "exportName" : "metalNodesShader",
+    "fastMath" : true,
+    "lightingModel" : "lit",
+    "previewSize" : [
+      512,
+      512
+    ],
+    "target" : {
+      "fragment" : {
+
+      }
+    },
+    "timeMode" : "wallClock"
+  }
+}

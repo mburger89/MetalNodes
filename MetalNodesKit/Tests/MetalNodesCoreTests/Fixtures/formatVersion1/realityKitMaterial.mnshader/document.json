@@ -1,0 +1,319 @@
+{
+  "definitions" : [
+
+  ],
+  "formatVersion" : 1,
+  "root" : {
+    "edges" : [
+      {
+        "from" : {
+          "node" : "5BB4DA77-58DC-4F1C-94B2-318D81D95905",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "1BE7CCAC-1972-4B0D-BCEA-331DFFE81C52",
+          "socket" : "y"
+        }
+      },
+      {
+        "from" : {
+          "node" : "9395330B-E04B-4954-B98F-A19740FD0023",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "5BB4DA77-58DC-4F1C-94B2-318D81D95905",
+          "socket" : "a"
+        }
+      },
+      {
+        "from" : {
+          "node" : "D1A1DC28-838A-485D-9950-D0B1E11E5EFF",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "5BB4DA77-58DC-4F1C-94B2-318D81D95905",
+          "socket" : "b"
+        }
+      },
+      {
+        "from" : {
+          "node" : "3B4F4E75-308B-409D-BBA9-E1B91D78622E",
+          "socket" : "time"
+        },
+        "to" : {
+          "node" : "868215E4-C585-4561-977B-3365E8EA314C",
+          "socket" : "a"
+        }
+      },
+      {
+        "from" : {
+          "node" : "1B790EAD-87EB-4A50-8878-AC5809542F93",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "868215E4-C585-4561-977B-3365E8EA314C",
+          "socket" : "b"
+        }
+      },
+      {
+        "from" : {
+          "node" : "868215E4-C585-4561-977B-3365E8EA314C",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "9395330B-E04B-4954-B98F-A19740FD0023",
+          "socket" : "a"
+        }
+      },
+      {
+        "from" : {
+          "node" : "7B65E008-B13B-40A7-A373-36EDC2B938D5",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "CD3C59E3-CC1B-40F8-8428-0304ECD1F905",
+          "socket" : "baseColor"
+        }
+      },
+      {
+        "from" : {
+          "node" : "1BE7CCAC-1972-4B0D-BCEA-331DFFE81C52",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "CD3C59E3-CC1B-40F8-8428-0304ECD1F905",
+          "socket" : "positionOffset"
+        }
+      },
+      {
+        "from" : {
+          "node" : "2229A194-22A6-4FE7-80A6-9FBB430E919D",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "CD3C59E3-CC1B-40F8-8428-0304ECD1F905",
+          "socket" : "roughness"
+        }
+      }
+    ],
+    "frames" : [
+
+    ],
+    "nodes" : [
+      {
+        "collapsed" : false,
+        "id" : "1B790EAD-87EB-4A50-8878-AC5809542F93",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.float"
+          }
+        },
+        "params" : {
+          "value" : {
+            "float" : {
+              "_0" : 0.6
+            }
+          }
+        },
+        "position" : [
+          0,
+          120
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "1BE7CCAC-1972-4B0D-BCEA-331DFFE81C52",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.combine"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          880,
+          60
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "2229A194-22A6-4FE7-80A6-9FBB430E919D",
+        "kind" : {
+          "builtin" : {
+            "_0" : "noise.value"
+          }
+        },
+        "params" : {
+          "scale" : {
+            "float" : {
+              "_0" : 6
+            }
+          }
+        },
+        "position" : [
+          440,
+          300
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "3B4F4E75-308B-409D-BBA9-E1B91D78622E",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.time"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "5BB4DA77-58DC-4F1C-94B2-318D81D95905",
+        "kind" : {
+          "builtin" : {
+            "_0" : "math.math"
+          }
+        },
+        "params" : {
+          "op" : {
+            "enumCase" : {
+              "_0" : "multiply"
+            }
+          }
+        },
+        "position" : [
+          660,
+          60
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "7B65E008-B13B-40A7-A373-36EDC2B938D5",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.color"
+          }
+        },
+        "params" : {
+          "value" : {
+            "float4" : {
+              "_0" : [
+                0.85,
+                0.55,
+                0.25,
+                1
+              ]
+            }
+          }
+        },
+        "position" : [
+          660,
+          300
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "868215E4-C585-4561-977B-3365E8EA314C",
+        "kind" : {
+          "builtin" : {
+            "_0" : "math.math"
+          }
+        },
+        "params" : {
+          "op" : {
+            "enumCase" : {
+              "_0" : "multiply"
+            }
+          }
+        },
+        "position" : [
+          220,
+          60
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "9395330B-E04B-4954-B98F-A19740FD0023",
+        "kind" : {
+          "builtin" : {
+            "_0" : "math.math"
+          }
+        },
+        "params" : {
+          "op" : {
+            "enumCase" : {
+              "_0" : "sine"
+            }
+          }
+        },
+        "position" : [
+          440,
+          60
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "CD3C59E3-CC1B-40F8-8428-0304ECD1F905",
+        "kind" : {
+          "builtin" : {
+            "_0" : "output.material"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          1100,
+          150
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "D1A1DC28-838A-485D-9950-D0B1E11E5EFF",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.float"
+          }
+        },
+        "params" : {
+          "value" : {
+            "float" : {
+              "_0" : 0.06
+            }
+          }
+        },
+        "position" : [
+          0,
+          240
+        ]
+      }
+    ],
+    "stickies" : [
+
+    ]
+  },
+  "settings" : {
+    "assets" : [
+
+    ],
+    "exportName" : "metalNodesShader",
+    "fastMath" : true,
+    "lightingModel" : "lit",
+    "previewSize" : [
+      512,
+      512
+    ],
+    "target" : {
+      "realityKit" : {
+
+      }
+    },
+    "timeMode" : "wallClock"
+  }
+}

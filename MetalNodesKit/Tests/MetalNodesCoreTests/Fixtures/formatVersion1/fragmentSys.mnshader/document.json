@@ -1,0 +1,238 @@
+{
+  "definitions" : [
+
+  ],
+  "formatVersion" : 1,
+  "root" : {
+    "edges" : [
+      {
+        "from" : {
+          "node" : "2D9CEF14-6E20-46FD-AF1B-24A85E80680A",
+          "socket" : "x"
+        },
+        "to" : {
+          "node" : "24EEBD63-4B0B-4A38-8299-AF585E84A48D",
+          "socket" : "x"
+        }
+      },
+      {
+        "from" : {
+          "node" : "C7FE7853-05B4-468F-86E2-B4CB7EB4F3D2",
+          "socket" : "x"
+        },
+        "to" : {
+          "node" : "24EEBD63-4B0B-4A38-8299-AF585E84A48D",
+          "socket" : "y"
+        }
+      },
+      {
+        "from" : {
+          "node" : "5FED2B55-F246-481A-B540-ADC2F64ABFA1",
+          "socket" : "y"
+        },
+        "to" : {
+          "node" : "24EEBD63-4B0B-4A38-8299-AF585E84A48D",
+          "socket" : "z"
+        }
+      },
+      {
+        "from" : {
+          "node" : "502BE56D-6EA1-4EE2-9D3D-67A396F69547",
+          "socket" : "uv"
+        },
+        "to" : {
+          "node" : "2D9CEF14-6E20-46FD-AF1B-24A85E80680A",
+          "socket" : "v"
+        }
+      },
+      {
+        "from" : {
+          "node" : "B675C714-3927-4ABB-A887-5F2E30FB155D",
+          "socket" : "resolution"
+        },
+        "to" : {
+          "node" : "5FED2B55-F246-481A-B540-ADC2F64ABFA1",
+          "socket" : "v"
+        }
+      },
+      {
+        "from" : {
+          "node" : "24EEBD63-4B0B-4A38-8299-AF585E84A48D",
+          "socket" : "out"
+        },
+        "to" : {
+          "node" : "9EF58F39-E49F-4296-8C97-3F8E1811D357",
+          "socket" : "color"
+        }
+      },
+      {
+        "from" : {
+          "node" : "4D8A0653-BE96-4E47-9825-111509523006",
+          "socket" : "position"
+        },
+        "to" : {
+          "node" : "C7FE7853-05B4-468F-86E2-B4CB7EB4F3D2",
+          "socket" : "v"
+        }
+      }
+    ],
+    "frames" : [
+
+    ],
+    "nodes" : [
+      {
+        "collapsed" : false,
+        "id" : "24EEBD63-4B0B-4A38-8299-AF585E84A48D",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.combine"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "2D9CEF14-6E20-46FD-AF1B-24A85E80680A",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.separate"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "4D8A0653-BE96-4E47-9825-111509523006",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.mouse"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "502BE56D-6EA1-4EE2-9D3D-67A396F69547",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.uv"
+          }
+        },
+        "params" : {
+          "mode" : {
+            "enumCase" : {
+              "_0" : "aspect"
+            }
+          }
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "5FED2B55-F246-481A-B540-ADC2F64ABFA1",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.separate"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "9EF58F39-E49F-4296-8C97-3F8E1811D357",
+        "kind" : {
+          "builtin" : {
+            "_0" : "output.fragment"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "B675C714-3927-4ABB-A887-5F2E30FB155D",
+        "kind" : {
+          "builtin" : {
+            "_0" : "input.resolution"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      },
+      {
+        "collapsed" : false,
+        "id" : "C7FE7853-05B4-468F-86E2-B4CB7EB4F3D2",
+        "kind" : {
+          "builtin" : {
+            "_0" : "vector.separate"
+          }
+        },
+        "params" : {
+
+        },
+        "position" : [
+          0,
+          0
+        ]
+      }
+    ],
+    "stickies" : [
+
+    ]
+  },
+  "settings" : {
+    "assets" : [
+
+    ],
+    "exportName" : "metalNodesShader",
+    "fastMath" : true,
+    "lightingModel" : "lit",
+    "previewSize" : [
+      512,
+      512
+    ],
+    "target" : {
+      "fragment" : {
+
+      }
+    },
+    "timeMode" : "wallClock"
+  }
+}

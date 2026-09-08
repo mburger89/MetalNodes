@@ -1,0 +1,27 @@
+{
+  "cameras" : [
+
+  ],
+  "canvasMode" : "pointer",
+  "editingStack" : [
+
+  ],
+  "orbit" : {
+    "azimuth" : 0.6,
+    "distance" : 3,
+    "elevation" : 0.3
+  },
+  "previewMesh" : "sphere",
+  "selectedComments" : [
+
+  ],
+  "selection" : [
+
+  ],
+  "showsCode" : false,
+  "showsInspector" : true,
+  "showsMinimap" : true,
+  "viewerPath" : [
+
+  ]
+}
