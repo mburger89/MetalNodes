@@ -76,6 +76,19 @@ public enum MSLScanner {
         return out
     }
 
+    /// The 0-based line each free identifier *first* appears on, keyed by name — the same
+    /// occurrences `identifiers(in:)` names, by the same `isFreeIdentifier` rule, so a diagnostic
+    /// about one of them can point at the user's own line rather than at no line at all.
+    public static func identifierLines(in source: String) -> [String: Int] {
+        let tokens = tokenise(source)
+        let declared = declaredLocals(tokens)
+        var out: [String: Int] = [:]
+        for t in tokens where isFreeIdentifier(t, declared: declared) && out[t.text] == nil {
+            out[t.text] = t.line
+        }
+        return out
+    }
+
     /// Rewrites `source`, replacing every occurrence of a free identifier — exactly the token
     /// occurrences `identifiers(in:)` would name, by the same rule — with `replacement(name)`.
     /// Everything else passes through unchanged: punctuation, numbers, whitespace, comments, and
@@ -108,8 +121,15 @@ public enum MSLScanner {
     /// the result, not another accessor segment. A bare identifier with no call at all (`in_a`) is
     /// not an accessor and is not reported.
     public static func accessorCalls(in source: String) -> [String] {
+        accessorCallSites(in: source).map(\.chain)
+    }
+
+    /// `accessorCalls(in:)` with the 0-based line each chain's root identifier sits on, so a
+    /// diagnostic about a chain can land on the user's own line. One scan serves both — the two
+    /// can never disagree about what counts as a chain.
+    public static func accessorCallSites(in source: String) -> [(chain: String, line: Int)] {
         let tokens = tokenise(source)
-        var out: [String] = []
+        var out: [(chain: String, line: Int)] = []
         var i = 0
         while i < tokens.count {
             let t = tokens[i]
@@ -127,7 +147,7 @@ public enum MSLScanner {
                 matchedAny = true
             }
             if matchedAny {
-                out.append(text)
+                out.append((chain: text, line: t.line))
                 i = j
             } else {
                 i += 1

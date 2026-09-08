@@ -422,3 +422,151 @@ enum MaterialFixture {
         }
     }
 }
+
+/// Rule 3 for a hand-written body (final fix wave, F1). A `.msl` body's accessor chains are
+/// checked against `groupFunction`, where `size` and `mouse` are readable — but the *values* those
+/// parameters carry are the caller's, and under `.realityKit` the call site passes fill literals
+/// (`float2(1.0, 1.0)`, `float2(0.0, 0.0)`). Before this rule, `out = mouse.x + size.y;` under a
+/// RealityKit document produced zero diagnostics, compiled clean, and computed with constants.
+@Suite struct CustomBodySystemValueTests {
+    private func definitionDoc(_ body: String, target: OutputTarget = .realityKit)
+        -> (doc: ShaderDocument, def: GroupID) {
+        var doc = ShaderDocument()
+        doc.settings.target = target
+        var def = GroupDefinition(name: "Custom")
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.body = .msl(body)
+        doc.definitions[def.id] = def
+        var g = Graph()
+        let t = NodeInstance(kind: .builtin(GraphValidator.terminalID(for: target)), position: .zero)
+        let i = NodeInstance(kind: .group(def.id), position: .zero)
+        g.nodes[t.id] = t; g.nodes[i.id] = i
+        doc.root = g
+        return (doc, def.id)
+    }
+
+    private func errors(_ doc: ShaderDocument) -> [Diagnostic] {
+        GraphValidator.validate(document: doc, registry: .builtin, target: doc.settings.target)
+            .filter { $0.severity == .error }
+    }
+
+    /// Both fill-only parameters, each refused by name, filed against the definition and the
+    /// user's own line, in rule 3's phrasing — problem first, derived fix second.
+    @Test func aCustomBodyReadingMouseOrSizeIsRefusedUnderRealityKit() throws {
+        let (doc, def) = definitionDoc("out = 1.0;\nout = mouse.x + size.y;")
+        let d = errors(doc)
+        let mouse = try #require(d.first { $0.message.contains("reads mouse") })
+        let size = try #require(d.first { $0.message.contains("reads size") })
+        for diag in [mouse, size] {
+            #expect(diag.message.contains("which the RealityKit Material target does not provide"))
+            #expect(diag.message.contains("this definition needs the"))
+            #expect(diag.message.contains("SwiftUI"))
+            #expect(diag.definition == def)
+            #expect(diag.userLine == 2)
+            #expect(diag.node == nil)
+        }
+        #expect(d.count == 2, "\(d.map(\.message))")
+    }
+
+    /// The identical body is legal wherever the caller passes real values — the rule is the
+    /// target's environments' answer, not a ban on the names.
+    @Test(arguments: [OutputTarget.fragment, .stitchable(.colorEffect), .stitchable(.layerEffect)])
+    func theSameBodyIsAcceptedUnderTheOtherTargets(_ target: OutputTarget) {
+        let (doc, _) = definitionDoc("out = mouse.x + size.y;", target: target)
+        #expect(errors(doc).isEmpty, "\(target): \(errors(doc).map(\.message))")
+    }
+
+    /// `uv` and `time` are readable under RealityKit and stay so inside a body.
+    @Test func uvAndTimeStayReadableUnderRealityKit() {
+        let (doc, _) = definitionDoc("out = uv.x * time;")
+        #expect(errors(doc).isEmpty)
+    }
+
+    /// The scan is by free identifier, not by substring: a member named `mouse`, a swizzle after
+    /// a dot, and a local the body declares itself are not reads of the system parameter.
+    @Test func aMemberOrLocalSpelledLikeASystemValueIsNotARead() {
+        let (members, _) = definitionDoc("Helper h; out = h.mouse + h.size.x;")
+        #expect(errors(members).isEmpty, "\(errors(members).map(\.message))")
+        let (local, _) = definitionDoc("float mouseSpeed = 2.0; out = mouseSpeed;")
+        #expect(errors(local).isEmpty)
+    }
+
+    /// A definition nothing instantiates is in no RealityKit program, so — like every other target
+    /// rule — it is not judged; the moment it is instantiated, it is.
+    @Test func onlyAReachableDefinitionIsJudged() {
+        var (doc, _) = definitionDoc("out = mouse.x;")
+        doc.root.nodes = doc.root.nodes.filter { $0.value.kind == .builtin("output.material") }
+        #expect(errors(doc).isEmpty)
+    }
+
+    /// End to end: the refusal blocks generation, so the fill literal never reaches a `.metal`.
+    @Test func theRefusalReachesGeneration() {
+        let (doc, _) = definitionDoc("out = mouse.x;")
+        #expect(throws: GenerationError.self) { try ShaderGenerator.generate(doc, target: .realityKit) }
+    }
+
+    /// The set the rule scans for is derived from `EmitEnvironment`'s `readable: false` entries and
+    /// mapped through `GroupCodegen`'s parameter names — `resolution` is spelled `size` in a body —
+    /// and is empty wherever every system value is readable.
+    @Test func theFillOnlyParameterSetIsDerivedFromTheTargetsEnvironments() {
+        let rk = MaterialValidation.fillOnlyGroupParameters(for: .realityKit)
+        #expect(rk.map(\.param) == ["mouse", "size"])
+        #expect(rk.map(\.key) == ["mouse", "resolution"])
+        for target in OutputTarget.all where target != .realityKit {
+            #expect(MaterialValidation.fillOnlyGroupParameters(for: target).isEmpty, "\(target)")
+        }
+    }
+}
+
+/// Rule 3 over the nodes *inside* a reachable `.graph` definition (final fix wave, F2). Skipping
+/// `allNodes`' `for d in reachable` loop left the whole suite green while a Mouse node inside a
+/// group under RealityKit emitted `float2(0.0, 0.0)` — a plausible constant, never an error.
+@Suite struct DefinitionNodeTargetTests {
+    /// A definition whose Group Output is fed by one `nodeID` node, instantiated (unwired) in a
+    /// document targeting `target`. The instance is unwired on purpose: nothing else — no stage
+    /// walk, no lighting warning — has anything to say, so the only possible error is rule 3's.
+    private func wrapped(_ nodeID: String, target: OutputTarget = .realityKit) -> (doc: ShaderDocument, node: NodeID) {
+        var doc = MaterialFixture.document(target: target)
+        if target != .realityKit {
+            doc.root = Graph()
+            let t = NodeInstance(kind: .builtin(GraphValidator.terminalID(for: target)), position: .zero)
+            doc.root.nodes[t.id] = t
+        }
+        let def = NodeRegistry.builtin[nodeID]!
+        let outType = def.outputs.first!.type
+        var definition = GroupDefinition(name: "Wrapper", outputs: [SocketDecl(name: "out", type: outType)])
+        var inner = Graph()
+        let gin = NodeInstance(kind: .groupInput, position: .zero)
+        let gout = NodeInstance(kind: .groupOutput, position: .zero)
+        let node = NodeInstance(kind: .builtin(nodeID), position: .zero)
+        for n in [gin, gout, node] { inner.nodes[n.id] = n }
+        inner.inputs[SocketRef(gout.id, "out")] = SocketRef(node.id, def.outputs.first!.name)
+        definition.graph = inner
+        doc.definitions[definition.id] = definition
+        let instance = NodeInstance(kind: .group(definition.id), position: .zero)
+        doc.root.nodes[instance.id] = instance
+        return (doc, node.id)
+    }
+
+    private func errors(_ doc: ShaderDocument) -> [Diagnostic] {
+        GraphValidator.validate(document: doc, registry: .builtin, target: doc.settings.target)
+            .filter { $0.severity == .error }
+    }
+
+    @Test(arguments: [("input.mouse", "mouse"), ("input.resolution", "resolution")])
+    func aFillOnlyNodeInsideAGraphDefinitionIsRefusedUnderRealityKit(_ nodeID: String, _ key: String) throws {
+        let (doc, node) = wrapped(nodeID)
+        let d = errors(doc)
+        let refusal = try #require(d.first { $0.message.contains("reads \(key)") }, "\(d.map(\.message))")
+        #expect(refusal.message.contains("RealityKit Material target does not provide"))
+        #expect(refusal.node == node)
+    }
+
+    /// The same definition is clean under a target that reads both values — so the RealityKit
+    /// refusal above is rule 3's alone, not some other rule tripping over the fixture.
+    @Test(arguments: ["input.mouse", "input.resolution"])
+    func theSameDefinitionIsCleanUnderTheFragmentTarget(_ nodeID: String) {
+        let (doc, _) = wrapped(nodeID, target: .fragment)
+        #expect(errors(doc).isEmpty, "\(errors(doc).map(\.message))")
+    }
+}

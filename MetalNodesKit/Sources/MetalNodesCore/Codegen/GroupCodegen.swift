@@ -207,6 +207,20 @@ public enum GroupCodegen {
         ("uv", "float2"), ("time", "float"), ("size", "float2"), ("mouse", "float2"),
     ]
 
+    /// The parameter a `{sys.<key>}` value is spelled as *inside* a group function — `size` for
+    /// `resolution`, its own name for the other three. The parameter names and the sys keys do
+    /// not coincide, so a rule that reasons about one in terms of the other must go through here
+    /// rather than assume they do. Derived from `EmitEnvironment.groupFunction`'s spellings — the
+    /// one place a sys key is already turned into a parameter name, for every node emitted inside
+    /// a group — and cross-checked against `systemParamNames`: a key whose spelling is not a
+    /// declared parameter answers `nil` rather than an identifier no emitted function has.
+    /// `GroupCodegenTests` pins that the two agree on every key.
+    static func systemParamName(forSysKey key: String) -> String? {
+        guard let spelling = EmitEnvironment.groupFunction.sys[key]?.spelling,
+              systemParamNames.contains(where: { $0.name == spelling }) else { return nil }
+        return spelling
+    }
+
     /// `float2 uv, float time, float2 size, float2 mouse` plus the definition's declared inputs,
     /// spelled `in_<name>` — shared by both body kinds so a `.msl` function is indistinguishable
     /// to its caller from a `.graph` one (spec §24.3).

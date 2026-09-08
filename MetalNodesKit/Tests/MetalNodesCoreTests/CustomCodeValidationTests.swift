@@ -153,3 +153,54 @@ import Testing
         #expect(errors(doc).contains { $0.message.lowercased().contains("pragma") })
     }
 }
+
+/// Final fix wave — F4 and F7.
+@Suite struct CustomCodeValidationAnchoringTests {
+    private func errors(_ doc: ShaderDocument) -> [Diagnostic] {
+        GraphValidator.validate(document: doc, registry: .builtin, target: .fragment)
+            .filter { $0.severity == .error }
+    }
+
+    /// F4: the accessor diagnostic used to carry neither `definition` nor `userLine`, and
+    /// `EditorModel.codeDiagnostics` keeps a definition-less row for *every* open editor — so
+    /// definition A's `params.geometry()` error appeared in definition B's editor at line 0. It is
+    /// now filed like the scope breakers: against its definition, on the chain's own line.
+    @Test func anAccessorDiagnosticIsFiledAgainstItsDefinitionAndLine() throws {
+        var doc = ShaderDocument()
+        var def = GroupDefinition(name: "W")
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.body = .msl("out = 1.0;\nout = params.geometry().normal().x;")
+        doc.definitions[def.id] = def
+        let t = NodeInstance(kind: .builtin("output.fragment"), position: .zero)
+        doc.root.nodes[t.id] = t
+        let d = try #require(errors(doc).first { $0.message.contains("params.geometry()") })
+        #expect(d.definition == def.id)
+        #expect(d.userLine == 2)
+    }
+
+    /// F7: an Expression inside a `.graph` definition is scanned for scope breakers exactly like
+    /// one in the root — `allExpressionNodes` walks every definition's graph, and skipping that
+    /// walk left the suite green. Anchored by `node`, never by `definition` (the rule
+    /// `LineMap.UserEntry` follows too).
+    @Test func anExpressionInsideAGraphDefinitionIsGuarded() throws {
+        var doc = ShaderDocument()
+        var def = GroupDefinition(name: "G", outputs: [SocketDecl(name: "out", type: .concrete(.float))])
+        var inner = Graph()
+        let gin = NodeInstance(kind: .groupInput, position: .zero)
+        let gout = NodeInstance(kind: .groupOutput, position: .zero)
+        let e = NodeInstance(kind: .builtin(ExpressionNode.id), position: .zero,
+                             params: [ExpressionNode.formulaParam: .text("#include <metal_stdlib>"),
+                                      "type": .enumCase("float")])
+        for n in [gin, gout, e] { inner.nodes[n.id] = n }
+        inner.inputs[SocketRef(gout.id, "out")] = SocketRef(e.id, "out")
+        def.graph = inner
+        doc.definitions[def.id] = def
+        let t = NodeInstance(kind: .builtin("output.fragment"), position: .zero)
+        let i = NodeInstance(kind: .group(def.id), position: .zero)
+        doc.root.nodes[t.id] = t; doc.root.nodes[i.id] = i
+        let d = try #require(errors(doc).first { $0.message.lowercased().contains("include") })
+        #expect(d.node == e.id)
+        #expect(d.socket == ExpressionNode.formulaParam)
+        #expect(d.definition == nil)
+    }
+}

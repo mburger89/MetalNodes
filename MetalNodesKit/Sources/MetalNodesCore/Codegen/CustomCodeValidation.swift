@@ -33,8 +33,19 @@ public enum CustomCodeValidation {
             // not in scope there under *any* document target. Asking the target's own environment
             // instead would call `params.geometry().normal()` legal in a RealityKit document and
             // then emit a function that cannot compile; see this task's report.
+            //
+            // Filed against the definition and the user's own line, like the scope breakers above:
+            // `EditorModel.codeDiagnostics` keeps a row whose `definition` is `nil` for *every*
+            // open editor (a compile error on generated scaffolding has no better home), so a
+            // definition-less accessor diagnostic would appear in every other definition's editor
+            // at line 0. The line is the accessor chain's own, from the same scan the predicate's
+            // answer came from.
             if case .missing(let accessor) = EmitEnvironment.groupFunction.canEmit(mslText: text) {
-                out.append(Diagnostic(.error, "\(def.name): \(accessor) is not available inside a group definition — read it in the root graph and pass the value in"))
+                let line = MSLScanner.accessorCallSites(in: normalisedForScanning(text))
+                    .first { $0.chain == accessor }?.line
+                out.append(Diagnostic(.error,
+                    "\(def.name): \(accessor) is not available inside a group definition — read it in the root graph and pass the value in",
+                    userLine: line.map { $0 + 1 }, definition: def.id))
             }
         }
         return out
@@ -46,7 +57,9 @@ public enum CustomCodeValidation {
     /// `LoopHardening.hardened`'s own boundary. Normalising a local copy here, purely for the
     /// scanner's line count, gets a correct `userLine` without touching `MSLScanner.swift` — the
     /// diagnostic's `node`/`socket`/message still describe the document's own, unmodified text.
-    private static func normalisedForScanning(_ text: String) -> String {
+    /// Internal rather than private so `MaterialValidation`'s custom-body rule scans the same
+    /// normalised text and reports the same physical line this file would.
+    static func normalisedForScanning(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 

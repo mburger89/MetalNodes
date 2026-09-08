@@ -168,3 +168,22 @@ import CoreGraphics
         #expect(s.source.contains("mn_g_"))
     }
 }
+
+/// `GroupCodegen.systemParamName(forSysKey:)` is derived from `EmitEnvironment.groupFunction`'s
+/// spellings and cross-checked against `systemParamNames`; this pins that the two agree on every
+/// key in both directions, so a fifth system parameter added to one without the other is caught
+/// here rather than by a rule silently scanning for nothing (final fix wave, F1).
+@Suite struct GroupSystemParamMappingTests {
+    @Test func everySysKeyMapsToADeclaredParameterAndBack() {
+        let keys = EmitEnvironment.groupFunction.sys.keys.sorted()
+        let mapped = keys.compactMap(GroupCodegen.systemParamName(forSysKey:))
+        #expect(mapped.count == keys.count, "a sys key has no declared parameter: \(keys)")
+        #expect(Set(mapped) == Set(GroupCodegen.systemParamNames.map(\.name)))
+    }
+
+    @Test func resolutionIsSpelledSizeInsideAGroupFunction() {
+        #expect(GroupCodegen.systemParamName(forSysKey: "resolution") == "size")
+        #expect(GroupCodegen.systemParamName(forSysKey: "mouse") == "mouse")
+        #expect(GroupCodegen.systemParamName(forSysKey: "worldPosition") == nil)
+    }
+}

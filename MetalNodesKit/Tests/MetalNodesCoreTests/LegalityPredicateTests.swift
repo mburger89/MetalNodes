@@ -508,10 +508,23 @@ import Testing
         #expect(errors(definitionDoc("Helper h; out = h.value().x;")).isEmpty)
     }
 
-    /// The vocabulary a group function *does* have stays available — that is the whole reason the
-    /// check is asked of `groupFunction` rather than of the document's target.
+    /// The vocabulary a group function *does* have stays available to the accessor gate — that is
+    /// the whole reason the check is asked of `groupFunction` rather than of the document's
+    /// target. Under a target that reads all four, the body is clean outright.
     @Test func theGroupFunctionsOwnSystemValuesAreFine() {
-        #expect(errors(definitionDoc("out = uv.x * time * size.y * mouse.x;")).isEmpty)
+        #expect(errors(definitionDoc("out = uv.x * time * size.y * mouse.x;", target: .fragment)).isEmpty)
+    }
+
+    /// Under `.realityKit` the same body *is* refused — but by rule 3's custom-body form
+    /// (`MaterialValidation`, final fix wave F1: `size` and `mouse` arrive as fill literals there),
+    /// never by this accessor gate, which has nothing to say about a bare system parameter. This
+    /// test originally asserted the body clean under RealityKit, which was the defect F1 fixed.
+    @Test func underRealityKitTheFillOnlyParametersAreRefusedByTheTargetRuleNotTheAccessorGate() {
+        let d = errors(definitionDoc("out = uv.x * time * size.y * mouse.x;"))
+        #expect(d.count == 2, "\(d.map(\.message))")
+        #expect(d.allSatisfy { $0.message.contains("does not provide") })
+        #expect(!d.contains { $0.message.contains("inside a group definition") })
+        #expect(errors(definitionDoc("out = uv.x * time;")).isEmpty)
     }
 
     /// Both guards fire on one body: this file's two families are independent.

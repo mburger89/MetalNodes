@@ -7,12 +7,15 @@ public enum MaterialValidation {
     /// Rules 2–5. Rule 1 (the terminal) is `GraphValidator`'s, because every target has one.
     public static func diagnostics(document doc: ShaderDocument, registry: NodeRegistry,
                                    target: OutputTarget, reachable: [GroupDefinition]) -> [Diagnostic] {
-        guard target == .realityKit else {
-            return targetDiagnostics(doc, registry: registry, target: target, reachable: reachable)
-        }
+        // Rule 3 in both of its forms — a node's `{sys.…}` reads and a Custom MSL body's free
+        // identifiers — is asked under every target; only `.realityKit` has fill-only values
+        // today, but the question is the environment's to answer, not this guard's.
+        let targetRules = targetDiagnostics(doc, registry: registry, target: target, reachable: reachable)
+            + customCodeSystemValueDiagnostics(doc, target: target, reachable: reachable)
+        guard target == .realityKit else { return targetRules }
         guard let terminal = GraphValidator.terminal(in: doc.root, target: .realityKit) else { return [] }
         return stageDiagnostics(doc, registry: registry, terminal: terminal, reachable: reachable)
-            + targetDiagnostics(doc, registry: registry, target: target, reachable: reachable)
+            + targetRules
             + definitionNodeDiagnostics(doc, registry: registry, reachable: reachable)
             + textureDiagnostics(doc, reachable: reachable)
             + lightingDiagnostics(doc, terminal: terminal)
@@ -154,6 +157,54 @@ public enum MaterialValidation {
         }
         guard let last = labels.last else { return nil }
         return labels.count == 1 ? last : labels.dropLast().joined(separator: ", ") + " or " + last
+    }
+
+    /// Rule 3 for a hand-written body (spec §24.5, §24.10). `CustomCodeValidation` checks a `.msl`
+    /// body's *accessor chains* against `groupFunction`, where all four system parameters are
+    /// readable — one emitted function serves every target. But the *values* that arrive in
+    /// `size` and `mouse` are the caller's, and under `.realityKit` the call site spells them from
+    /// fill-only keys (`materialSys`: `float2(1.0, 1.0)` and `float2(0.0, 0.0)`) — literals that
+    /// exist so the argument list type-checks, not as values. A body reading `mouse.x` under that
+    /// target computes with a constant that looks like the pointer position: a silently wrong
+    /// value, in exactly the class the legality predicate exists to retire, while the identical
+    /// read as a Mouse *node* inside a `.graph` definition is refused by `targetDiagnostics`. So
+    /// this is the same question, asked of the body's free identifiers: which of its system
+    /// parameters is fill-only in every environment this target emits the call site in.
+    ///
+    /// The set is derived, never hand-listed: `EmitEnvironment`'s `readable: false` entries name
+    /// the sys keys, and `GroupCodegen.systemParamName(forSysKey:)` maps each to the parameter the
+    /// body actually spells — `resolution` is `size` there, so the names do not coincide. The fix
+    /// half of the message is derived the same way rule 3's is, by asking which other targets
+    /// would read the key. Reachable definitions only, matching every other target rule here: a
+    /// definition nothing instantiates is in no program this target emits.
+    private static func customCodeSystemValueDiagnostics(_ doc: ShaderDocument, target: OutputTarget,
+                                                         reachable: [GroupDefinition]) -> [Diagnostic] {
+        let fillOnly = fillOnlyGroupParameters(for: target)
+        guard !fillOnly.isEmpty else { return [] }
+        return reachable.flatMap { def -> [Diagnostic] in
+            guard case .msl(let text) = def.body else { return [] }
+            let lines = MSLScanner.identifierLines(in: CustomCodeValidation.normalisedForScanning(text))
+            return fillOnly.compactMap { param, key -> Diagnostic? in
+                guard let line = lines[param] else { return nil }
+                let problem = "\(def.name) reads \(param), which the \(target.title) target does not provide"
+                let fix = alternativeTargets(for: .template("{sys.\(key)}"), chosen: nil, excluding: target)
+                    .map { " — this definition needs the \($0) target" } ?? ""
+                return Diagnostic(.error, problem + fix, userLine: line + 1, definition: def.id)
+            }
+        }
+    }
+
+    /// Each group-function system parameter whose value under `target` is a fill literal in every
+    /// environment the target emits a call site in, paired with the sys key it is spelled from.
+    /// Empty under a target where all four are readable, which is every target but `.realityKit`
+    /// today. Sorted by key so diagnostics come out in a stable order.
+    static func fillOnlyGroupParameters(for target: OutputTarget) -> [(param: String, key: String)] {
+        let environments = EmitEnvironment.environments(for: target)
+        return EmitEnvironment.groupFunction.sys.keys.sorted().compactMap { key in
+            guard let param = GroupCodegen.systemParamName(forSysKey: key),
+                  environments.allSatisfy({ $0.sys[key]?.readable == false }) else { return nil }
+            return (param, key)
+        }
     }
 
     /// The *inverse* of rule 3, and the same predicate asked of a different environment: under
