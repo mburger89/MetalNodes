@@ -1813,3 +1813,82 @@ Where §24 as written above and the shipped code differ, the code is right and t
 - **Three static sets were retired, not two.** §24.5 names `NodeDef.stages`, `MaterialValidation.twoDimensionalOnly` and the `material3D` set derived in `foreignNodeDiagnostics`. That derived set had a **second** reader, `definitionNodeDiagnostics` (§23.10's "3D input inside a group definition" rule), which is now the same predicate asked of `EmitEnvironment.groupFunction` — the environment a node inside a definition is actually emitted in.
 
 - **Known corners, deferred with reasons.** A user local named `geo` in a Custom MSL body false-positives the accessor gate, because the gate keys on the identifier roots `params.` and `geo.` textually; the diagnostic is wrong but points at real code, and narrowing it would need scope tracking the scanner does not do. And `NodeDef.stages` runs a regex scan per stage per access; validation already walks and type-resolves the whole document, so it is not the dominant cost, and the value is a pure function of the def — memoisable in the registry the moment profiling asks for it.
+
+---
+
+## 25. M9 addendum — hardening (added 2026-09-08)
+
+M9 is a **hardening milestone**: it closes handoff §15.5 — the behaviour changes M8 shipped, the defects the 2026-09-08 in-app walk found, the duplication and cost the reviews measured, and the build floor — and adds no feature. Decisions taken with the user: M9 is hardening only, with the timeline-and-recording feature (§17 Q4) chosen as **M10**; ⌘Z inside text fields is fixed by **forwarding down the responder chain**, not by a representable text view (smart quotes stay a documented limitation); the aspect-UV refusal under RealityKit **stays**, gaining an actionable hint; the iOS deployment floor is **lowered to 26.0**. Anything below that changes what a document *means* is forbidden: the format version stays 2 and the backward-compatibility corpus's goldens do not move unless an item says so explicitly.
+
+§25 wins for M9 wherever it and §23/§24 differ in detail.
+
+### 25.1 Scope and order
+
+1. Behaviour fixes (§25.2).
+2. Scanner and hardener consolidation, with the per-body cache (§25.3).
+3. Test-support consolidation and the deferred-item sweep (§25.4).
+4. Build floor and CI (§25.5).
+5. Verification, including a live re-check of the four user-visible items (§25.6).
+
+**Out of scope, with reasons.** Everything that needs an iPad (handoff §15.3 items 26, 36, 39–41), the Finder and palette drag checks (37, 38; not drivable by automation, unchanged code), the Custom Code features M8 deferred by design (gutter, `#include`, two open definitions, smart-quote suppression), and §15.5 per-task items T2, T5 and T8 (unreachable or unspecified rather than wrong).
+
+### 25.2 Behaviour fixes
+
+**Aspect-mode UV under `.realityKit` (handoff §15.5 item 4).** The refusal stands (§24.10). The diagnostic `MaterialValidation` emits for a UV node in aspect mode gains the fix: the message ends with ` — switch this node's Mode to Normalized`. `FormatCorpusTests.aspectUVUnderRealityKitIsRefused` pins the new text; no other message changes.
+
+**Unwired, edited geometry socket (item 5).** `MaterialCodegen.hasGeometryWork` currently answers true only when a non-terminal node reaches Position Offset or Custom Attribute, so an edited-but-unwired value is baked into the header and then never applied by the export, while the preview applies it. It becomes true **also** when either geometry socket's baked value differs from its `SocketDecl.default`. The preview path and the export path both read the same predicate, so they cannot disagree again. The corpus fixtures sit at the defaults; their goldens are unchanged, and a test that edits `positionOffset` without wiring it asserts the export emits the geometry stage and compiles.
+
+**CRLF (item 6).** `MSLScanner.tokenise` normalises `\r\n` and `\r` to `\n` before it walks the source, so every `Token.line` counts the user's lines on every path. `CustomCodeValidation.normalisedForScanning` is deleted. `LoopHardening.hardened` keeps its own normalisation, because it splices by `Token.start` offsets into *its* copy of the text and the two must agree; a comment says so. Test: a body with CRLF endings reports a `Violation.line` of 3 for a breaker on its third line, through `CustomCodeValidation.diagnostics` and through `MSLScanner.scopeBreakers` directly.
+
+**Material Output slider ranges (item 7).** `roughness`, `metallic`, `opacity`, `occlusion`, `specular` declare `range: 0...1`, as the two clearcoat sockets already do. Codegen is untouched — the preview already saturates and the export bakes what the slider allows, which is now only 0…1. Test: a correspondence test that every `.float` input of `output.material` declares a range, so the next socket cannot forget.
+
+**Wrapping socket labels (item 8).** The node body's label column is 46 pt everywhere (`ParamControl`, three sites), which wraps "Roughness", "Ambient Occlusion" and every clearcoat label. It becomes a **per-shape value**: `NodeGeometry.labelColumnWidth(for shape:)` returns the width of the longest label among the shape's body rows under the caption font, estimated at a fixed points-per-character figure, clamped to 46…96 pt. `ParamControl` receives the width from its row and uses it for every one-line row kind; `NodeGeometry.estimatedSize` reads the same function, so the node widens rather than the rows growing taller — a row stays one row, and `socketAnchor` is untouched. Derivation, not correspondence: there is one function and two readers. Test: the width for `output.material` exceeds 46 pt and the width for `input.float` does not; the node's estimated width grows by exactly the difference.
+
+**⌘Z inside text fields and the code editor (item 9), macOS only.** `EditorCommands`' Undo and Redo buttons are enabled whenever a model exists. Their actions decide at fire time:
+
+```swift
+if let responder = NSApp.keyWindow?.firstResponder, responder is NSText || responder is NSTextView {
+    NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)      // the field editor's own undo
+} else if canvasFocused, model?.canUndo == true {
+    model?.undo()
+}
+```
+
+and the mirror for `redo:`. The menu title still names the document step while a field is focused; that is accepted. Ruling 26's data-loss path — a document undo firing mid-keystroke and reseeding the code editor's draft — cannot recur: with a text view first responder the model is never called. `EditorModel.undo()`'s transaction guard is unchanged. iPadOS keeps today's gating (`#if os(macOS)` around the forward), and the handoff records the iPad ⌘Z behaviour as unverified. Verified live, not by a unit test: SwiftUI `Commands` are not constructible in a test, and the field editor's response is AppKit's.
+
+**Item 10 is withdrawn.** The fixture's asset manifest is empty; a Texture Sample with no asset renders black by design (§21.2), and `EditorModel.missingTextureDiagnostics` already warns when an asset *is* declared and its bytes are missing.
+
+### 25.3 Scanner and hardener consolidation
+
+**One loop-site finder (item 13).** `LoopHardening.loopBraceSites` and `bracedHeaderBraceIndex` re-implement `MSLScanner.loopOpeners` with offsets. The scanner's opener struct gains what the hardener needs — the keyword's `start`, the body's opening-brace token index, the matching close index, and for `do … while` the closing `while`'s indices — and `LoopHardening` consumes `MSLScanner.loopOpeners(tokens)` directly. `loopSites(in:)` keeps its signature (line numbers). Gate: the 14-shape hardening matrix and every `LoopHardeningTests` case pass byte-identically before and after, and `CustomCodeCompileTests` still compiles the matrix with `xcrun metal`.
+
+**One comment skipper (item 14).** `stripComments` and `tokenise` share a single `commentSpan(at:in:)` routine that reports the extent of a `//` or `/* … */` comment starting at an index; each caller decides whether to blank or skip. Gate: `MSLScannerTests` unchanged and passing.
+
+**Per-body scan cache (items 11, 12).** `MSLScanner.scopeBreakers(in:)` memoises its result in a bounded, lock-protected static cache keyed by the source string (a `Mutex`-guarded dictionary, at most 64 entries, evicting oldest). `CustomCodeValidation.diagnostics` and `GraphValidator.validate` need no change: a debounced recompile after an edit to one body re-pays only that body. Measured, not guessed: a test with fifty 200-line bodies asserts the second call completes in under a tenth of the first. The cache is process-global and content-keyed, so document reloads need no invalidation.
+
+### 25.4 Test support and the deferred-item sweep
+
+**One Metal compiler probe (item 15).** A `MetalCompiler` enum in `Tests/MetalNodesCoreTests/Support/` offers `static var isAvailable: Bool` (the `xcrun -sdk macosx metal --version` probe, run once) and `static func compile(_ source: String, macOSMin: String = "14.0") throws -> Result` returning stdout/stderr and the exit status. The ten files that carry their own `Process`/`Pipe` copy call it instead.
+
+**Sweep (one task).**
+- T3: the `LibraryM3Tests` one-node sweep gives the Expression registry entry a formula so it is actually wired and emitted.
+- T4: `MSLScanner.swift:82-83`'s comment says "free", and a test pins `a * a` substituting both occurrences.
+- T6: a test for `mslNameCollides`' `.input` branch; the dead `layer` handling in its `.msl` branch is deleted, with a test that an output named `layer` or `position` collides.
+- T9: `Emitter.swift:239`'s `precondition` becomes `guard … else { return .generated }`; `CustomCodeValidation` scans the trimmed formula, as codegen maps it, with a test for a formula with leading newlines.
+- T10: `EmitEnvironment.swift:230` iterates pairs instead of force-unwrapping.
+- T11: `ShaderGenerator.bake(_:)` carries `knownAccessors` through; a test that a baked environment still knows `params.geometry()`.
+- T14: the `v0` SSA-name assertions become structural (the colour node's emitted line is found by owner, not by name), and `MaterialCompileTests.swift:119` asserts the custom-attribute assignment reaches the emitted output struct by compiling and reading the line owner.
+
+### 25.5 Build floor and CI
+
+**iOS 26.0 (item 16).** `Package.swift` declares `.iOS("26.0")`; the project's four `IPHONEOS_DEPLOYMENT_TARGET = 27.0` lines become `26.0`. This is the one deliberate `project.pbxproj` commit of the milestone: the diff must be exactly those four lines, checked with `git diff --stat` before staging. The iOS build under Xcode 26.6 then has zero warnings.
+
+**`MTL_DEBUG_LAYER=1` on tests (item 3).** Added to the shared scheme's Test action as an environment variable (`MetalNodes.xcodeproj/xcshareddata/xcschemes/MetalNodes.xcscheme`, a committed file). Verified by running `xcodebuild test` once locally and confirming a Metal validation message appears in a deliberately broken probe test, which is then removed.
+
+### 25.6 Verification
+
+- Every fix ships with a test that fails against the pre-fix code, demonstrated by reverting the fix once (mutation), as handoff §15.6 requires.
+- `FormatCorpusTests` passes with unchanged goldens, except the aspect-UV message, which is re-pinned deliberately in the same commit as the message change.
+- `xcrun metal` compiles the loop-hardening matrix and the material exports through the shared helper.
+- Live, in the built app, after the milestone: item 8 (the Material Output node's labels on one line), item 9 (⌘Z in the formula field and in the code editor undoes typing; ⌘Z on the canvas undoes the document), item 7 (sliders span 0…1), item 4 (the hint reads correctly in the strip). These four go into handoff §16's checklist as the *only* items owed.
+- Four builds green under Xcode 26.6: `swift build` warning-free, `swift test`, `xcodebuild` for macOS and for `generic/platform=iOS` with zero warnings.

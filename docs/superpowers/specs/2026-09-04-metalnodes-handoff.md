@@ -708,7 +708,7 @@ The most useful section of §14, kept. Each of these was invisible to a fully gr
 7. **Every Material Output float slider spans −10…10** — Roughness, Metallic, Opacity, Ambient Occlusion, Specular declare no `range:`, so the slider and the baked export accept nonsense; the preview `saturate`s some of them, the export does not. Predates M8 (only the two clearcoat sockets were fixed, because M8 added them). One `range: 0...1` each.
 8. **Material Output socket labels wrap at node width** ("Clearcoa / t Rough- / ness"): the M8 labels are longer than the node body allows. Widen the node or shorten the labels.
 9. **⌘Z inside a text field or the code editor does nothing** — neither the native text undo nor the document undo fires, because the disabled Undo menu item swallows the key equivalent (ruling 26 chose this over a data-loss path). Items 14 and 30 fail softly. A real fix needs the menu item to yield the key to a focused text view rather than exist disabled.
-10. **A `.mnshader` whose texture bytes are missing opens silently black.** `ShaderPackage.missingTextures` is populated but nothing in the UI says so.
+10. ~~A `.mnshader` whose texture bytes are missing opens silently black.~~ **Withdrawn 2026-09-08:** the fixture's asset manifest is empty, so its Texture Sample has no asset and black is by design (§21.2); `EditorModel.missingTextureDiagnostics` already warns when a declared asset's bytes are absent.
 
 **What M8 deferred by design.**
 
