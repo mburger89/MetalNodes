@@ -79,4 +79,85 @@ import CoreGraphics
         #expect(EditorModel.liveParameterComponent(100) == nil)
         #expect(EditorModel.liveParameterComponent(-1) == nil)
     }
+
+    // MARK: `EditorModel.isLiveable` — fix round 2. Round 1 mutated this to an unconditional
+    // `return false` and the full suite (304/77/527) still passed: nothing pinned that a widened
+    // `isLiveable` actually widens, or that a still-generic, still-unresolved socket stays refused.
+    // These four pin exactly the boundary the doc comment on the `SocketDecl` overload claims.
+
+    private func floatInput() -> SocketDecl {
+        SocketDecl(name: "x", type: .concrete(.float), default: .value(.float(0)))
+    }
+
+    private func genericVectorInput() -> SocketDecl {
+        // `vector.length`'s `v`: generic, defaulting to `.float2` — never itself a float.
+        SocketDecl(name: "v", type: .generic("T"), default: .value(.float2(.init(0, 0))))
+    }
+
+    @Test func aConcreteFloatUnwiredInputIsOffered() {
+        #expect(EditorModel.isLiveable(floatInput(), resolvedType: nil))
+    }
+
+    @Test func aGenericSocketWithNoResolvedTypeIsNotOffered() {
+        #expect(!EditorModel.isLiveable(genericVectorInput(), resolvedType: nil))
+    }
+
+    /// The deliberate widening past a literal "generics are never offered": a generic socket that
+    /// *resolves* to `.float` (read from the emitter's own resolved type, never the lossy
+    /// `TypeRef.concreteOrFloat` fallback) is offered.
+    @Test func aGenericSocketThatResolvesToFloatIsOffered() {
+        #expect(EditorModel.isLiveable(genericVectorInput(), resolvedType: .float))
+    }
+
+    /// The pair the doc comment defends: a concretely-non-float socket is never offered, whether or
+    /// not a resolved type is known.
+    @Test func aConcreteFloat3IsNeverOffered() {
+        let decl = SocketDecl(name: "v", type: .concrete(.float3), default: .value(.float3(.init(0, 0, 0))))
+        #expect(!EditorModel.isLiveable(decl, resolvedType: nil))
+        #expect(!EditorModel.isLiveable(decl, resolvedType: .float3))
+    }
+
+    // MARK: `EditorModel.isLiveParameterReachable` — fix round 2. Round 1 mutated this to an
+    // unconditional `return true` (never warn) and the full suite still passed. These pin the two
+    // cases the reviewer named, against a real generated `UniformLayout` — the same way
+    // `LiveParametersTests` (`MetalNodesCoreTests`) already builds one, no compiler/`MTLDevice`/
+    // `EditorModel` instance required.
+
+    /// One node wired to the terminal's `roughness`, one left unconnected — `reachable`'s path feeds
+    /// the material, `orphan`'s exists in the document but reaches nothing.
+    private func reachabilityDocument() -> (doc: ShaderDocument, reachable: ParamPath, orphan: ParamPath) {
+        var doc = ShaderDocument()
+        doc.settings.target = .realityKit
+        var g = Graph()
+        let terminal = NodeInstance(kind: .builtin("output.material"), position: .zero)
+        g.nodes[terminal.id] = terminal
+        var reachableNode = NodeInstance(kind: .builtin("input.float"), position: .zero)
+        reachableNode.params["value"] = .float(0.5)
+        g.nodes[reachableNode.id] = reachableNode
+        g.inputs[SocketRef(terminal.id, "roughness")] = SocketRef(reachableNode.id, "out")
+        var orphanNode = NodeInstance(kind: .builtin("input.float"), position: CGPoint(x: 40, y: 0))
+        orphanNode.params["value"] = .float(0.2)
+        g.nodes[orphanNode.id] = orphanNode
+        doc.root = g
+        return (doc, ParamPath(node: reachableNode.id, param: "value"), ParamPath(node: orphanNode.id, param: "value"))
+    }
+
+    @Test func aParamOnANodeFeedingTheTerminalGivesNoWarning() throws {
+        let (doc, reachable, _) = reachabilityDocument()
+        let layout = try ShaderGenerator.generate(doc, target: .realityKit).layout
+        #expect(EditorModel.isLiveParameterReachable(reachable, in: layout))
+    }
+
+    @Test func aParamOnAnOrphanNodeWarns() throws {
+        let (doc, _, orphan) = reachabilityDocument()
+        let layout = try ShaderGenerator.generate(doc, target: .realityKit).layout
+        #expect(!EditorModel.isLiveParameterReachable(orphan, in: layout))
+    }
+
+    /// Before any compile has landed there is no layout to contradict the mark — no warning.
+    @Test func withNoCompiledLayoutYetThereIsNoWarning() {
+        let (_, reachable, orphan) = reachabilityDocument()
+        #expect(EditorModel.isLiveParameterReachable(reachable, in: nil))
+        #expect(EditorModel.isLiveParameterReachable(orphan, in: nil))
+    }
 }

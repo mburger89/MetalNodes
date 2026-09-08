@@ -109,7 +109,7 @@ public struct InspectorView: View {
                              value: node.params[decl.name] ?? dflt,
                              onChange: { model.apply(.setParam(id, decl.name, $0)) },
                              onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() })
-                if model.document.settings.target == .realityKit, isLiveable(decl, resolvedType: resolvedType) {
+                if model.document.settings.target == .realityKit, EditorModel.isLiveable(decl, resolvedType: resolvedType) {
                     let path = ParamPath(node: id, param: decl.name)
                     let index = model.liveParameterIndex(of: path)
                     liveToggle(index: index) { model.toggleLiveParameter(path) }
@@ -123,7 +123,7 @@ public struct InspectorView: View {
                          onEditing: { $0 ? model.beginTransaction("Change Value") : model.endTransaction() },
                          image: model.assetThumbnail(for: value),
                          onChooseImage: { source in chooseImage(id, p.name, source) })
-            if model.document.settings.target == .realityKit, isLiveable(p) {
+            if model.document.settings.target == .realityKit, EditorModel.isLiveable(p) {
                 let path = ParamPath(node: id, param: p.name)
                 let index = model.liveParameterIndex(of: path)
                 liveToggle(index: index) { model.toggleLiveParameter(path) }
@@ -170,55 +170,6 @@ public struct InspectorView: View {
                     .foregroundStyle(d.severity == .error ? DraculaTheme.error.color : DraculaToken.orange.color)
             }
         }
-    }
-
-    /// Whether `decl` may be marked live (spec §24.6): a `CustomMaterial`'s `float4` holds exactly
-    /// one float per component, so only a declared value param whose kind is concretely `.float`
-    /// qualifies — never an enum, asset, or text param, and never an unwired input socket's own
-    /// fallback control.
-    ///
-    /// Deliberately narrower than "every float-looking control in this pane": an unwired input can
-    /// declare a **generic** type (`vector.length`'s `v: .generic("T")`, defaulting to `.float2`),
-    /// and `TypeRef.concreteOrFloat` — already used a few lines up to label such a socket while type
-    /// resolution is pending — answers `.float` for *every* generic case regardless of what the
-    /// socket actually defaults to or resolves to per instance. Reusing that fallback here would
-    /// offer the toggle on a vector-typed generic input and let the user "mark" something that can
-    /// never reach `custom_parameter()` — the same class of gap `MaterialValidation.fieldType`'s doc
-    /// comment documents for `vector.dot`, where even *validation* can't always tell a generic
-    /// input's declared type from its per-instance resolved one without re-deriving type resolution.
-    /// A declared `ParamDecl`'s `kind` has no such gap: `ParamKind.value` carries a `SocketType`,
-    /// which has no `.generic` case at all — a param's type is exactly what its kind says, always —
-    /// so checking `decl.kind` directly is both simpler and correct where the socket-default path
-    /// is not. This does mean a generic input can never be marked live from this control, even one
-    /// that happens to resolve to `.float` today; `UniformLayout.liveField(for:)` — the export's own
-    /// predicate — would still refuse it were validation ever to let it through, so nothing unsound
-    /// reaches the export either way.
-    private func isLiveable(_ decl: ParamDecl) -> Bool {
-        if case .value(.float, _) = decl.kind { return true }
-        return false
-    }
-
-    /// The input-socket sibling of `isLiveable(_:)` above, for an *unwired* input's own fallback
-    /// control (the `else if case .value` branch a few lines up, which already computes
-    /// `resolvedType` the same way to pick the control's slider type).
-    ///
-    /// An input's declared type can be `.generic` (`vector.length`'s `v: .generic("T")`, defaulting
-    /// to `.float2`; `vector.dot`'s `a`, defaulting to `.float` but resolving to `.float3` once `b`
-    /// is wired — `MaterialValidation.fieldType`'s doc comment). Where the resolved type is already
-    /// known, trust it exactly: it is the very type the emitter requests a uniform with, so a
-    /// `.concrete(.float)` input that later resolves generically-in-context still reads correctly,
-    /// and a `.generic` input that resolves to `.float` is offered once resolution says so. Only
-    /// while resolution is pending (no compile has landed yet, or one is mid-debounce) does this
-    /// fall back to the *declared* type — and then only for `.concrete(.float)`, never `.generic`:
-    /// `TypeRef.concreteOrFloat` (the control's own pending-resolution fallback, a few lines up) maps
-    /// every generic case to `.float` regardless of what the socket actually defaults to, which is
-    /// exactly the trap excluding sockets altogether was meant to avoid in the first round. A generic
-    /// socket is simply not offered until a resolved type says it is float; a `.concrete(.float)`
-    /// socket is offered immediately, since its declared and resolved types can never disagree.
-    private func isLiveable(_ decl: SocketDecl, resolvedType: SocketType?) -> Bool {
-        if let resolvedType { return resolvedType == .float }
-        if case .concrete(.float) = decl.type { return true }
-        return false
     }
 
     /// The "Live" checkbox beside a markable param: on while its path holds a slot in
@@ -369,7 +320,7 @@ public struct InspectorView: View {
                         Button("Unmark") { model.toggleLiveParameter(path) }
                             .buttonStyle(.plain).font(.caption2)
                     }
-                    if !isLiveParameterReachable(path) {
+                    if !EditorModel.isLiveParameterReachable(path, in: model.preview.pipeline?.shader.layout) {
                         Text("Doesn't reach the Material Output — the export won't read this slot.")
                             .font(.caption2).foregroundStyle(DraculaToken.orange.color)
                     }
@@ -388,29 +339,6 @@ public struct InspectorView: View {
         let title = inst.customTitle ?? model.shape(of: nodeID)?.title ?? "?"
         let paramLabel = model.shape(of: nodeID)?.params.first { $0.name == path.param }?.label ?? path.param
         return "\(title).\(paramLabel)"
-    }
-
-    /// Whether the last successfully compiled program actually reads `path` as a live component.
-    /// `isLiveable` (above) only judges a control's own *declared/resolved* type; it says nothing
-    /// about whether the node behind it is wired into the material at all. A path can be perfectly
-    /// liveable and still unreachable — its node exists and is a float, but nothing feeds the
-    /// terminal from it — and `bakedUniforms`/`MaterialExport.liveParameters` both quietly skip such
-    /// a path rather than emit a mistyped read (`UniformLayout.liveField(for:)` is the shared
-    /// predicate both call; see its doc comment). Without this check the toggle would show the mark
-    /// "on" with a component letter that never appears anywhere in the `.metal`, the header, or the
-    /// Swift snippet — the reader writes to `.x` from Swift and nothing animates, with nothing in
-    /// the inspector saying why.
-    ///
-    /// This is deliberately **not** folded into `isLiveable`: that question decides whether to
-    /// *offer* the control at all (asked once, at declaration time, from a `ParamDecl`/`SocketDecl`
-    /// this view already has in hand); this one decides whether an *already-marked* path is
-    /// currently making it into the export, which depends on the whole graph's wiring and can only
-    /// be answered from a compiled `UniformLayout` — a question with no meaning until something has
-    /// compiled. Answers `true` (no warning) before that: nothing has contradicted the mark yet, and
-    /// a document that has never finished a first compile has bigger problems than this warning.
-    private func isLiveParameterReachable(_ path: ParamPath) -> Bool {
-        guard let layout = model.preview.pipeline?.shader.layout else { return true }
-        return layout.liveField(for: path) != nil
     }
 
     /// Every imported image the package carries (spec §21.1): removable only while nothing points
