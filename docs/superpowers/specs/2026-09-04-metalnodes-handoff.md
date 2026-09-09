@@ -879,6 +879,7 @@ Plan: `docs/superpowers/plans/2026-09-08-metalnodes-m10-timeline-recording.md`; 
 | 8 | `2e9838e`, `b7287cb` | `VideoSink` — H.264 `.mp4` through `AVAssetWriter`, every writer access serialised on a private queue; `AVAsset` round-trip test |
 | 9 | `6ed1e8f`, `033b53b` | File ▸ Export Video… / Export Image Sequence… / Snapshot PNG… on both platforms; `RecordingDestination` seam (Mac panels move the finished scratch output with `replaceItemAt`; iPad `fileExporter`); one `.sheet(item:)` for size → progress; `EditorViewState.lastExportSize`; the viewer flag is never recorded (compiled document program when a viewer is set) |
 | live fix | `61c3e4b` | Duration field edits a draft and commits once (was one `setTimeline` per keystroke); the recording bar tracks the frame (`ProgressView(value:)` over a 0…1 fraction) |
+| flake fix | `eb8edd3` | `MSLScannerScanCacheTests` asserts that scanned bodies are held in the cache (`isScopeBreakerScanCached`) instead of timing the second pass; suite serialised — the one intermittent failure the full suite still had |
 | fix wave | `d082796` | Writer-failure exit for the `VideoSink` poll; export size bounded to 16384 with `RecordingError.sizeUnsupported`; duration bounded to (0, 3600] and finite; paused fixed-rate draws no longer mutate observable state; Play at a non-looping end resets first; progress delivered in order through an async callback; sink doc/dead-state nits |
 
 ### 17.2 Rulings
@@ -930,6 +931,6 @@ Not a defect, but cost an hour: `cliclick`'s text-typing path stopped matching t
 3. A gradient-frame test that pins readback orientation (the live snapshot check covers it today).
 4. Extract the wall-clock bookkeeping in `ShaderRenderer.draw` into a testable `PreviewState.advanceClock(now:)`; guard `syncClock`'s re-base on an actual timeline/mode change.
 5. Parked from the fix-wave re-review: `ExportSession`'s size guard has no lower bound (a negative edge traps in `Int()`; unreachable from the sheet); `ExportSessionTests`' size test sinks into the bare temp directory (never reached — `init` throws first; move to a UUID subdirectory); an absorbed doc comment in that file.
-6. Parked minors: `ExportSession.run` re-entry guard and explicit `snapshotTime:`; cancel during the last frame reports success; a Duration draft string so a rejected value is not displayed; `recordingRequest` never cleared; the `MSLScannerScanCacheTests` timing flake (pre-existing).
+6. Parked minors: `ExportSession.run` re-entry guard and explicit `snapshotTime:`; cancel during the last frame reports success; a Duration draft string so a rejected value is not displayed; `recordingRequest` never cleared.
 7. From the live checks: texture sampling inside a recorded material was not exercised; `Unlit` renders only Emissive by design (§23.7 rule 5), which surprises with a Base Color-only graph — a caption in the Lighting row would help.
 8. Carried from §16.5: off-centre palette placement, the T14 line-owner assertion, `.asset` in the label filter, `ScanCache` CRLF/LF twins, the §15.5 items.
