@@ -26,9 +26,9 @@ public struct FrameSpec: Sendable {
 /// front ends, so they cannot draw differently.
 public enum FrameRenderer {
     /// False when a RealityKit program's mesh buffers are unavailable; nothing was encoded then.
-    /// Main-actor isolated because `MeshResources` is — both front ends already draw from there.
+    /// Nonisolated on purpose: `ExportSession` encodes and waits off the main actor, so hopping
+    /// here would stall the UI for the length of an export.
     @discardableResult
-    @MainActor
     public static func encode(program: PreviewProgram, uniforms image: UniformImage, spec: FrameSpec,
                               into pass: MTLRenderPassDescriptor, uniformBuffer: MTLBuffer,
                               meshes: MeshResources, command: MTLCommandBuffer) -> Bool {

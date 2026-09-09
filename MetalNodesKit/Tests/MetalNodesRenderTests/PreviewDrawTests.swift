@@ -55,7 +55,8 @@ import Metal
     /// `MTKView` hands `ShaderRenderer` — colour plus a `.depth32Float` attachment — with the same
     /// bindings `ShaderRenderer.draw` makes. Aborts the process under `MTL_DEBUG_LAYER=1` when a
     /// pipeline's attachments disagree; asserts clean completion either way.
-    @MainActor
+    /// Deliberately *not* `@MainActor`: `ExportSession` encodes off the main actor, so this
+    /// unannotated call site is the compile-level proof that `FrameRenderer.encode` can.
     @Test func encodesADrawForEveryPipelineKind() async throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
             withKnownIssue("no Metal device") { Issue.record("skipped") }
