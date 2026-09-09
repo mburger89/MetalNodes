@@ -180,6 +180,20 @@ public struct EditorCommands: Commands {
             Button("Generated Code") { model?.viewState.showsCode.toggle() }
                 .keyboardShortcut("c", modifiers: [.command, .option])
                 .disabled(model == nil)
+            Divider()
+            // Playback (spec §26.3): bare keys, gated on the canvas like every other bare key.
+            Button(model?.preview.clock.isPlaying == true ? "Pause" : "Play") { model?.togglePlayback() }
+                .keyboardShortcut(.space, modifiers: [])
+                .disabled(!canvasFocused)
+            Button("Previous Frame") { model?.stepPlayback(by: -1) }
+                .keyboardShortcut(",", modifiers: [])
+                .disabled(!canvasFocused)
+            Button("Next Frame") { model?.stepPlayback(by: 1) }
+                .keyboardShortcut(".", modifiers: [])
+                .disabled(!canvasFocused)
+            Button("Reset Playback") { model?.resetPlayback() }
+                .keyboardShortcut("0", modifiers: [.command])
+                .disabled(!canvasFocused)
         }
     }
 }

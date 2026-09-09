@@ -63,3 +63,23 @@ import MetalNodesRender
         #expect(m.preview.clock.isPlaying)
     }
 }
+
+@Suite struct TimelineEditingTests {
+    private func model() -> EditorModel { EditorModel(document: .sample(), compiler: RecordingCompiler()) }
+
+    @Test func settingTheTimelineIsOneUndoableSettingsChange() {
+        let m = model()
+        m.setTimeline(Timeline(duration: 2, frameRate: 30, loops: false))
+        #expect(m.document.settings.timeline == Timeline(duration: 2, frameRate: 30, loops: false))
+        #expect(m.canUndo)
+        m.undo()
+        #expect(m.document.settings.timeline == Timeline())
+    }
+
+    @Test func aNonPositiveDurationIsRefusedWithANotice() {
+        let m = model()
+        m.setTimeline(Timeline(duration: 0, frameRate: 30, loops: true))
+        #expect(m.document.settings.timeline == Timeline())
+        #expect(m.notice != nil)
+    }
+}

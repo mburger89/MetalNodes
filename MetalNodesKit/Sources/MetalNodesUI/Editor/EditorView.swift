@@ -142,15 +142,7 @@ public struct EditorView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(DraculaToken.surface.color))
-            HStack {
-                Button(model.preview.clock.isPlaying ? "Pause" : "Play") { model.togglePlayback() }
-                Button("Reset") { model.resetPlayback() }
-                Spacer()
-                Text("gen \(model.preview.pipeline?.generation ?? 0)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(DraculaToken.muted.color)
-            }
-            .controlSize(.small)
+            PlaybackControls(model: model)
             if let v = model.viewer {
                 HStack(spacing: 6) {
                     Image(systemName: "circle.circle.fill").foregroundStyle(DraculaTheme.viewerFlag.color)
@@ -230,6 +222,40 @@ public struct EditorView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The preview control row (spec §26.3): scrubber, frame counter, loop toggle. The renderer
+/// writes `preview.clock` on every draw, so any view reading `preview.clock.*` re-evaluates at
+/// refresh rate — kept as its own small `View` so only this row re-renders, not the whole
+/// `EditorView` body.
+private struct PlaybackControls: View {
+    let model: EditorModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(model.preview.clock.isPlaying ? "Pause" : "Play") { model.togglePlayback() }
+            Button("Reset") { model.resetPlayback() }
+            // The scrubber (spec §26.3): dragging pauses and moves; releasing does not resume.
+            Slider(value: Binding(get: { Double(model.preview.clock.frame) },
+                                  set: { model.scrub(to: Int($0.rounded())) }),
+                   in: 0...Double(max(model.preview.clock.timeline.frameCount - 1, 0)), step: 1)
+                .controlSize(.mini)
+            Text("\(model.preview.clock.frame + 1) / \(model.preview.clock.timeline.frameCount)")
+                .font(.caption.monospacedDigit())
+                .frame(minWidth: 64, alignment: .trailing)
+            Text(String(format: "%.2f s", model.preview.clock.mode == .wallClock && !model.preview.clock.timeline.loops
+                        ? model.preview.clock.elapsedSeconds : Double(model.preview.clock.time)))
+                .font(.caption.monospacedDigit())
+                .frame(minWidth: 56, alignment: .trailing)
+            Toggle("Loop", isOn: Binding(get: { model.document.settings.timeline.loops },
+                                         set: { on in var t = model.document.settings.timeline; t.loops = on; model.setTimeline(t) }))
+                .toggleStyle(.switch).controlSize(.mini)
+            Text("gen \(model.preview.pipeline?.generation ?? 0)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(DraculaToken.muted.color)
+        }
+        .controlSize(.small)
     }
 }
 

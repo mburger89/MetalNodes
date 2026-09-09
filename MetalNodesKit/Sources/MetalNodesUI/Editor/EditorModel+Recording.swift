@@ -42,4 +42,15 @@ extension EditorModel {
     public func stepPlayback(by delta: Int) {
         scrub(to: preview.clock.frame + delta)
     }
+
+    /// The Timeline block's edits (spec §26.2): one settings change, undoable as "Change Value".
+    public func setTimeline(_ timeline: Timeline) {
+        guard timeline.duration > 0 else {
+            showNotice("Duration must be greater than zero")
+            return
+        }
+        var s = document.settings
+        s.timeline = timeline
+        apply(.setSettings(s))
+    }
 }

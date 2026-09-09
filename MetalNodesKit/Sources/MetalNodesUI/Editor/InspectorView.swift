@@ -225,11 +225,30 @@ public struct InspectorView: View {
                     .onChange(of: model.document.settings.previewSize) { _, size in heightDraft = "\(clampedDimension(size.height))" }
                     .onSubmit { commitPreviewSize() }
             }
+            Text("Timeline").font(.headline)
             Picker("Time", selection: Binding(get: { s.timeMode }, set: { m in var n = s; n.timeMode = m; model.apply(.setSettings(n)) })) {
                 Text("Wall clock").tag(TimeMode.wallClock)
                 Text("Fixed rate").tag(TimeMode.fixedRate)
             }
             .pickerStyle(.segmented)
+            HStack {
+                Text("Duration").font(.caption)
+                TextField("s", value: Binding(get: { s.timeline.duration },
+                                              set: { d in var t = s.timeline; t.duration = d; model.setTimeline(t) }),
+                          format: .number.precision(.fractionLength(1)))
+                    .frame(width: 60)
+                Text("s").font(.caption)
+                Picker("Frame rate", selection: Binding(get: { s.timeline.frameRate },
+                                                        set: { r in var t = s.timeline; t.frameRate = r; model.setTimeline(t) })) {
+                    ForEach(Timeline.frameRates, id: \.self) { Text("\($0) fps").tag($0) }
+                }
+                .pickerStyle(.menu)
+                Toggle("Loop", isOn: Binding(get: { s.timeline.loops },
+                                             set: { on in var t = s.timeline; t.loops = on; model.setTimeline(t) }))
+                    .toggleStyle(.switch)
+            }
+            Text("\(s.timeline.frameCount) frames per loop. Fixed rate steps one frame per drawn frame; recording always does.")
+                .font(.caption2).foregroundStyle(DraculaToken.muted.color)
             Toggle("Fast math", isOn: Binding(get: { s.fastMath }, set: { f in var n = s; n.fastMath = f; model.apply(.setSettings(n)) }))
                 .toggleStyle(.switch)
             Text("Fast math relaxes NaN/Inf handling for speed. Off keeps IEEE semantics; changing it recompiles.")
