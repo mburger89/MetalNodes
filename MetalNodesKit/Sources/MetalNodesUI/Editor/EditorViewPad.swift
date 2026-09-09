@@ -139,6 +139,10 @@ struct EditorViewPad<Inspector: View>: View {
     private var exportMenu: some View {
         Menu {
             Button("Export to Files…") { model.requestExport() }
+            // Recording (spec §26.5): the same three the Mac's File menu offers.
+            ForEach(RecordingKind.allCases, id: \.self) { kind in
+                Button("\(kind.title)…") { model.requestRecording(kind) }
+            }
             if canShare {
                 ShareLink("Share…",
                           item: ExportShareItem(document: model.document, registry: model.registry),

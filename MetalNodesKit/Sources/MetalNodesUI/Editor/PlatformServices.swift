@@ -81,18 +81,25 @@ public final class MemoryExporter: Exporter {
 public struct EditorServices {
     public var imageChooser: any ImageChooser
     public var exporter: any Exporter
+    /// Where a finished recording is put (spec §26.5). Defaulted so every call site that predates
+    /// M10 still compiles; the tests hand it `MemoryRecordingDestination` explicitly.
+    public var recordingDestination: any RecordingDestination
 
-    public init(imageChooser: any ImageChooser, exporter: any Exporter) {
+    public init(imageChooser: any ImageChooser, exporter: any Exporter,
+                recordingDestination: any RecordingDestination = MemoryRecordingDestination()) {
         self.imageChooser = imageChooser
         self.exporter = exporter
+        self.recordingDestination = recordingDestination
     }
 
     /// What the app runs with on this platform.
     public static var platform: EditorServices {
         #if os(macOS)
-        EditorServices(imageChooser: ImagePanelMac(), exporter: ExportPanelMac())
+        EditorServices(imageChooser: ImagePanelMac(), exporter: ExportPanelMac(),
+                       recordingDestination: RecordingPanelMac())
         #else
-        EditorServices(imageChooser: ImageChooserPad(), exporter: ExporterPad())
+        EditorServices(imageChooser: ImageChooserPad(), exporter: ExporterPad(),
+                       recordingDestination: RecordingDestinationPad())
         #endif
     }
 }

@@ -61,8 +61,17 @@ public final class EditorModel {
     /// Bumped by File ▸ Export Shader…; the macOS view presents the save panel on change.
     public private(set) var exportRequest = 0
     public func requestExport() { exportRequest += 1 }
+    /// The recording the File menu last asked for, and a counter bumped with it: the view watches
+    /// the counter, so asking twice for the same kind still raises the sheet (spec §26.5).
+    public internal(set) var recordingRequest: RecordingKind?
+    public internal(set) var recordingRequestCount = 0
+    /// The running recording, so the progress sheet's Cancel can reach it. Not observed: only the
+    /// view that started it writes and cancels it.
+    @ObservationIgnored public var recordingTask: Task<Void, Never>?
 
-    private let compiler: any ShaderCompiling
+    // `internal`, not `private`: `EditorModel+Recording.record(...)` compiles the document's own
+    // program for a recording and lives in another file.
+    let compiler: any ShaderCompiling
     private var generation: UInt64 = 0
     private var debounceTask: Task<Void, Never>?
     private var compileTask: Task<Void, Never>?
@@ -237,7 +246,9 @@ public final class EditorModel {
         preview.program = PreviewProgram(pipeline: pipeline, textures: bindings(for: pipeline))
     }
 
-    private func bindings(for pipeline: CompiledPipeline) -> [Int: MTLTexture] {
+    /// `internal` for `EditorModel+Recording`, which binds the one-off pipeline it compiles for a
+    /// recording the same way the live one is bound.
+    func bindings(for pipeline: CompiledPipeline) -> [Int: MTLTexture] {
         textureStore?.bindings(for: pipeline.shader.textures, textures: textures) ?? [:]
     }
 

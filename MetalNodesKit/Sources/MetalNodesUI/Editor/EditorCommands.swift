@@ -62,6 +62,13 @@ public struct EditorCommands: Commands {
             Button("Export Shader…") { model?.requestExport() }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(model == nil)
+            // Recording (spec §26.5). No key equivalents: each opens a sheet that asks for a size,
+            // and none of them is frequent enough to earn a shortcut.
+            Divider()
+            ForEach(RecordingKind.allCases, id: \.self) { kind in
+                Button("\(kind.title)…") { model?.requestRecording(kind) }
+                    .disabled(model == nil)
+            }
         }
         // Delete and the View menu's bare-key shortcuts are gated on `canvasHasFocus` (rather than
         // always enabled) so that, while a node parameter `TextField` is focused (canvas is not),

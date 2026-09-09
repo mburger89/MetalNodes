@@ -55,6 +55,14 @@ import CoreGraphics
         #expect(back.orbit.distance == 4.2)
     }
 
+    @Test func lastExportSizeIsOptionalAndRoundTrips() throws {
+        var v = EditorViewState()
+        #expect(v.lastExportSize == nil)
+        v.lastExportSize = CGSize(width: 1920, height: 1080)
+        let back = try JSONDecoder().decode(EditorViewState.self, from: JSONEncoder().encode(v))
+        #expect(back.lastExportSize == CGSize(width: 1920, height: 1080))
+    }
+
     /// Every document that predates M7 must open with the defaults, not fail to decode.
     @Test func viewStateWithoutTheNewFieldsDecodes() throws {
         let json = Data(#"{"showsCode":true}"#.utf8)

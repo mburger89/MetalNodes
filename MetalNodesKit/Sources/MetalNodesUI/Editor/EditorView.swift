@@ -10,6 +10,11 @@ public struct EditorView: View {
     @State private var exportError: String?
     /// A chooser is on screen; a second request must not stack another one behind it.
     @State private var exporting = false
+    /// The size sheet's subject while it is up (spec §26.5).
+    @State private var recordingRequest: RecordingRequest?
+    /// The progress sheet, and the last frame it was told about.
+    @State private var recording = false
+    @State private var recordingProgress: RecordingProgress?
     @State private var lastOrbitTranslation: CGSize = .zero
     /// The previous `MagnifyGesture` factor, so a pinch dollies by its step rather than its total.
     @State private var lastMagnification: CGFloat?
@@ -39,10 +44,52 @@ public struct EditorView: View {
                     }
                 }
             }
+            // Recording (spec §26.5): the File menu bumps the counter, the size sheet asks for the
+            // pixels, and the progress sheet stays up until the session finishes or is cancelled.
+            .onChange(of: model.recordingRequestCount) { _, _ in
+                guard model.recordingTask == nil, let kind = model.recordingRequest else { return }
+                recordingRequest = RecordingRequest(kind: kind)
+            }
+            .sheet(item: $recordingRequest) { request in
+                RecordingSizeSheet(kind: request.kind,
+                                   timeline: model.document.settings.timeline,
+                                   initialSize: model.viewState.lastExportSize ?? model.document.settings.previewSize,
+                                   onRecord: { size in
+                                       recordingRequest = nil
+                                       startRecording(request.kind, size: size)
+                                   },
+                                   onCancel: { recordingRequest = nil })
+            }
+            .sheet(isPresented: $recording) {
+                // A cancel that lands during the last frame simply finishes: the session checks
+                // cancellation at the top of each frame, so the recording completes normally.
+                RecordingProgressSheet(progress: recordingProgress) { model.recordingTask?.cancel() }
+            }
             .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("OK") { exportError = nil }
             } message: { Text(exportError ?? "") }
             .padHosts(services)
+    }
+
+    /// Runs one recording. Refuses to start a second while one is in flight — the task is the
+    /// interlock, and the progress sheet's Cancel is the only other thing that touches it.
+    private func startRecording(_ kind: RecordingKind, size: CGSize) {
+        guard model.recordingTask == nil else { return }
+        recordingProgress = nil
+        recording = true
+        model.recordingTask = Task { @MainActor in
+            let outcome = await model.record(kind, size: size, device: device,
+                                             destination: services.recordingDestination) { p in
+                recordingProgress = p
+                // The last frame takes the progress sheet down before the destination is asked
+                // where the file goes: on the iPad that destination is itself a presentation, and
+                // SwiftUI drops one raised while another sheet is still up.
+                if p.frame >= p.frameCount { recording = false }
+            }
+            recording = false
+            model.recordingTask = nil
+            if case .failed(let message) = outcome { exportError = message }
+        }
     }
 
     /// macOS: three columns in an `HSplitView`. iPad: `EditorViewPad` (spec §22.3), which takes
@@ -272,8 +319,16 @@ private extension View {
         #if os(iOS)
         modifier(ImageChooserPadHost(chooser: services.imageChooser as? ImageChooserPad))
             .modifier(ExporterPadHost(exporter: services.exporter as? ExporterPad))
+            .modifier(RecordingDestinationPadHost(destination: services.recordingDestination as? RecordingDestinationPad))
         #else
         self
         #endif
     }
+}
+
+/// `.sheet(item:)` needs an identity, and `RecordingKind` is a value the menu hands over rather
+/// than a thing with one; the kind is its own id here because only one size sheet is ever up.
+private struct RecordingRequest: Identifiable {
+    let kind: RecordingKind
+    var id: RecordingKind { kind }
 }
