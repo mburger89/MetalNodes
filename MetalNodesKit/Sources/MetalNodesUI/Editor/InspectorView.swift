@@ -249,6 +249,7 @@ public struct InspectorView: View {
             }
             Text("\(s.timeline.frameCount) frames per loop. Fixed rate steps one frame per drawn frame; recording always does.")
                 .font(.caption2).foregroundStyle(DraculaToken.muted.color)
+            Divider()
             Toggle("Fast math", isOn: Binding(get: { s.fastMath }, set: { f in var n = s; n.fastMath = f; model.apply(.setSettings(n)) }))
                 .toggleStyle(.switch)
             Text("Fast math relaxes NaN/Inf handling for speed. Off keeps IEEE semantics; changing it recompiles.")

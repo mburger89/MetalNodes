@@ -182,8 +182,13 @@ public struct EditorCommands: Commands {
                 .disabled(model == nil)
             Divider()
             // Playback (spec §26.3): bare keys, gated on the canvas like every other bare key.
-            Button(model?.preview.clock.isPlaying == true ? "Pause" : "Play") { model?.togglePlayback() }
-                .keyboardShortcut(.space, modifiers: [])
+            // Bare Space is already the canvas's hold-to-pan latch (GraphCanvasView's
+            // `.onKeyPress(.space, ...)`); a menu equivalent on the same key would win first on
+            // macOS and silently kill pan, so Play/Pause binds to `p` instead. The title is a
+            // static "Play/Pause" — reading `preview.clock.isPlaying` here would invalidate the
+            // whole command tree on every drawn frame while playing.
+            Button("Play/Pause") { model?.togglePlayback() }
+                .keyboardShortcut("p", modifiers: [])
                 .disabled(!canvasFocused)
             Button("Previous Frame") { model?.stepPlayback(by: -1) }
                 .keyboardShortcut(",", modifiers: [])

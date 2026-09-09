@@ -237,10 +237,14 @@ private struct PlaybackControls: View {
             Button(model.preview.clock.isPlaying ? "Pause" : "Play") { model.togglePlayback() }
             Button("Reset") { model.resetPlayback() }
             // The scrubber (spec §26.3): dragging pauses and moves; releasing does not resume.
+            // A duration under half a frame still passes `setTimeline`'s `> 0` guard and rounds
+            // `frameCount` to 1, so the range floor is pinned to 1 rather than letting it collapse
+            // to `0...0`; the slider is disabled outright when there is nothing to scrub across.
             Slider(value: Binding(get: { Double(model.preview.clock.frame) },
                                   set: { model.scrub(to: Int($0.rounded())) }),
-                   in: 0...Double(max(model.preview.clock.timeline.frameCount - 1, 0)), step: 1)
+                   in: 0...Double(max(model.preview.clock.timeline.frameCount - 1, 1)), step: 1)
                 .controlSize(.mini)
+                .disabled(model.preview.clock.timeline.frameCount < 2)
             Text("\(model.preview.clock.frame + 1) / \(model.preview.clock.timeline.frameCount)")
                 .font(.caption.monospacedDigit())
                 .frame(minWidth: 64, alignment: .trailing)
