@@ -262,17 +262,23 @@ import Testing
 }
 
 /// `scopeBreakers` is memoised per body text (spec §25.3, handoff §15.5 items 11–12).
-@Suite struct MSLScannerScanCacheTests {
+/// Serialised: the shared cache holds 64 entries and the eviction test below scans 80 distinct
+/// bodies, so these tests must not interleave with each other.
+@Suite(.serialized) struct MSLScannerScanCacheTests {
     /// Spec §25.3 (handoff §15.5 items 11–12): a debounced recompile re-scans every authored body;
-    /// with the cache it re-pays only the edited one. Fifty 200-line bodies, scanned twice.
+    /// with the cache it re-pays only the edited one. Twenty 200-line bodies: after one scan each
+    /// is held, and a second scan returns the same answer without leaving the cache. (This used to
+    /// time the second pass against the first, which flaked under full-suite load.)
     @Test func repeatedScansOfTheSameBodiesAreServedFromTheCache() {
-        let bodies = (0..<50).map { n in
+        let bodies = (0..<20).map { n in
             (0..<200).map { "float v\(n)_\($0) = in_a * \($0).0; // note" }.joined(separator: "\n")
         }
-        let clock = ContinuousClock()
-        let first = clock.measure { for b in bodies { _ = MSLScanner.scopeBreakers(in: b) } }
-        let second = clock.measure { for b in bodies { _ = MSLScanner.scopeBreakers(in: b) } }
-        #expect(second < first / 10, "first \(first), second \(second)")
+        #expect(bodies.allSatisfy { !MSLScanner.isScopeBreakerScanCached($0) })
+        let first = bodies.map { MSLScanner.scopeBreakers(in: $0) }
+        #expect(bodies.allSatisfy { MSLScanner.isScopeBreakerScanCached($0) })
+        let second = bodies.map { MSLScanner.scopeBreakers(in: $0) }
+        #expect(first == second)
+        #expect(first.allSatisfy { $0.isEmpty })
     }
 
     /// Eviction never changes an answer: after more distinct bodies than the cache holds, the

@@ -202,6 +202,9 @@ public enum MSLScanner {
 
         var count: Int { values.count }
 
+        /// Whether `key` is currently held — the test probe for "served from the cache".
+        func contains(_ key: String) -> Bool { values[key] != nil }
+
         mutating func value(for key: String, compute: () -> Value) -> Value {
             if let hit = values[key] { return hit }
             let v = compute()
@@ -224,6 +227,11 @@ public enum MSLScanner {
         scopeBreakerCache.withLock { cache in
             cache.value(for: source) { uncachedScopeBreakers(in: source) }
         }
+    }
+
+    /// Whether a body's scan is currently memoised. Deterministic, unlike timing the second scan.
+    static func isScopeBreakerScanCached(_ source: String) -> Bool {
+        scopeBreakerCache.withLock { $0.contains(source) }
     }
 
     private static func uncachedScopeBreakers(in source: String) -> [Violation] {
