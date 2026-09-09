@@ -507,6 +507,9 @@ public final class EditorModel {
         case .restore(let doc):
             document = doc
             pruneAfterRemoval()
+            // Undo/redo restores the settings along with everything else, so the timeline and the
+            // time mode can both have moved under the clock (spec §26.3).
+            syncClock()
         }
         // Every mutation above has landed, so anything cached off the old document is stale. Bumped
         // here rather than before the switch because `.removeNodes` reads `shapes` while deciding

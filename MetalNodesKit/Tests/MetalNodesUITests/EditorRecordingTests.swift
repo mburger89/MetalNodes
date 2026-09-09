@@ -22,6 +22,25 @@ import MetalNodesRender
         #expect(m.preview.clock.mode == .fixedRate)
         #expect(m.preview.clock.frame == 29)
         #expect(!m.preview.clock.isPlaying)
+        // The wall-clock bookkeeping is re-based to the clamped frame, so a later Play resumes
+        // from where the clock now is rather than from the pre-change elapsed time.
+        #expect(m.preview.pausedElapsed == 29.0 / 30.0)
+        #expect(m.preview.playStartedAt == nil)
+    }
+
+    /// Undo restores the whole document, timeline included — the clock has to follow it back.
+    @Test func undoingASettingsChangeSyncsTheClockBack() {
+        let m = model()
+        m.preview.clock.frame = 100
+        var s = m.document.settings
+        s.timeline = Timeline(duration: 1, frameRate: 30, loops: false)
+        s.timeMode = .fixedRate
+        m.apply(.setSettings(s))
+        #expect(m.preview.clock.frame == 29)
+        m.undo()
+        #expect(m.preview.clock.timeline == Timeline())
+        #expect(m.preview.clock.mode == .wallClock)
+        #expect(m.preview.clock.frame == 29)          // still valid in the restored timeline
     }
 
     @Test func reloadingADocumentReseedsTheClock() {
