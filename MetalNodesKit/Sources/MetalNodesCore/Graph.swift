@@ -123,10 +123,14 @@ extension Graph: Codable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
-        nodes = Dictionary(uniqueKeysWithValues: try c.decode([NodeInstance].self, forKey: .nodes).map { ($0.id, $0) })
-        inputs = Dictionary(uniqueKeysWithValues: try c.decode([Edge].self, forKey: .edges).map { ($0.to, $0.from) })
-        stickies = Dictionary(uniqueKeysWithValues: try c.decodeIfPresent([StickyNote].self, forKey: .stickies)?.map { ($0.id, $0) } ?? [])
-        frames = Dictionary(uniqueKeysWithValues: try c.decodeIfPresent([CommentFrame].self, forKey: .frames)?.map { ($0.id, $0) } ?? [])
+        nodes = try .uniqueOrThrow(try c.decode([NodeInstance].self, forKey: .nodes).map { ($0.id, $0) },
+                                   codingPath: c.codingPath + [Keys.nodes]) { "duplicate node id \($0.raw.uuidString)" }
+        inputs = try .uniqueOrThrow(try c.decode([Edge].self, forKey: .edges).map { ($0.to, $0.from) },
+                                    codingPath: c.codingPath + [Keys.edges]) { "two wires into \($0.node.raw.uuidString).\($0.socket)" }
+        stickies = try .uniqueOrThrow((try c.decodeIfPresent([StickyNote].self, forKey: .stickies) ?? []).map { ($0.id, $0) },
+                                      codingPath: c.codingPath + [Keys.stickies]) { "duplicate sticky id \($0.raw.uuidString)" }
+        frames = try .uniqueOrThrow((try c.decodeIfPresent([CommentFrame].self, forKey: .frames) ?? []).map { ($0.id, $0) },
+                                    codingPath: c.codingPath + [Keys.frames]) { "duplicate frame id \($0.raw.uuidString)" }
     }
 
     public func encode(to encoder: Encoder) throws {

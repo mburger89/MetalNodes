@@ -33,6 +33,34 @@ import Testing
     }
 }
 
+extension TimelineTests {
+    @Test func anAbsurdDurationDecodesToTheDefaultAndNeverTraps() throws {
+        for json in [#"{"duration":1e300,"frameRate":60,"loops":true}"#,
+                     #"{"duration":-1,"frameRate":60,"loops":true}"#,
+                     #"{"duration":0,"frameRate":60,"loops":true}"#,
+                     #"{"duration":4000,"frameRate":60,"loops":true}"#] {
+            let t = try JSONDecoder().decode(Timeline.self, from: Data(json.utf8))
+            #expect(t.duration == 4, "\(json)")
+            #expect(t.frameCount == 240, "\(json)")
+        }
+        let zero = try JSONDecoder().decode(Timeline.self, from: Data(#"{"duration":2,"frameRate":0,"loops":false}"#.utf8))
+        #expect(zero.frameRate == 60)
+        #expect(zero.duration == 2)
+        let missing = try JSONDecoder().decode(Timeline.self, from: Data("{}".utf8))
+        #expect(missing == Timeline())
+    }
+
+    @Test func frameCountIsBoundedBeforeTheIntConversion() {
+        #expect(Timeline.frameCount(duration: 1e300, frameRate: 60) == 1_000_000_000)
+        #expect(Timeline.frameCount(duration: .nan, frameRate: 60) == 1)
+        #expect(Timeline.frameCount(duration: 0.001, frameRate: 24) == 1)
+        #expect(Timeline.isValidDuration(3600))
+        #expect(!Timeline.isValidDuration(3600.5))
+        #expect(!Timeline.isValidDuration(0))
+        #expect(!Timeline.isValidDuration(.infinity))
+    }
+}
+
 @Suite struct TimelineClockTests {
     private func clock(_ duration: Double = 1, fps: Int = 30, loops: Bool = true, mode: TimeMode = .fixedRate) -> TimelineClock {
         TimelineClock(timeline: Timeline(duration: duration, frameRate: fps, loops: loops), mode: mode)

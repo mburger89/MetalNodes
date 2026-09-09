@@ -63,6 +63,29 @@ import Testing
         #expect(throws: PackageError.newerFormat(99)) { try ShaderPackage(fileWrapper: wrapper) }
     }
 
+    @Test func aCorruptDocumentReportsTheReasonNotADump() throws {
+        let a = NodeID()
+        let json = """
+        {"formatVersion":2,"settings":{},"definitions":[],"root":{"nodes":[
+          {"id":"\(a.raw.uuidString)","kind":{"builtin":{"_0":"input.uv"}},"position":[0,0],"params":{},"collapsed":false},
+          {"id":"\(a.raw.uuidString)","kind":{"builtin":{"_0":"input.uv"}},"position":[0,0],"params":{},"collapsed":false}],"edges":[]}}
+        """
+        let wrapper = FileWrapper(directoryWithFileWrappers: [
+            ShaderPackage.documentFileName: FileWrapper(regularFileWithContents: Data(json.utf8)),
+        ])
+        #expect(throws: PackageError.self) { try ShaderPackage(fileWrapper: wrapper) }
+        do { _ = try ShaderPackage(fileWrapper: wrapper) } catch {
+            #expect(error.errorDescription?.contains("duplicate node id") == true, "\(error)")
+        }
+    }
+
+    @Test func anAssetExtensionIsSanitisedOnDecode() throws {
+        let info = try JSONDecoder().decode(AssetInfo.self, from: Data(#"{"name":"x","pixelSize":[1,1],"fileExtension":"png/../y"}"#.utf8))
+        #expect(info.fileExtension == "pngy")
+        let empty = try JSONDecoder().decode(AssetInfo.self, from: Data(#"{"name":"x","pixelSize":[1,1],"fileExtension":"../"}"#.utf8))
+        #expect(empty.fileExtension == "bin")
+    }
+
     @Test func strayFilesAreIgnoredAndUnmanifestedTexturesDropped() throws {
         // `.sample()` mints fresh NodeIDs on every call, so a fresh document is captured once
         // and reused for both the package and the expectation rather than calling `.sample()` twice.

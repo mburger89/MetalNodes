@@ -12,14 +12,47 @@ public struct Timeline: Sendable, Hashable, Codable {
     public var loops: Bool = true
 
     public static let frameRates = [24, 30, 60]
+    /// The longest loop a document may hold; `EditorModel.setTimeline` refuses past it with a
+    /// notice, and the decoder falls back to the default (spec §27.2).
+    public static let maxDuration: Double = 3600
+
+    public static func isValidDuration(_ d: Double) -> Bool { d.isFinite && d > 0 && d <= maxDuration }
 
     /// Frames in one pass, rounded to the nearest whole frame and never fewer than one.
-    public var frameCount: Int { max(1, Int((duration * Double(frameRate)).rounded())) }
+    public var frameCount: Int { Self.frameCount(duration: duration, frameRate: frameRate) }
+
+    /// Bounded in `Double` before the conversion: `Int(Double)` traps outside the `Int` range,
+    /// and a timeline is a decoded value (spec §27.2).
+    public static func frameCount(duration: Double, frameRate: Int) -> Int {
+        let f = (duration * Double(frameRate)).rounded()
+        guard f.isFinite else { return 1 }
+        return Int(min(max(f, 1), 1e9))
+    }
 
     public init(duration: Double = 4, frameRate: Int = 60, loops: Bool = true) {
         self.duration = duration
         self.frameRate = frameRate
         self.loops = loops
+    }
+
+    private enum Keys: String, CodingKey { case duration, frameRate, loops }
+
+    /// Tolerant on purpose: a value no writer produces (the inspector and `setTimeline` both
+    /// refuse it) is a hand edit, and the document is still worth opening.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        let d = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 4
+        duration = Self.isValidDuration(d) ? d : 4
+        let r = try c.decodeIfPresent(Int.self, forKey: .frameRate) ?? 60
+        frameRate = Self.frameRates.contains(r) ? r : 60
+        loops = try c.decodeIfPresent(Bool.self, forKey: .loops) ?? true
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encode(duration, forKey: .duration)
+        try c.encode(frameRate, forKey: .frameRate)
+        try c.encode(loops, forKey: .loops)
     }
 }
 

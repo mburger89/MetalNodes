@@ -49,6 +49,16 @@ public enum GraphValidator {
             if GroupDependencies.transitive(d.id, in: doc).contains(d.id) || GroupDependencies.direct(d).contains(d.id) {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
+            // Socket names are the function's parameter names (spec §20.4): two alike would trap the
+            // resolver's maps, and refuse here is what the user can act on (spec §27.2).
+            for (label, decls) in [("input", d.inputs), ("output", d.outputs)] {
+                var seen = Set<String>()
+                for decl in decls where !NodeShape.isPlus(decl) {
+                    if !seen.insert(decl.name).inserted {
+                        out.append(Diagnostic(.error, "Definition “\(d.name)” declares two \(label)s named “\(decl.name)”"))
+                    }
+                }
+            }
         }
         let reachable = reachableDefinitions(doc)
         return out + textureTargetDiagnostics(doc, target: target, reachable: reachable)

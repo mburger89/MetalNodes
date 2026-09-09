@@ -91,3 +91,35 @@ import Foundation
         #expect(g.inputs.isEmpty)
     }
 }
+
+extension GraphCodableTests {
+    @Test func aDuplicateNodeIdIsADecodingErrorNotATrap() throws {
+        let id = NodeID()
+        let n = NodeInstance(id: id, kind: .builtin("input.uv"), position: .zero)
+        var g = Graph()
+        g.nodes[id] = n
+        var json = String(decoding: try JSONEncoder().encode(g), as: UTF8.self)
+        // Duplicate the one-element nodes array by hand: `[{…}]` → `[{…},{…}]`. Brace-depth
+        // matched rather than stopping at the first `]`, because `NodeInstance` itself contains
+        // a nested array (`"position":[0,0]`) whose own `]` would end the scan too early.
+        let nodes = try #require(json.range(of: "\"nodes\":["))
+        var depth = 0
+        var end = nodes.upperBound
+        for i in json[nodes.upperBound...].indices {
+            if json[i] == "{" { depth += 1 }
+            if json[i] == "}" { depth -= 1; if depth == 0 { end = json.index(after: i); break } }
+        }
+        let element = String(json[nodes.upperBound..<end])
+        json.insert(contentsOf: "," + element, at: end)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Graph.self, from: Data(json.utf8)) }
+    }
+
+    @Test func twoWiresIntoOneSocketAreADecodingError() throws {
+        let a = NodeID(), b = NodeID(), c = NodeID()
+        let json = """
+        {"nodes":[],"edges":[{"to":{"node":"\(a.raw.uuidString)","socket":"x"},"from":{"node":"\(b.raw.uuidString)","socket":"out"}},
+                              {"to":{"node":"\(a.raw.uuidString)","socket":"x"},"from":{"node":"\(c.raw.uuidString)","socket":"out"}}]}
+        """
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(Graph.self, from: Data(json.utf8)) }
+    }
+}

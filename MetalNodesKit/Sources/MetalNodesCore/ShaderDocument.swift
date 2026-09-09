@@ -111,6 +111,21 @@ public struct AssetInfo: Sendable, Hashable, Codable {
     public init(name: String, pixelSize: CGSize, fileExtension: String) {
         self.name = name; self.pixelSize = pixelSize; self.fileExtension = fileExtension
     }
+
+    private enum Keys: String, CodingKey { case name, pixelSize, fileExtension }
+
+    /// `fileExtension` becomes half of `ShaderPackage.fileName(for:info:)`'s filename (spec §21.1):
+    /// a hand-edited or migrated document that smuggled a path separator into it must not be able
+    /// to steer that filename outside `textures/`. Stripped to letters and digits only, so
+    /// `"png/../y"` reads as `"pngy"` and an all-separator value falls back to `"bin"`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        name = try c.decode(String.self, forKey: .name)
+        pixelSize = try c.decode(CGSize.self, forKey: .pixelSize)
+        let raw = try c.decode(String.self, forKey: .fileExtension)
+        let sanitised = raw.filter { $0.isLetter || $0.isNumber }
+        fileExtension = sanitised.isEmpty ? "bin" : sanitised
+    }
 }
 
 public struct DocumentSettings: Sendable, Hashable {
@@ -311,7 +326,8 @@ extension ShaderDocument: Codable {
         let c = try decoder.container(keyedBy: Keys.self)
         formatVersion = try c.decode(Int.self, forKey: .formatVersion)
         root = try c.decode(Graph.self, forKey: .root)
-        definitions = Dictionary(uniqueKeysWithValues: try c.decode([GroupDefinition].self, forKey: .definitions).map { ($0.id, $0) })
+        definitions = try .uniqueOrThrow(try c.decode([GroupDefinition].self, forKey: .definitions).map { ($0.id, $0) },
+                                         codingPath: c.codingPath + [Keys.definitions]) { "duplicate definition id \($0.raw.uuidString)" }
         settings = try c.decode(DocumentSettings.self, forKey: .settings)
     }
 

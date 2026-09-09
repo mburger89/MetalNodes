@@ -45,8 +45,10 @@ public enum TypeResolver {
             // here, so nothing downstream can mistake it for one (spec §20.6).
             let node = ResolvedNode(
                 id: id, generics: generics,
-                inputTypes: Dictionary(uniqueKeysWithValues: def.inputs.filter { !NodeShape.isPlus($0) }.map { ($0.name, concrete($0.type)) }),
-                outputTypes: Dictionary(uniqueKeysWithValues: def.outputs.filter { !NodeShape.isPlus($0) }.map { ($0.name, concrete($0.type)) }))
+                // First wins, so a malformed shape (two sockets sharing a name) can never trap
+                // here — `GraphValidator` is what reports it to the user (spec §27.2).
+                inputTypes: Dictionary(def.inputs.filter { !NodeShape.isPlus($0) }.map { ($0.name, concrete($0.type)) }, uniquingKeysWith: { a, _ in a }),
+                outputTypes: Dictionary(def.outputs.filter { !NodeShape.isPlus($0) }.map { ($0.name, concrete($0.type)) }, uniquingKeysWith: { a, _ in a }))
             resolved[id] = node
 
             // 2. Every wire into this node must be convertible. The canvas turns a drop on a
