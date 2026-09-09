@@ -135,6 +135,48 @@ import MetalNodesRender
     }
 }
 
+/// The Duration field commits its text once, on Return — `TextField(value:)` used to commit every
+/// keystroke, so "5000" applied 5, 50 and 500 on the way past. SwiftUI's `TextField` itself is not
+/// unit-testable here; the parse step it now goes through is.
+@Suite struct TimelineFieldParserTests {
+    @Test func aPlainDecimalParses() {
+        #expect(TimelineFieldParser.duration(from: "2.5") == 2.5)
+    }
+
+    /// Out of range is not the parser's business: it hands 5000 on, and `setTimeline` is what
+    /// refuses it (see `aDurationThatWouldTrapFrameCountIsRefused`). Same for exponent form —
+    /// "1e9" parses to 1e9 and is refused there, rather than being silently swallowed here.
+    @Test(arguments: [("5000", 5000.0), ("1e9", 1e9), ("3600", 3600.0), ("0", 0.0), ("-1", -1.0)])
+    func aNumberOutOfRangeStillParsesAndIsTheModelsToRefuse(_ text: String, _ expected: Double) {
+        #expect(TimelineFieldParser.duration(from: text) == expected)
+    }
+
+    /// Not a number: the field resets and nothing happens — no notice, no undo step.
+    @Test(arguments: ["abc", "", " ", "5s", "1,5"])
+    func textThatIsNotANumberIsRejected(_ text: String) {
+        #expect(TimelineFieldParser.duration(from: text) == nil)
+    }
+}
+
+@Suite struct RecordingProgressFractionTests {
+    /// Before the first frame is reported there is nothing to show.
+    @Test func noProgressIsAnEmptyBar() {
+        #expect(RecordingProgressSheet.fraction(nil) == 0)
+    }
+
+    /// The frame is 1-based, so the last frame fills the bar.
+    @Test func theFractionTracksTheFrame() {
+        #expect(RecordingProgressSheet.fraction(RecordingProgress(frame: 1, frameCount: 4)) == 0.25)
+        #expect(RecordingProgressSheet.fraction(RecordingProgress(frame: 120, frameCount: 240)) == 0.5)
+        #expect(RecordingProgressSheet.fraction(RecordingProgress(frame: 4, frameCount: 4)) == 1)
+    }
+
+    @Test func anImpossibleCountDoesNotDivideByZero() {
+        #expect(RecordingProgressSheet.fraction(RecordingProgress(frame: 3, frameCount: 0)) == 0)
+        #expect(RecordingProgressSheet.fraction(RecordingProgress(frame: 9, frameCount: 4)) == 1)
+    }
+}
+
 /// The Render suite's time document, duplicated here because test targets cannot share sources.
 enum ExportSessionFixture {
     static func timeDocument() -> ShaderDocument {

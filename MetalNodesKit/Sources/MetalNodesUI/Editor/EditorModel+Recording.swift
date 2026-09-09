@@ -168,3 +168,16 @@ extension EditorModel {
         return outcome
     }
 }
+
+/// The Duration field's text step, kept out of the view so it can be tested: SwiftUI's own
+/// `TextField` cannot be (spec §26.2).
+///
+/// Deliberately as forgiving as `Int(_:)` is for the preview-size fields and no more — it decides
+/// only whether the text *is* a number, never whether that number is a usable duration.
+/// `EditorModel.setTimeline` owns the bounds (and the notice a bad one raises), so `"1e9"` parses
+/// here and is refused there; `"abc"` is not a number at all, so the field simply resets with no
+/// notice. Locale is not consulted, for the same reason the preview-size fields don't: the draft is
+/// seeded from `"\(Double)"`, which always writes a `.`, so a comma would never round-trip.
+enum TimelineFieldParser {
+    static func duration(from text: String) -> Double? { Double(text) }
+}

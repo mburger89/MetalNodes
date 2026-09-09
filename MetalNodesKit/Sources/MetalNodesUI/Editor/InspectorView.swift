@@ -9,6 +9,8 @@ public struct InspectorView: View {
     @State private var widthDraft = ""
     @State private var heightDraft = ""
     @State private var exportNameDraft = ""
+    /// The Duration field's text, committed on Return like the preview size's — never per keystroke.
+    @State private var durationDraft = ""
     @FocusState private var exportNameFocused: Bool
 
     public init(model: EditorModel, services: EditorServices = .platform) {
@@ -233,10 +235,14 @@ public struct InspectorView: View {
             .pickerStyle(.segmented)
             HStack {
                 Text("Duration").font(.caption)
-                TextField("s", value: Binding(get: { s.timeline.duration },
-                                              set: { d in var t = s.timeline; t.duration = d; model.setTimeline(t) }),
-                          format: .number.precision(.fractionLength(1)))
+                // A draft plus `onSubmit`, exactly like the preview size above: a `TextField(value:)`
+                // commits on every keystroke, so typing "5000" applied 5, then 50, then 500 — three
+                // undo steps, three clock retargets — before refusing the number the user meant.
+                TextField("s", text: $durationDraft)
                     .frame(width: 60)
+                    .onAppear { durationDraft = Self.durationText(s.timeline.duration) }
+                    .onChange(of: model.document.settings.timeline.duration) { _, d in durationDraft = Self.durationText(d) }
+                    .onSubmit { commitDuration() }
                 Text("s").font(.caption)
                 Picker("Frame rate", selection: Binding(get: { s.timeline.frameRate },
                                                         set: { r in var t = s.timeline; t.frameRate = r; model.setTimeline(t) })) {
@@ -446,6 +452,25 @@ public struct InspectorView: View {
         var n = s
         n.previewSize = CGSize(width: CGFloat(cw), height: CGFloat(ch))
         model.apply(.setSettings(n))
+    }
+
+    /// `"\(d)"`, not a `FormatStyle`: the draft has to round-trip through `Double(_:)`, and a
+    /// localized style would write "1,5" in a comma locale, which never parses back.
+    private static func durationText(_ d: Double) -> String { "\(d)" }
+
+    /// One `setTimeline` per Return, on the number the user finished typing. Text that is not a
+    /// number at all resets the field and says nothing — the same silence `commitPreviewSize` keeps.
+    /// A number out of range does reach `setTimeline`, which refuses it with the notice and leaves
+    /// the document alone; re-reading the document afterwards is what puts the field back either way.
+    private func commitDuration() {
+        if let d = TimelineFieldParser.duration(from: durationDraft) {
+            var t = model.document.settings.timeline
+            if d != t.duration {
+                t.duration = d
+                model.setTimeline(t)
+            }
+        }
+        durationDraft = Self.durationText(model.document.settings.timeline.duration)
     }
 }
 

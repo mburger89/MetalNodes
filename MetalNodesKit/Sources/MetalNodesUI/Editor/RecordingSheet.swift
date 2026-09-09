@@ -68,9 +68,27 @@ struct RecordingSizeSheet: View {
 struct RecordingProgressSheet: View {
     let progress: RecordingProgress?
     let onCancel: () -> Void
+
+    /// How full the bar is, 0…1 — the whole of what the bar is told, so that `total` is the constant
+    /// 1.0 for the life of the sheet. The first update the sheet ever draws is `nil` (the session has
+    /// not reported a frame yet), and the pair `(value: 0, total: 1)` becoming `(value: 1, total: 240)`
+    /// on the next update is the difference macOS's `ProgressView` was seen not to follow: the label
+    /// counted frames while the fill stayed pinned at the left. A fraction against a fixed total is
+    /// one number changing, which is the case the control does track.
+    ///
+    /// Clamped rather than trusted: `frame` is 1-based and never exceeds `frameCount`, but a bar is
+    /// not the place to find out otherwise.
+    static func fraction(_ progress: RecordingProgress?) -> Double {
+        guard let p = progress, p.frameCount > 0 else { return 0 }
+        return min(max(Double(p.frame) / Double(p.frameCount), 0), 1)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
-            ProgressView(value: Double(progress?.frame ?? 0), total: Double(max(progress?.frameCount ?? 1, 1)))
+            // `.linear` explicitly: `.automatic` in a sheet this small is free to resolve to the
+            // circular indicator, and this one has a frame count to show.
+            ProgressView(value: Self.fraction(progress))
+                .progressViewStyle(.linear)
             Text(progress.map { "Frame \($0.frame) of \($0.frameCount)" } ?? "Preparing…").font(.caption.monospacedDigit())
             Button("Cancel", role: .cancel, action: onCancel)
         }
