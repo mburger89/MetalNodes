@@ -48,3 +48,13 @@ import MetalNodesCore
         }
     }
 }
+
+@Suite @MainActor struct PreviewClockTests {
+    @Test func theClockStartsAtTheDefaultTimelineInWallClockMode() {
+        let s = PreviewState()
+        #expect(s.clock.timeline == Timeline())
+        #expect(s.clock.mode == .wallClock)
+        #expect(s.clock.frame == 0)
+        #expect(s.clock.isPlaying)
+    }
+}

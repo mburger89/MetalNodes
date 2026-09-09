@@ -143,8 +143,8 @@ public struct EditorView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(DraculaToken.surface.color))
             HStack {
-                Button(model.preview.isPlaying ? "Pause" : "Play") { model.preview.isPlaying.toggle() }
-                Button("Reset") { model.preview.resetRequested = true }
+                Button(model.preview.clock.isPlaying ? "Pause" : "Play") { model.togglePlayback() }
+                Button("Reset") { model.resetPlayback() }
                 Spacer()
                 Text("gen \(model.preview.pipeline?.generation ?? 0)")
                     .font(.caption.monospacedDigit())

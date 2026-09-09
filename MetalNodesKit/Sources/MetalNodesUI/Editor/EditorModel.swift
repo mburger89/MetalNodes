@@ -137,6 +137,7 @@ public final class EditorModel {
         }()
         self.preview.mesh = viewState.previewMesh
         self.preview.orbit = viewState.orbit
+        self.syncClock()
     }
 
     /// The 3D preview's mesh and camera (spec §23.5, §23.8). View state, never undone; mirrored
@@ -190,6 +191,8 @@ public final class EditorModel {
         viewState = package.viewState
         preview.mesh = viewState.previewMesh
         preview.orbit = viewState.orbit
+        syncClock()
+        resetPlayback()
         // The GPU cache is keyed by `AssetID` alone, and a reseed can bring different bytes under an
         // id it already holds (relink an asset, then revert): drop it all before the new bytes land,
         // so the rebind `textures` triggers decodes them afresh.
@@ -476,6 +479,9 @@ public final class EditorModel {
                 || (s.target == .realityKit && s.lightingModel != document.settings.lightingModel)
                 || (s.target == .realityKit && s.liveParameters != document.settings.liveParameters)
             document.settings = s
+            // The timeline and the time mode are document state; the clock that plays them is
+            // view state, so it has to be told (spec §26.3).
+            syncClock()
         case .addSticky(let note):
             document[path].stickies[note.id] = note
         case .updateSticky(let id, let text, let accent):

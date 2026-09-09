@@ -23,11 +23,14 @@ public final class PreviewState {
     /// The live pipeline, for readers that only need it (the preview pane's generation label).
     public var pipeline: CompiledPipeline? { program?.pipeline }
     public var uniforms: UniformImage?
-    public var isPlaying = true
-    /// Seconds subtracted from wall-clock so "reset time" is cheap.
-    public var timeOffset: Float = 0
-    /// Set by the UI; the renderer zeroes the clock on the next frame and clears it.
-    public var resetRequested = false
+    /// Where playback is (spec §26.3). Seeded from the document's timeline and mode by the editor;
+    /// stepped or seeked by the renderer every frame; scrubbed by the preview controls.
+    public var clock = TimelineClock(timeline: Timeline(), mode: .wallClock)
+    /// Wall-clock bookkeeping for `.wallClock` mode: when the current run of play began (in
+    /// `CACurrentMediaTime()` seconds), and how much play had elapsed when it was last paused.
+    /// Nil while paused.
+    public var playStartedAt: Double?
+    public var pausedElapsed: Double = 0
     public var mouse = SIMD2<Float>(0, 0)
     public var drawableSize = CGSize(width: 1, height: 1)
     public var lastError: String?

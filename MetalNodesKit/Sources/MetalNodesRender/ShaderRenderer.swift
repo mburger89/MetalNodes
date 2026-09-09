@@ -13,8 +13,6 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
     private let state: PreviewState
     private var ring: UniformRing?
     private let inflight = DispatchSemaphore(value: 3)
-    private let startTime = CACurrentMediaTime()
-    private var pausedAt: Float?
     private lazy var meshes = MeshResources(device: device)
 
     public init(device: MTLDevice, state: PreviewState) {
@@ -38,19 +36,26 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
             ring = UniformRing(device: device, size: image.layout.totalSize)
         }
 
-        // Time: wall clock while playing; frozen while paused. On resume, fold the
-        // paused span into timeOffset so playback continues from the frozen value
-        // with no jump.
-        let now = Float(CACurrentMediaTime() - startTime)
-        if state.resetRequested { state.timeOffset = now; pausedAt = nil; state.resetRequested = false }
-        let t: Float
-        if state.isPlaying {
-            if let p = pausedAt { state.timeOffset = now - p; pausedAt = nil }
-            t = now - state.timeOffset
-        } else {
-            if pausedAt == nil { pausedAt = now - state.timeOffset }
-            t = pausedAt!
+        // Time comes from the clock (spec §26.3). Wall clock: elapsed play time places it —
+        // pausing freezes `pausedElapsed`, resuming starts a new run from there, so there is no
+        // jump. Fixed rate: exactly one frame per draw while playing, so the same draws always
+        // produce the same `time` values — what makes recording frame-exact.
+        switch state.clock.mode {
+        case .wallClock:
+            if state.clock.isPlaying {
+                let now = CACurrentMediaTime()
+                let started = state.playStartedAt ?? now
+                state.playStartedAt = started
+                state.clock.seek(elapsed: state.pausedElapsed + (now - started))
+            } else if let started = state.playStartedAt {
+                state.pausedElapsed += CACurrentMediaTime() - started
+                state.playStartedAt = nil
+            }
+        case .fixedRate:
+            state.playStartedAt = nil
+            state.clock.step()
         }
+        let t = state.clock.time
 
         image.setReserved(time: t,
                           resolution: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)),
