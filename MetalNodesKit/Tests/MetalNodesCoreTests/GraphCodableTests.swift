@@ -112,6 +112,15 @@ extension GraphCodableTests {
         let element = String(json[nodes.upperBound..<end])
         json.insert(contentsOf: "," + element, at: end)
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(Graph.self, from: Data(json.utf8)) }
+        // Pin the spec-§27.2 wording, not just the error type: this is the text a hand-merged
+        // document.json's author sees.
+        do {
+            _ = try JSONDecoder().decode(Graph.self, from: Data(json.utf8))
+        } catch DecodingError.dataCorrupted(let context) {
+            #expect(context.debugDescription == "duplicate node id \(id.raw.uuidString)")
+        } catch {
+            Issue.record("expected DecodingError.dataCorrupted, got \(error)")
+        }
     }
 
     @Test func twoWiresIntoOneSocketAreADecodingError() throws {
@@ -121,5 +130,12 @@ extension GraphCodableTests {
                               {"to":{"node":"\(a.raw.uuidString)","socket":"x"},"from":{"node":"\(c.raw.uuidString)","socket":"out"}}]}
         """
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(Graph.self, from: Data(json.utf8)) }
+        do {
+            _ = try JSONDecoder().decode(Graph.self, from: Data(json.utf8))
+        } catch DecodingError.dataCorrupted(let context) {
+            #expect(context.debugDescription == "two wires into \(a.raw.uuidString).x")
+        } catch {
+            Issue.record("expected DecodingError.dataCorrupted, got \(error)")
+        }
     }
 }

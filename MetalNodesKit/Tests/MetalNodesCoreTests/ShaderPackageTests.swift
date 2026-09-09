@@ -75,7 +75,7 @@ import Testing
         ])
         #expect(throws: PackageError.self) { try ShaderPackage(fileWrapper: wrapper) }
         do { _ = try ShaderPackage(fileWrapper: wrapper) } catch {
-            #expect(error.errorDescription?.contains("duplicate node id") == true, "\(error)")
+            #expect(error.errorDescription == "The shader could not be read: duplicate node id \(a.raw.uuidString)", "\(error)")
         }
     }
 

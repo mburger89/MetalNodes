@@ -48,7 +48,7 @@ public enum ParamValues {
     private static func f(_ x: Float) -> String {
         guard x.isFinite else { return "0.0" }
         let s = "\(x)"
-        return s.contains(".") || s.contains("e") || s.contains("n") ? s : s + ".0"
+        return s.contains(".") || s.contains("e") ? s : s + ".0"
     }
 
     /// The one rule for coercing a float into the `Int32` an int slot holds: NaN clamps to 0,
