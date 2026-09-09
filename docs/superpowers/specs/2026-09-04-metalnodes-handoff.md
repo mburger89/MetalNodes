@@ -860,3 +860,57 @@ iPad ⌘Z behaviour is unverified (Task 10 kept its pre-M9 gating there).
 4. From §15.5, still open: per-task items T2, T5, T8; the Custom Code features M8 deferred by design (error gutter, `#include`, two open definitions, smart-quote suppression via a representable); checklist items 26, 36, 39–41 on a device.
 5. `NodeGeometry.labelColumnWidth`: add `case .asset: return false` (ruling 9).
 6. The `ScanCache` keys raw text, so CRLF and LF twins of one body take two slots; fine at 64 entries, worth a normalising key if the cache ever grows.
+
+## 17. M10 execution record — timeline and recording (2026-09-08)
+
+Plan: `docs/superpowers/plans/2026-09-08-metalnodes-m10-timeline-recording.md`; spec §26. Nine implementation tasks, each with a task-scoped review; a whole-branch review on the most capable model; one fix wave; live checks on macOS. 1018 tests across the three targets at the end (977 after M9).
+
+### 17.1 What shipped
+
+| Task | Commit(s) | Item |
+|---|---|---|
+| 1 | `adcbe11` | `Timeline` (duration 4 s, 24/30/60 fps, loop) as an optional `DocumentSettings.timeline`; format stays 2; corpus untouched |
+| 2 | `3f59cc8` | `TimelineClock` — fixed-rate `step()`, wall-clock `seek(elapsed:)`, `scrub`, `reset`, `retarget`; eight unit tests |
+| 3 | `d3a2060`, `e01cdea` | `PreviewState.clock` replaces `isPlaying`/`timeOffset`/`resetRequested`; `ShaderRenderer.draw` reads time from the clock; `syncClock` on init, reload, `.setSettings` and `.restore`; playback API in `EditorModel+Recording.swift` |
+| 4 | `b784a64`, `fe93e93` | `FrameRenderer.encode` is the one encode path (`setRenderPipelineState` appears once); `MeshResources` is `Sendable` behind a `Mutex` so `encode` is nonisolated; `PreviewDrawTests` is the gate |
+| 5 | `d1c8956`, `d0844dc` | Scrubber, `frame / count`, `t.tt s`, Loop toggle in a separate `PlaybackControls` view; Timeline block in the inspector; `P` `,` `.` ⌘0 shortcuts |
+| 6 | `8a850aa` | `FrameBytes`, `FrameSink`, `ImageSequenceSink` (PNG `name_0001.png` or one snapshot file), `RecordingError` |
+| 7 | `23e9793` | `ExportSession` actor: offscreen bgra8+depth32, blit readback, one frame in flight, frame k at exactly k/fps, cancel abandons the sink; frame-exact pixel tests |
+| 8 | `2e9838e`, `b7287cb` | `VideoSink` — H.264 `.mp4` through `AVAssetWriter`, every writer access serialised on a private queue; `AVAsset` round-trip test |
+| 9 | `6ed1e8f`, `033b53b` | File ▸ Export Video… / Export Image Sequence… / Snapshot PNG… on both platforms; `RecordingDestination` seam (Mac panels move the finished scratch output with `replaceItemAt`; iPad `fileExporter`); one `.sheet(item:)` for size → progress; `EditorViewState.lastExportSize`; the viewer flag is never recorded (compiled document program when a viewer is set) |
+| fix wave | `d082796` | Writer-failure exit for the `VideoSink` poll; export size bounded to 16384 with `RecordingError.sizeUnsupported`; duration bounded to (0, 3600] and finite; paused fixed-rate draws no longer mutate observable state; Play at a non-looping end resets first; progress delivered in order through an async callback; sink doc/dead-state nits |
+
+### 17.2 Rulings
+
+Every `Ruling:` line from the ledger, in order made, each with what it costs if wrong.
+
+1. **Task 8 — the brief's constraint beats its sample code:** `finish()`/`abandon()`/the readiness poll must go through the private queue. Costs a slightly longer fix if wrong.
+2. **Task 3 — two sync sites the brief omitted:** `apply(.restore)` calls `syncClock()`, and `syncClock()` re-bases the wall clock to the clamped frame. Spec §26.3 says the clock follows the document. One line each if wrong.
+3. **Task 4 — `MeshResources` becomes `Sendable` behind a `Mutex`** so `FrameRenderer.encode` stays nonisolated; an export actor must not hop to the main actor around `waitUntilCompleted`. Costs a mutex on a four-entry cache.
+4. **Task 5 — Space stays the canvas's hold-to-pan key; Play/Pause is `P`.** Reset is ⌘0 because Home is Zoom to Fit. Spec §26.3 amended. Costs one key rebinding.
+5. **Task 5 — plan-mandated code fixed:** static "Play/Pause" menu title (the `Commands` body must not read the clock per frame); scrubber range floor 1 with the slider disabled under two frames.
+6. **Task 9 — data safety over the brief's move:** the Mac destination replaces with `replaceItemAt` and never pre-deletes; the size→progress handoff is one `.sheet(item:)` over a phase enum.
+7. **Final review — one fix wave** for Important 1–3, the paused-draw churn, and the ordered progress callback.
+8. **Final review — Minor 5 fixed in the same wave** (Play at a non-looping end resets first) rather than parked: one line the live check would otherwise flag.
+9. **Spec §26 amended** (this commit) where it disagreed with what shipped: `P`/⌘0 keys; the save panel comes after rendering (sandbox); failures use the "Export failed" alert; size and duration bounds.
+
+### 17.3 Live checks (spec §26.6, plan Task 10)
+
+_Pending — filled in below when run._
+
+### 17.4 What the reviews caught that the tests did not
+
+- **Plan text defects, all caught at review or by the implementer:** the Task 7 `init` captured a half-initialised `self`; `var seen` in a `@Sendable` closure; `scrub(to: 120)` is t = 2.0 at 60 fps, not 0.5; `spec.mouse` is normalised, not pixels; the Task 9 `exportFiles()` mutation survived its own test (a new test with a live pipeline and a removed terminal kills it); the memory destination handed back a URL `record` deletes; `VideoSink`'s sample code touched the writer off its queue. About one defect per task, the M8/M9 rate.
+- **Cross-file clashes the per-file check could not see:** bare Space was already the canvas pan latch (`onKeyPress` in another file); `MeshResources` was `@MainActor`, which would have made every export frame hop to the main actor.
+- **Robustness only a whole-branch read surfaced:** an `AVAssetWriter` that fails mid-clip left the poll spinning until Cancel; a 20000-pixel export asserts inside Metal rather than returning nil; `1e308` in the Duration field trapped in `Int(inf)`.
+- **Two SwiftUI hazards** the file already worked around elsewhere and reintroduced: reading the clock inside a `Commands` body; dismissing one sheet and raising another in the same update.
+
+### 17.5 M11 starting list
+
+1. `AVAssetWriterInput.PixelBufferReceiver`'s async `append` replaces the readiness poll (the macOS 27 SDK deprecates `isReadyForMoreMediaData`).
+2. iPad: `fileExporter(isPresented:item:…)` with a `Transferable` URL instead of `FileWrapper(.immediate)`, which loads a whole recording into memory.
+3. A gradient-frame test that pins readback orientation (the live snapshot check covers it today).
+4. Extract the wall-clock bookkeeping in `ShaderRenderer.draw` into a testable `PreviewState.advanceClock(now:)`; guard `syncClock`'s re-base on an actual timeline/mode change.
+5. Parked from the fix-wave re-review: `ExportSession`'s size guard has no lower bound (a negative edge traps in `Int()`; unreachable from the sheet); `ExportSessionTests`' size test sinks into the bare temp directory (never reached — `init` throws first; move to a UUID subdirectory); an absorbed doc comment in that file.
+6. Parked minors: `ExportSession.run` re-entry guard and explicit `snapshotTime:`; cancel during the last frame reports success; a Duration draft string so a rejected value is not displayed; `recordingRequest` never cleared; the `MSLScannerScanCacheTests` timing flake (pre-existing).
+7. Carried from §16.5: off-centre palette placement, the T14 line-owner assertion, `.asset` in the label filter, `ScanCache` CRLF/LF twins, the §15.5 items.
