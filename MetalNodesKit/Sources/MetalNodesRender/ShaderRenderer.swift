@@ -52,8 +52,12 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
                 state.playStartedAt = nil
             }
         case .fixedRate:
-            state.playStartedAt = nil
-            state.clock.step()
+            // Both writes are guarded: `PreviewState` is observable, and assigning the same value
+            // every draw would invalidate every view reading the clock at refresh rate even while
+            // playback is paused. `step()` is already a no-op when paused — the guard is about not
+            // writing to the observable property.
+            if state.playStartedAt != nil { state.playStartedAt = nil }
+            if state.clock.isPlaying { state.clock.step() }
         }
         let t = state.clock.time
 

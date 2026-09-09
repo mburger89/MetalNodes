@@ -30,7 +30,15 @@ extension EditorModel {
         preview.playStartedAt = nil
     }
 
+    /// Play/Pause. A non-looping clock parked on its last frame is the one case where flipping
+    /// `isPlaying` alone does nothing: `TimelineClock.step()` would see the end again on the very
+    /// next draw and stop straight away, so Play there means play the clip again from the top.
+    /// Only `.fixedRate` needs it — the wall clock re-seeks from `pausedElapsed` instead.
     public func togglePlayback() {
+        if !preview.clock.isPlaying, preview.clock.mode == .fixedRate,
+           !preview.clock.timeline.loops, preview.clock.frame == preview.clock.timeline.frameCount - 1 {
+            resetPlayback()
+        }
         preview.clock.isPlaying.toggle()
     }
 
@@ -46,9 +54,12 @@ extension EditorModel {
     }
 
     /// The Timeline block's edits (spec §26.2): one settings change, undoable as "Change Value".
+    /// A duration that is not a sane number of seconds is refused outright: `Timeline.frameCount`
+    /// multiplies by the frame rate and converts to `Int`, which traps on a non-finite or
+    /// astronomical duration, so the guard has to be an upper bound and not just `> 0`.
     public func setTimeline(_ timeline: Timeline) {
-        guard timeline.duration > 0 else {
-            showNotice("Duration must be greater than zero")
+        guard timeline.duration > 0, timeline.duration.isFinite, timeline.duration <= 3600 else {
+            showNotice("Duration must be between 0 and 3600 seconds")
             return
         }
         var s = document.settings
@@ -66,7 +77,7 @@ extension EditorModel {
     /// `progress` is delivered on it.
     public func record(_ kind: RecordingKind, size: CGSize, device: MTLDevice?,
                        destination: any RecordingDestination,
-                       progress: @escaping @MainActor (RecordingProgress) -> Void) async -> ExportOutcome {
+                       progress: @escaping @MainActor @Sendable (RecordingProgress) -> Void) async -> ExportOutcome {
         guard (try? exportFiles()) != nil, preview.program != nil else {
             return .failed("The graph has errors; fix them before recording.")
         }
@@ -137,7 +148,9 @@ extension EditorModel {
             return .failed(error.localizedDescription)
         }
         do {
-            try await session.run { p in Task { @MainActor in progress(p) } }
+            // Awaited, not spawned: one `Task` per frame would deliver the hops in whatever order
+            // the main actor happened to run them, and the last hop is what dismisses the sheet.
+            try await session.run { p in await MainActor.run { progress(p) } }
         } catch is CancellationError {
             // A sink that learns to cancel on its own would throw this rather than the session's own
             // `RecordingError.cancelled`; both are the same outcome to the sheet.

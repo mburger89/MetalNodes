@@ -2,7 +2,6 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import Metal
-import Synchronization
 import Testing
 import MetalNodesCore
 @testable import MetalNodesRender
@@ -10,6 +9,13 @@ import MetalNodesCore
 /// `ExportSession` renders a timeline offscreen. The point of these tests is that the frames it
 /// writes are *frame-exact* — frame `k` is the shader at `k / frameRate`, never at whatever the
 /// wall clock said — and that a cancelled export leaves nothing behind.
+/// Somewhere other than the session's own executor for progress reports to land, so a test can
+/// tell that `run` awaits each one in turn.
+private actor ProgressLog {
+    private(set) var reports: [RecordingProgress] = []
+    func append(_ p: RecordingProgress) { reports.append(p) }
+}
+
 @Suite struct ExportSessionTests {
     /// A fragment document whose colour is `float4(time, 0, 0, 1)`: an Expression fed by Time.
     /// Read back, the red byte *is* the `time` uniform, so a written frame proves its own time.
@@ -68,9 +74,13 @@ import MetalNodesCore
         let session = try ExportSession(device: device, program: PreviewProgram(pipeline: pipeline, textures: [:]),
                                         uniforms: UniformImage(layout: shader.layout), spec: spec,
                                         timeline: Timeline(duration: 0.05, frameRate: 60, loops: true), sink: sink)
-        let seen = Mutex<[RecordingProgress]>([])
-        try await session.run { p in seen.withLock { $0.append(p) } }
-        let reports = seen.withLock { $0 }
+        // The reports hop to an actor of their own before they are recorded: `run` awaits each one,
+        // so they arrive in frame order rather than in whatever order unstructured hops happened
+        // to run. (An `async` progress closure is the whole point — the old sync one could not
+        // await anything, and the caller had to spawn a `Task` per frame.)
+        let seen = ProgressLog()
+        try await session.run { p in await seen.append(p) }
+        let reports = await seen.reports
         #expect(reports.map(\.frame) == [1, 2, 3])
         #expect(reports.allSatisfy { $0.frameCount == 3 })
         for k in 0..<3 {
@@ -97,11 +107,34 @@ import MetalNodesCore
                                         uniforms: UniformImage(layout: shader.layout), spec: spec,
                                         timeline: Timeline(duration: 1.0 / 60.0, frameRate: 60, loops: false),
                                         sink: sink)
-        let seen = Mutex<[RecordingProgress]>([])
-        try await session.run { p in seen.withLock { $0.append(p) } }
-        #expect(seen.withLock { $0 } == [RecordingProgress(frame: 1, frameCount: 1)])
+        let seen = ProgressLog()
+        try await session.run { p in await seen.append(p) }
+        #expect(await seen.reports == [RecordingProgress(frame: 1, frameCount: 1)])
         let red = try Self.redChannel(of: dir.appendingPathComponent("snap.png"))
         #expect(abs(Int(red) - 128) <= 1, "snapshot red \(red), expected 128 for t = 0.5")
+    }
+
+    /// A size no device can allocate is a size problem, not a missing device: the old code folded
+    /// every allocation failure into `.noDevice` and told the user "No Metal device is available"
+    /// about the device it had just made a command queue on.
+    @MainActor
+    @Test func anOversizedFrameIsRefusedAsASizeProblem() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        guard let (shader, pipeline) = try await Self.compiled(device) else { return }
+        let size = CGSize(width: 20000, height: 8)
+        let spec = FrameSpec(time: 0, size: size, mouse: .zero,
+                             orbit: .default, mesh: .sphere, viewerRange: 0...1)
+        let sink = ImageSequenceSink(directory: FileManager.default.temporaryDirectory, baseName: "never")
+        #expect(throws: RecordingError.sizeUnsupported(size)) {
+            _ = try ExportSession(device: device, program: PreviewProgram(pipeline: pipeline, textures: [:]),
+                                  uniforms: UniformImage(layout: shader.layout), spec: spec,
+                                  timeline: Timeline(duration: 1, frameRate: 60, loops: false), sink: sink)
+        }
+        #expect(RecordingError.sizeUnsupported(size).errorDescription
+                == "A 20000 × 8 recording is too large for this device")
     }
 
     @MainActor

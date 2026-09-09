@@ -65,6 +65,35 @@ import MetalNodesRender
         m.togglePlayback()
         #expect(m.preview.clock.isPlaying)
     }
+
+    /// Fixed rate with the loop off: the clock stopped itself at the last frame, and `step()`
+    /// would stop it again on the very next draw — so Play there has to rewind first, or the
+    /// button does nothing at all.
+    @Test func playingFromTheEndOfANonLoopingFixedRateClipRestartsIt() {
+        let m = model()
+        var s = m.document.settings
+        s.timeline = Timeline(duration: 0.1, frameRate: 30, loops: false)   // 3 frames
+        s.timeMode = .fixedRate
+        m.apply(.setSettings(s))
+        m.scrub(to: 2)
+        #expect(m.preview.clock.frame == 2 && !m.preview.clock.isPlaying)
+        m.togglePlayback()
+        #expect(m.preview.clock.frame == 0)
+        #expect(m.preview.clock.isPlaying)
+    }
+
+    /// Only the end rewinds: resuming from anywhere else keeps the frame it was paused on.
+    @Test func playingFromTheMiddleKeepsTheFrame() {
+        let m = model()
+        var s = m.document.settings
+        s.timeline = Timeline(duration: 0.1, frameRate: 30, loops: false)   // 3 frames
+        s.timeMode = .fixedRate
+        m.apply(.setSettings(s))
+        m.scrub(to: 1)
+        m.togglePlayback()
+        #expect(m.preview.clock.frame == 1)
+        #expect(m.preview.clock.isPlaying)
+    }
 }
 
 @Suite struct TimelineEditingTests {
@@ -84,6 +113,25 @@ import MetalNodesRender
         m.setTimeline(Timeline(duration: 0, frameRate: 30, loops: true))
         #expect(m.document.settings.timeline == Timeline())
         #expect(m.notice != nil)
+    }
+
+    /// `Timeline.frameCount` multiplies by the frame rate and converts to `Int`, which traps on a
+    /// non-finite or astronomical duration — so the guard is a range, not just `> 0`.
+    @Test(arguments: [Double.infinity, 1e9, Double.nan, 3601])
+    func aDurationThatWouldTrapFrameCountIsRefused(_ bad: Double) {
+        let m = model()
+        m.setTimeline(Timeline(duration: bad, frameRate: 60, loops: true))
+        #expect(m.document.settings.timeline == Timeline())
+        #expect(m.notice == "Duration must be between 0 and 3600 seconds")
+        #expect(!m.canUndo)
+    }
+
+    /// The upper bound is inclusive — an hour-long timeline is unusual but legal.
+    @Test func anHourLongTimelineIsAccepted() {
+        let m = model()
+        m.setTimeline(Timeline(duration: 3600, frameRate: 24, loops: false))
+        #expect(m.document.settings.timeline.duration == 3600)
+        #expect(m.notice == nil)
     }
 }
 
@@ -182,11 +230,13 @@ enum ExportSessionFixture {
         await m.awaitIdle()
         let destination = MemoryRecordingDestination()
         defer { destination.cleanUp() }
-        var last: RecordingProgress?
+        // Every hop back to the main actor is awaited by the session's loop, so the reports arrive
+        // in frame order — the last one is what takes the progress sheet down.
+        var seen: [RecordingProgress] = []
         let outcome = await m.record(.video, size: CGSize(width: 16, height: 16), device: device,
-                                     destination: destination) { last = $0 }
+                                     destination: destination) { seen.append($0) }
         #expect(outcome == .saved)
-        #expect(last == RecordingProgress(frame: 3, frameCount: 3))
+        #expect(seen == (1...3).map { RecordingProgress(frame: $0, frameCount: 3) })
         #expect(destination.placed.first?.url.pathExtension == "mp4")
     }
 

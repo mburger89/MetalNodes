@@ -16,6 +16,19 @@ struct RecordingSizeSheet: View {
     @State private var width: Int = 512
     @State private var height: Int = 512
 
+    /// What `ExportSession` will accept: past this the render targets cannot be allocated, so the
+    /// sheet refuses the size here rather than letting the recording fail after the sheet is gone.
+    private var isValid: Bool {
+        (1...ExportSession.maxDimension).contains(width) && (1...ExportSession.maxDimension).contains(height)
+    }
+
+    /// The remembered size arrives as a `CGFloat` and only ever seeds the fields, so it is clamped
+    /// into range here — `Int(_:)` on its own traps on a non-finite value.
+    private static func clamp(_ v: CGFloat) -> Int {
+        guard v.isFinite else { return 1 }
+        return Int(min(max(v.rounded(), 1), CGFloat(ExportSession.maxDimension)))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(kind.title).font(.headline)
@@ -30,21 +43,24 @@ struct RecordingSizeSheet: View {
                 Text("\(timeline.frameCount) frames — \(timeline.duration, format: .number.precision(.fractionLength(1))) s at \(timeline.frameRate) fps. Change these in the Document section.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if kind == .video, width % 2 != 0 || height % 2 != 0 {
+            if !isValid {
+                Text("Width and height must be between 1 and \(ExportSession.maxDimension) px.")
+                    .font(.caption).foregroundStyle(.red)
+            } else if kind == .video, width % 2 != 0 || height % 2 != 0 {
                 Text("H.264 needs even dimensions; the video will be \(width + width % 2) × \(height + height % 2).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
-                Button("Record") { onRecord(CGSize(width: max(width, 1), height: max(height, 1))) }
+                Button("Record") { onRecord(CGSize(width: width, height: height)) }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(width < 1 || height < 1)
+                    .disabled(!isValid)
             }
         }
         .padding(20)
         .frame(width: 360)
-        .onAppear { width = max(Int(initialSize.width), 1); height = max(Int(initialSize.height), 1) }
+        .onAppear { width = Self.clamp(initialSize.width); height = Self.clamp(initialSize.height) }
     }
 }
 

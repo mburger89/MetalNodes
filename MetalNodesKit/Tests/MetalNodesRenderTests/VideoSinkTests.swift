@@ -35,6 +35,22 @@ import Testing
         #expect(VideoSink.evenSize(CGSize(width: 64, height: 64)) == CGSize(width: 64, height: 64))
     }
 
+    /// `write` waits for `isReadyForMoreMediaData`, and a writer that has stopped never becomes
+    /// ready again: without the status check the poll is an infinite loop. A finished writer is
+    /// the cheapest way to reach that state — the error names it rather than the append failing.
+    @Test(.timeLimit(.minutes(1)))
+    func writingAfterTheWriterHasStoppedThrowsRatherThanSpinning() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sink = VideoSink(url: url)
+        try await sink.begin(width: 64, height: 64, frameRate: 30)
+        try await sink.write(frame(0, width: 64, height: 64), index: 0)
+        try await sink.finish()
+        await #expect(throws: RecordingError.writerFailed("the writer stopped")) {
+            try await sink.write(frame(1, width: 64, height: 64), index: 1)
+        }
+    }
+
     @Test func abandonRemovesThePartialFile() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
         let sink = VideoSink(url: url)

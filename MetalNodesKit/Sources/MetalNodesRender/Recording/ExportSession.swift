@@ -33,6 +33,11 @@ public actor ExportSession {
     private let height: Int
     private let bytesPerRow: Int
 
+    /// The largest edge any current Metal feature set allows for a 2D texture. Asking for more is
+    /// a size problem the caller can fix, so it is refused up front rather than surfacing as a
+    /// nil texture — and long before a readback buffer of that size is attempted.
+    public static let maxDimension = 16384
+
     public init(device: MTLDevice, program: PreviewProgram, uniforms: UniformImage, spec: FrameSpec,
                 timeline: Timeline, sink: any FrameSink) throws {
         guard let queue = device.makeCommandQueue() else { throw RecordingError.noDevice }
@@ -43,6 +48,12 @@ public actor ExportSession {
         self.timeline = timeline
         self.sink = sink
         self.meshes = MeshResources(device: device)
+        // Refused before any allocation — and before the `Int` conversions below, which would
+        // trap on a non-finite or astronomically large edge.
+        guard spec.size.width.isFinite, spec.size.height.isFinite,
+              spec.size.width.rounded() <= CGFloat(Self.maxDimension),
+              spec.size.height.rounded() <= CGFloat(Self.maxDimension)
+        else { throw RecordingError.sizeUnsupported(spec.size) }
         // Locals, not the stored properties: a nested function that read `self.width` would
         // capture a half-initialised `self`.
         let w = max(1, Int(spec.size.width.rounded()))
@@ -58,10 +69,13 @@ public actor ExportSession {
             d.storageMode = .private
             return device.makeTexture(descriptor: d)
         }
-        guard let color = target(.bgra8Unorm), let depth = target(ShaderCompiler.depthPixelFormat),
-              let uniformBuffer = device.makeBuffer(length: max(uniforms.bytes.count, 16), options: .storageModeShared),
-              let readback = device.makeBuffer(length: stride * h, options: .storageModeShared)
+        guard let uniformBuffer = device.makeBuffer(length: max(uniforms.bytes.count, 16), options: .storageModeShared)
         else { throw RecordingError.noDevice }
+        // Everything below is sized by the frame: this device refusing it is a size problem, and
+        // saying "no Metal device" about a device that just handed out a command queue is a lie.
+        guard let color = target(.bgra8Unorm), let depth = target(ShaderCompiler.depthPixelFormat),
+              let readback = device.makeBuffer(length: stride * h, options: .storageModeShared)
+        else { throw RecordingError.sizeUnsupported(spec.size) }
         self.color = color
         self.depth = depth
         self.uniformBuffer = uniformBuffer
@@ -70,7 +84,11 @@ public actor ExportSession {
 
     /// Renders and writes every frame. Throws `RecordingError.cancelled` (after abandoning the
     /// sink's output) when the surrounding task is cancelled; rethrows sink errors the same way.
-    public func run(progress: @Sendable @escaping (RecordingProgress) -> Void) async throws {
+    ///
+    /// `progress` is `async` and awaited per frame, so a report that has to hop to another actor
+    /// arrives in frame order: the loop is what waits for it, rather than each hop racing the next
+    /// in an unordered `Task`. The frame's own `waitUntilCompleted` stays on this actor.
+    public func run(progress: @Sendable @escaping (RecordingProgress) async -> Void) async throws {
         let count = timeline.frameCount
         try await sink.begin(width: width, height: height, frameRate: timeline.frameRate)
         do {
@@ -82,7 +100,7 @@ public actor ExportSession {
                 let bytes = try renderFrame()
                 try await sink.write(FrameBytes(width: width, height: height, bytesPerRow: bytesPerRow,
                                                 bgra: bytes), index: k)
-                progress(RecordingProgress(frame: k + 1, frameCount: count))
+                await progress(RecordingProgress(frame: k + 1, frameCount: count))
             }
             try await sink.finish()
         } catch {

@@ -3,8 +3,10 @@ import CoreVideo
 import Foundation
 
 /// H.264 in an `.mp4`, one frame per timeline frame at `k / frameRate` (spec §26.5).
-/// `AVAssetWriter` is not `Sendable`; the class serialises every call through `queue`, so it can
-/// be handed to the session's actor and driven from there.
+/// `AVAssetWriter` is not `Sendable`; every access to the writer and its input goes through
+/// `queue`, so the sink can be handed to the session's actor and driven from there. The one call
+/// made outside the queue is `finishWriting()`, which is awaited on a writer the queue handed
+/// back after `markAsFinished` — see `finish()`.
 public final class VideoSink: FrameSink, @unchecked Sendable {
     private let url: URL
     private let queue = DispatchQueue(label: "MetalNodes.VideoSink")
@@ -48,8 +50,18 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
 
     public func write(_ frame: FrameBytes, index: Int) async throws {
         // `isReadyForMoreMediaData` is polled rather than awaited: offline writing at one frame
-        // at a time is never far ahead of the encoder. Each poll reads `input` inside `queue.sync`.
-        while queue.sync(execute: { input?.isReadyForMoreMediaData == false }) {
+        // at a time is never far ahead of the encoder. Each poll reads `input` and the writer's
+        // status inside `queue.sync`: a writer that has stopped never becomes ready again, so
+        // without the status check a failure here would spin the export forever.
+        func mustWait() throws -> Bool {
+            try queue.sync {
+                guard writer?.status == .writing else {
+                    throw RecordingError.writerFailed(writer?.error?.localizedDescription ?? "the writer stopped")
+                }
+                return input?.isReadyForMoreMediaData == false
+            }
+        }
+        while try mustWait() {
             try await Task.sleep(for: .milliseconds(2))
         }
         try queue.sync {

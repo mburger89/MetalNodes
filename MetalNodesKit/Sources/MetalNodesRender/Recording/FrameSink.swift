@@ -24,12 +24,10 @@ public protocol FrameSink: Sendable {
 }
 
 /// PNG per frame — `<baseName>_0001.png …` — or, with `singleFileName`, one file (the snapshot).
-public final class ImageSequenceSink: FrameSink, @unchecked Sendable {
+public final class ImageSequenceSink: FrameSink, Sendable {
     private let directory: URL
     private let baseName: String
     private let singleFileName: String?
-    private let lock = NSLock()
-    private var written: [URL] = []
 
     public init(directory: URL, baseName: String, singleFileName: String? = nil) {
         self.directory = directory
@@ -50,7 +48,6 @@ public final class ImageSequenceSink: FrameSink, @unchecked Sendable {
         }
         CGImageDestinationAddImage(dest, image, nil)
         guard CGImageDestinationFinalize(dest) else { throw RecordingError.frameWriteFailed(url) }
-        lock.withLock { written.append(url) }
     }
 
     public func finish() async throws {}
@@ -76,6 +73,9 @@ public enum RecordingError: Error, LocalizedError, Sendable, Equatable {
     case writerFailed(String)
     case cancelled
     case noDevice
+    /// The size asked for is past `ExportSession.maxDimension`, or the GPU refused a target that
+    /// large: a size problem, not a missing device.
+    case sizeUnsupported(CGSize)
 
     public var errorDescription: String? {
         switch self {
@@ -84,6 +84,15 @@ public enum RecordingError: Error, LocalizedError, Sendable, Equatable {
         case .writerFailed(let why): "The video writer failed: \(why)"
         case .cancelled: "Recording cancelled"
         case .noDevice: "No Metal device is available"
+        case .sizeUnsupported(let size):
+            "A \(Self.whole(size.width)) × \(Self.whole(size.height)) recording is too large for this device"
         }
+    }
+
+    /// `Int(_:)` traps on a non-finite or out-of-range `CGFloat`, and this is an error path — the
+    /// message must never be the thing that crashes.
+    private static func whole(_ v: CGFloat) -> Int {
+        guard v.isFinite else { return Int(Int32.max) }
+        return Int(min(max(v.rounded(), CGFloat(Int32.min)), CGFloat(Int32.max)))
     }
 }
