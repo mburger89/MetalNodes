@@ -837,12 +837,12 @@ Every `Ruling:` line from the ledger, in order made. Each names what it costs if
 
 ### 16.3 Live checks (spec §25.6)
 
-The four items no unit test can see. **Status at the time of writing: not run** — the screen locked (`CGSSessionScreenIsLocked=1`) after the M9 app was built and launched from `cdbf96c`; the app is still running and the checks take about ten minutes on an unlocked screen.
+The four items no unit test can see. **Run 2026-09-08 on the Debug build of `cdbf96c`** (the fix wave `fc92f25` after it changes only tests and the enumeration-label filter, which no item below touches), driven by the agent on an unlocked screen after one lock interrupted the first attempt.
 
-1. Material Output's socket labels each on one line, the node visibly wider, wires still on the dots.
-2. ⌘Z in the inspector's formula field undoes typing and keeps focus; ⌘Z on the canvas undoes the document; the same pair inside and after the code editor.
-3. Roughness slider ends at 0.00 and 1.00.
-4. Aspect-mode UV under RealityKit: the strip ends with "or switch this node's Mode to Normalized".
+1. **pass** — every Material Output label on one line ("Ambient Occlusion", "Clearcoat Roughness" included), the node visibly wider, a wire from UV lands exactly on the Base Color dot.
+2. **pass** — formula field: `zz` typed, ⌘Z removed it with the cursor still in the field; `a` committed with Return, click on the canvas, ⌘Z removed the `a` socket. Code editor: ` // x` typed, ⌘Z removed it in place; ` // y` committed by clicking away, ⌘↑, ⌘Z on the canvas reverted the body (re-entering the editor shows the original two lines).
+3. **pass** — the inspector's Roughness slider reads 0.00 at the left end and 1.00 at the right.
+4. **pass** — with the UV node in Aspect mode the strip reads "UV reads resolution, which the RealityKit Material target does not provide — this node needs the Fragment (preview) or SwiftUI target, or switch this node's Mode to Normalized"; the preview keeps its last frame and the node is outlined red.
 
 iPad ⌘Z behaviour is unverified (Task 10 kept its pre-M9 gating there).
 
