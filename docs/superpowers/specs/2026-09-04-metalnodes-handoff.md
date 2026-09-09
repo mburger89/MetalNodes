@@ -878,6 +878,7 @@ Plan: `docs/superpowers/plans/2026-09-08-metalnodes-m10-timeline-recording.md`; 
 | 7 | `23e9793` | `ExportSession` actor: offscreen bgra8+depth32, blit readback, one frame in flight, frame k at exactly k/fps, cancel abandons the sink; frame-exact pixel tests |
 | 8 | `2e9838e`, `b7287cb` | `VideoSink` — H.264 `.mp4` through `AVAssetWriter`, every writer access serialised on a private queue; `AVAsset` round-trip test |
 | 9 | `6ed1e8f`, `033b53b` | File ▸ Export Video… / Export Image Sequence… / Snapshot PNG… on both platforms; `RecordingDestination` seam (Mac panels move the finished scratch output with `replaceItemAt`; iPad `fileExporter`); one `.sheet(item:)` for size → progress; `EditorViewState.lastExportSize`; the viewer flag is never recorded (compiled document program when a viewer is set) |
+| live fix | `61c3e4b` | Duration field edits a draft and commits once (was one `setTimeline` per keystroke); the recording bar tracks the frame (`ProgressView(value:)` over a 0…1 fraction) |
 | fix wave | `d082796` | Writer-failure exit for the `VideoSink` poll; export size bounded to 16384 with `RecordingError.sizeUnsupported`; duration bounded to (0, 3600] and finite; paused fixed-rate draws no longer mutate observable state; Play at a non-looping end resets first; progress delivered in order through an async callback; sink doc/dead-state nits |
 
 ### 17.2 Rulings
@@ -892,17 +893,34 @@ Every `Ruling:` line from the ledger, in order made, each with what it costs if 
 6. **Task 9 — data safety over the brief's move:** the Mac destination replaces with `replaceItemAt` and never pre-deletes; the size→progress handoff is one `.sheet(item:)` over a phase enum.
 7. **Final review — one fix wave** for Important 1–3, the paused-draw churn, and the ordered progress callback.
 8. **Final review — Minor 5 fixed in the same wave** (Play at a non-looping end resets first) rather than parked: one line the live check would otherwise flag.
-9. **Spec §26 amended** (this commit) where it disagreed with what shipped: `P`/⌘0 keys; the save panel comes after rendering (sandbox); failures use the "Export failed" alert; size and duration bounds.
+9. **Live checks — fix the two defects they found before merge** (Duration field per-keystroke commits; static progress bar), one commit with tests and a scoped re-review, rather than parking them. Costs one review round if wrong.
+10. **Spec §26 amended** (this commit) where it disagreed with what shipped: `P`/⌘0 keys; the save panel comes after rendering (sandbox); failures use the "Export failed" alert; size and duration bounds.
 
-### 17.3 Live checks (spec §26.6, plan Task 10)
+### 17.3 Live checks (spec §26.6, plan Task 10, plus the final reviewer's additions)
 
-_Pending — filled in below when run._
+**Run 2026-09-09 on the Debug build of `d082796`** (docs commit `ff55d0d` after it changes no code), driven from the terminal with `screencapture`, `cliclick` and System Events keystrokes after the Claude desktop app's screen-recording grant would not take. The document: a new Fragment document, a Time node wired to Color for the recordings (grey = `t`), the UV gradient for the orientation and viewer checks, a Material Output for the RealityKit check.
+
+1. **pass — scrub.** New document shows `1 / 240`, `0.00 s`, Loop on. Dragging the slider paused playback (`166 / 240`, `2.75 s`); `,` → 165, `.` twice → 167; `P` resumed from 167; Reset restarted at frame 1 and kept playing.
+2. **pass — modes.** Fixed rate: the counter advances one per drawn frame (80 → 162 in about 1.3 s at 60 Hz); `P` pauses it exactly; Reset returns to `1 / 240`. Wall clock with Loop off: the slider pins at `240 / 240` while the readout keeps counting (`5.58 s`).
+3. **pass — Timeline block.** 2 s at 30 fps → "60 frames per loop"; duration 0 → "Duration must be between 0 and 3600 seconds" and the old value kept; ⌘Z reverted the frame-rate change. **Defect found (fixed below):** the Duration field committed on every keystroke, so `5000` applied 5, 50, 500 before the refusal and `1e9` applied 1.
+4. **pass — video.** 640 × 360 → progress sheet swapped into the size sheet in place ("Preparing…", "Frame 76 of 120") → save panel after the render → `AVAsset` reports 2.0 s, 60 fps, 640 × 360, `avc1`; frames read 0 / 139 / 255 grey at 0 / 0.5 / 1.0 s; QuickTime Player opens it at 0:02. A second export over the existing file raised the system Replace prompt; Replace produced the new 4 s file.
+5. **pass — sequence.** 60 PNGs `metalNodesShader_0001…0060.png`, 640 × 360 RGBA; frame 16 = 128 grey exactly, frame 60 = 255. Exporting into the folder again raised the app's "Replace existing folder?" alert; Cancel left the old sixty files untouched. The size sheet remembered 640 × 360 from the previous export.
+6. **pass — snapshot.** Scrubbed to frame 13 (t = 0.40 s): the PNG's centre pixel is 102 grey, identical to the pane's. With the UV gradient: PNG corners green / yellow / black / red match the pane's orientation. With the viewer flag on the Time socket the pane went grey while the snapshot stayed the document's gradient.
+7. **pass — cancel.** A 1080p video cancelled at about frame 19 and a 4096² sequence cancelled at frame 14 of 15,000 left nothing at the destination and no `MetalNodes-recording-*` in the app container's `tmp` (the sandboxed temp directory — not `$TMPDIR`). Exactly one scratch directory exists while a folder chooser is open and none after Cancel.
+8. **pass — RealityKit.** Switching the target reports "A RealityKit material needs a Material Output node" and Export Video is refused with the alert "The graph has errors; fix them before recording."; with a Material Output wired from UV the sphere records (4 s, 60 fps, 640 × 360, green frames). Switching Lighting to Unlit and exporting at once recorded the new (black — unlit renders only Emissive, §23.7 rule 5) result, so the edit landed before the recording. Texture sampling in a material was not exercised.
+
+Reviewer additions: Escape on the size sheet dismisses it without recording; 20000 px shows "Width and height must be between 1 and 16,384 px." with Record disabled; `P` `,` `.` typed into the Export name field reach the field; ⌘Z during wall-clock playback does not jump (1.33 s → 3.77 s over the elapsed 2.4 s); with Fixed rate and Loop off at the end, `P` restarts the clip from frame 1; ⌘0 resets. **Defect found (fixed below):** the progress sheet's bar stayed at zero while its label counted ("Frame 101 of 240").
+
+Not a defect, but cost an hour: `cliclick`'s text-typing path stopped matching the app's bare-key menu equivalents partway through the session while System Events `keystroke` always worked; the View menu showed every playback item enabled throughout.
+
+**Fixes after the checks:** the Duration field now edits a draft string and commits once on Return or focus loss (one undo step, one retarget; a refused value leaves the document unchanged); the progress bar tracks the frame. Both re-verified live on the rebuilt app (commit `61c3e4b`): `5000` is refused with the document still at 4.0 s, `2.5` is one commit and one ⌘Z restores 4.0; the bar reads 25/240 then 58/240 in step with the label.
 
 ### 17.4 What the reviews caught that the tests did not
 
 - **Plan text defects, all caught at review or by the implementer:** the Task 7 `init` captured a half-initialised `self`; `var seen` in a `@Sendable` closure; `scrub(to: 120)` is t = 2.0 at 60 fps, not 0.5; `spec.mouse` is normalised, not pixels; the Task 9 `exportFiles()` mutation survived its own test (a new test with a live pipeline and a removed terminal kills it); the memory destination handed back a URL `record` deletes; `VideoSink`'s sample code touched the writer off its queue. About one defect per task, the M8/M9 rate.
 - **Cross-file clashes the per-file check could not see:** bare Space was already the canvas pan latch (`onKeyPress` in another file); `MeshResources` was `@MainActor`, which would have made every export frame hop to the main actor.
 - **Robustness only a whole-branch read surfaced:** an `AVAssetWriter` that fails mid-clip left the poll spinning until Cancel; a 20000-pixel export asserts inside Metal rather than returning nil; `1e308` in the Duration field trapped in `Int(inf)`.
+- **Two defects only the live app showed:** `TextField(value:format:)` commits on every keystroke on macOS, so a bounds check in the model is not enough — a field that feeds an undoable setting needs the draft-string pattern; and a macOS `ProgressView(value:total:)` whose `total` is redefined after creation never moves its fill.
 - **Two SwiftUI hazards** the file already worked around elsewhere and reintroduced: reading the clock inside a `Commands` body; dismissing one sheet and raising another in the same update.
 
 ### 17.5 M11 starting list
@@ -913,4 +931,5 @@ _Pending — filled in below when run._
 4. Extract the wall-clock bookkeeping in `ShaderRenderer.draw` into a testable `PreviewState.advanceClock(now:)`; guard `syncClock`'s re-base on an actual timeline/mode change.
 5. Parked from the fix-wave re-review: `ExportSession`'s size guard has no lower bound (a negative edge traps in `Int()`; unreachable from the sheet); `ExportSessionTests`' size test sinks into the bare temp directory (never reached — `init` throws first; move to a UUID subdirectory); an absorbed doc comment in that file.
 6. Parked minors: `ExportSession.run` re-entry guard and explicit `snapshotTime:`; cancel during the last frame reports success; a Duration draft string so a rejected value is not displayed; `recordingRequest` never cleared; the `MSLScannerScanCacheTests` timing flake (pre-existing).
-7. Carried from §16.5: off-centre palette placement, the T14 line-owner assertion, `.asset` in the label filter, `ScanCache` CRLF/LF twins, the §15.5 items.
+7. From the live checks: texture sampling inside a recorded material was not exercised; `Unlit` renders only Emissive by design (§23.7 rule 5), which surprises with a Base Color-only graph — a caption in the Lighting row would help.
+8. Carried from §16.5: off-centre palette placement, the T14 line-owner assertion, `.asset` in the label filter, `ScanCache` CRLF/LF twins, the §15.5 items.
