@@ -30,14 +30,25 @@ public enum ExpressionNode {
 
     /// One input per free identifier, in first-appearance order, each with its own generic.
     public static func sockets(forFormula formula: String) -> [SocketDecl] {
-        MSLScanner.identifiers(in: formula).enumerated().map { i, name in
+        sockets(forNames: MSLScanner.identifiers(in: formula))
+    }
+
+    public static func generics(forFormula formula: String) -> [String: [SocketType]] {
+        generics(forNames: MSLScanner.identifiers(in: formula))
+    }
+
+    /// `sockets(forFormula:)`'s body, taking the already-scanned identifier list so a caller with
+    /// both sockets and generics to compute (`shape(for:)`) tokenises the formula once (spec §27.3).
+    static func sockets(forNames names: [String]) -> [SocketDecl] {
+        names.enumerated().map { i, name in
             SocketDecl(name: name, label: name, type: .generic("T\(i)"), default: .value(.float(0)))
         }
     }
 
-    public static func generics(forFormula formula: String) -> [String: [SocketType]] {
+    /// `generics(forFormula:)`'s body, taking the already-scanned identifier list — see `sockets(forNames:)`.
+    static func generics(forNames names: [String]) -> [String: [SocketType]] {
         var out: [String: [SocketType]] = [:]
-        for i in MSLScanner.identifiers(in: formula).indices { out["T\(i)"] = BuiltinNodes.anyFloat }
+        for i in names.indices { out["T\(i)"] = BuiltinNodes.anyFloat }
         return out
     }
 
@@ -59,7 +70,10 @@ public enum ExpressionNode {
     /// therefore still splits across lines here exactly as it would inside a Custom MSL body.
     static func template(for node: NodeInstance) -> (text: String, userLines: [Int?]) {
         let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
-        let trimmed = formula.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A `//` comment at the end of the formula would otherwise swallow the `;` this template
+        // appends (spec §27.3). Blanking keeps the line count, so `userLines` is unaffected.
+        let stripped = MSLScanner.stripComments(MSLScanner.normalisedLineEndings(formula))
+        let trimmed = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
         // Nothing was typed, so there is no user line to point a diagnostic at — `nil`, not `0`.
         guard !trimmed.isEmpty else { return ("{out.out} = 0.0;", [nil]) }
         let hardened = LoopHardening.hardened(trimmed)
@@ -71,11 +85,12 @@ public enum ExpressionNode {
     public static func shape(for node: NodeInstance) -> NodeShape {
         let formula: String = { if case .text(let s)? = node.params[formulaParam] { return s } else { return "" } }()
         let typeName: String = { if case .enumCase(let s)? = node.params[outputTypeParam] { return s } else { return "float" } }()
+        let names = MSLScanner.identifiers(in: formula)
         return NodeShape(title: node.customTitle ?? def.title, category: def.category,
-                         inputs: sockets(forFormula: formula),
+                         inputs: sockets(forNames: names),
                          outputs: [SocketDecl(name: "out", label: "Out", type: .concrete(socketType(named: typeName)))],
                          params: def.params,
-                         generics: generics(forFormula: formula),
+                         generics: generics(forNames: names),
                          style: def.style)
     }
 }
