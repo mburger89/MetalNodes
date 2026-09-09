@@ -131,11 +131,14 @@ public struct DocumentSettings: Sendable, Hashable {
     /// (spec §24.6). Ordered: index 0 is `custom_parameter().x`. At most four — a `CustomMaterial`
     /// exposes exactly one `float4`.
     public var liveParameters: [ParamPath] = []
+    /// The loop this document plays and records (spec §26.2). Optional in the file: a document
+    /// written before M10 opens with `Timeline()`.
+    public var timeline = Timeline()
     public init() {}
 }
 
 extension DocumentSettings: Codable {
-    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets, lightingModel, liveParameters }
+    private enum Keys: String, CodingKey { case previewSize, timeMode, fastMath, target, exportName, assets, lightingModel, liveParameters, timeline }
 
     /// A dictionary keyed by a struct encodes as a flat `[key, value, …]` array, which neither
     /// diffs nor reads well — so `assets` is written as an array of these, sorted by id.
@@ -160,6 +163,7 @@ extension DocumentSettings: Codable {
         let entries = try c.decodeIfPresent([AssetEntry].self, forKey: .assets) ?? []
         assets = Dictionary(entries.map { ($0.id, $0.info) }, uniquingKeysWith: { $1 })
         liveParameters = try c.decodeIfPresent([ParamPath].self, forKey: .liveParameters) ?? []
+        timeline = try c.decodeIfPresent(Timeline.self, forKey: .timeline) ?? Timeline()
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -173,6 +177,7 @@ extension DocumentSettings: Codable {
         try c.encode(assets.map { AssetEntry(id: $0.key, info: $0.value) }
             .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }, forKey: .assets)
         try c.encode(liveParameters, forKey: .liveParameters)
+        try c.encode(timeline, forKey: .timeline)
     }
 }
 
