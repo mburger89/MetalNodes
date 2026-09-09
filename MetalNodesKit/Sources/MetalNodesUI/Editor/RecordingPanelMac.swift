@@ -25,15 +25,8 @@ public final class RecordingPanelMac: RecordingDestination {
         panel.canCreateDirectories = true
         panel.title = kind.title
         guard panel.runModal() == .OK, let url = panel.url else { return .cancelled }
-        do {
-            // The save panel has already asked about replacing, so the old file goes without a
-            // second question — `moveItem` refuses to overwrite on its own.
-            try? FileManager.default.removeItem(at: url)
-            try FileManager.default.moveItem(at: temporary, to: url)
-            return .saved
-        } catch {
-            return .failed(error.localizedDescription)
-        }
+        // The save panel has already asked about replacing, so nothing asks a second time.
+        return install(temporary, at: url)
     }
 
     private func placeFolder(_ temporary: URL, suggestedName: String) -> ExportOutcome {
@@ -49,12 +42,26 @@ public final class RecordingPanelMac: RecordingDestination {
         let target = dir.appendingPathComponent(suggestedName)
         // An open panel grants the folder, so nothing warns about replacing what is already there
         // the way a save panel would — ask before clobbering, exactly as `ExportPanelMac` does.
-        if FileManager.default.fileExists(atPath: target.path) {
-            guard confirmReplace(suggestedName) else { return .cancelled }
-            try? FileManager.default.removeItem(at: target)
+        if FileManager.default.fileExists(atPath: target.path), !confirmReplace(suggestedName) {
+            return .cancelled
         }
+        return install(temporary, at: target)
+    }
+
+    /// Puts the finished recording at `url`, replacing whatever is there.
+    ///
+    /// `replaceItemAt` rather than remove-then-move: a move across volumes is a copy followed by a
+    /// delete and can fail half way, and deleting first would then have destroyed the user's
+    /// existing file with nothing to put in its place. `replaceItemAt` swaps atomically where it
+    /// can and leaves the original untouched when it cannot. `moveItem` covers the (much more
+    /// common) case where nothing is there to replace — `replaceItemAt` needs an original.
+    private func install(_ temporary: URL, at url: URL) -> ExportOutcome {
         do {
-            try FileManager.default.moveItem(at: temporary, to: target)
+            if FileManager.default.fileExists(atPath: url.path) {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: url)
+            }
             return .saved
         } catch {
             return .failed(error.localizedDescription)

@@ -10,10 +10,9 @@ public struct EditorView: View {
     @State private var exportError: String?
     /// A chooser is on screen; a second request must not stack another one behind it.
     @State private var exporting = false
-    /// The size sheet's subject while it is up (spec §26.5).
-    @State private var recordingRequest: RecordingRequest?
-    /// The progress sheet, and the last frame it was told about.
-    @State private var recording = false
+    /// Which half of the recording flow is on screen, if any (spec §26.5).
+    @State private var recordingPhase: RecordingPhase?
+    /// The last frame the progress sheet was told about.
     @State private var recordingProgress: RecordingProgress?
     @State private var lastOrbitTranslation: CGSize = .zero
     /// The previous `MagnifyGesture` factor, so a pinch dollies by its step rather than its total.
@@ -48,22 +47,24 @@ public struct EditorView: View {
             // pixels, and the progress sheet stays up until the session finishes or is cancelled.
             .onChange(of: model.recordingRequestCount) { _, _ in
                 guard model.recordingTask == nil, let kind = model.recordingRequest else { return }
-                recordingRequest = RecordingRequest(kind: kind)
+                recordingPhase = .size(kind)
             }
-            .sheet(item: $recordingRequest) { request in
-                RecordingSizeSheet(kind: request.kind,
-                                   timeline: model.document.settings.timeline,
-                                   initialSize: model.viewState.lastExportSize ?? model.document.settings.previewSize,
-                                   onRecord: { size in
-                                       recordingRequest = nil
-                                       startRecording(request.kind, size: size)
-                                   },
-                                   onCancel: { recordingRequest = nil })
-            }
-            .sheet(isPresented: $recording) {
-                // A cancel that lands during the last frame simply finishes: the session checks
-                // cancellation at the top of each frame, so the recording completes normally.
-                RecordingProgressSheet(progress: recordingProgress) { model.recordingTask?.cancel() }
+            .sheet(item: $recordingPhase) { phase in
+                switch phase {
+                case .size(let kind):
+                    RecordingSizeSheet(kind: kind,
+                                       timeline: model.document.settings.timeline,
+                                       initialSize: model.viewState.lastExportSize ?? model.document.settings.previewSize,
+                                       onRecord: { startRecording(kind, size: $0) },
+                                       onCancel: { recordingPhase = nil })
+                case .progress:
+                    // A cancel that lands during the last frame simply finishes: the session checks
+                    // cancellation at the top of each frame, so the recording completes normally.
+                    RecordingProgressSheet(progress: recordingProgress) { model.recordingTask?.cancel() }
+                        // The sheet is the only way to cancel, so swiping it away on the iPad must
+                        // not leave a session running with nothing driving it.
+                        .interactiveDismissDisabled()
+                }
             }
             .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("OK") { exportError = nil }
@@ -76,17 +77,17 @@ public struct EditorView: View {
     private func startRecording(_ kind: RecordingKind, size: CGSize) {
         guard model.recordingTask == nil else { return }
         recordingProgress = nil
-        recording = true
+        recordingPhase = .progress
         model.recordingTask = Task { @MainActor in
             let outcome = await model.record(kind, size: size, device: device,
                                              destination: services.recordingDestination) { p in
                 recordingProgress = p
-                // The last frame takes the progress sheet down before the destination is asked
-                // where the file goes: on the iPad that destination is itself a presentation, and
-                // SwiftUI drops one raised while another sheet is still up.
-                if p.frame >= p.frameCount { recording = false }
+                // The last frame takes the sheet down before the destination is asked where the
+                // file goes: on the iPad that destination is itself a presentation, and SwiftUI
+                // drops one raised while a sheet is still up.
+                if p.frame >= p.frameCount { recordingPhase = nil }
             }
-            recording = false
+            recordingPhase = nil
             model.recordingTask = nil
             if case .failed(let message) = outcome { exportError = message }
         }
@@ -326,9 +327,16 @@ private extension View {
     }
 }
 
-/// `.sheet(item:)` needs an identity, and `RecordingKind` is a value the menu hands over rather
-/// than a thing with one; the kind is its own id here because only one size sheet is ever up.
-private struct RecordingRequest: Identifiable {
-    let kind: RecordingKind
-    var id: RecordingKind { kind }
+/// The recording flow's two screens, driven by one `.sheet(item:)` (spec §26.5): ask for a size,
+/// then show progress. Two chained `.sheet` modifiers cannot do this — dismissing one and raising
+/// the other in the same update lets SwiftUI drop the second, and the recording would then run
+/// with no progress and no Cancel.
+///
+/// Both phases deliberately share one id: `.sheet(item:)` tears the sheet down and raises a new
+/// one whenever the id changes, and the point here is that Record swaps the *contents* of a sheet
+/// that stays up. Setting the state to nil is what dismisses it.
+private enum RecordingPhase: Identifiable {
+    case size(RecordingKind)
+    case progress
+    var id: Int { 0 }
 }

@@ -132,6 +132,8 @@ extension EditorModel {
             session = try ExportSession(device: device, program: program, uniforms: uniforms, spec: spec,
                                         timeline: timeline, sink: sink)
         } catch {
+            // `.video` has already created the scratch directory for the writer.
+            try? FileManager.default.removeItem(at: scratch)
             return .failed(error.localizedDescription)
         }
         do {

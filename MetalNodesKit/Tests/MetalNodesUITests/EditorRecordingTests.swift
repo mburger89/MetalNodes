@@ -190,6 +190,30 @@ enum ExportSessionFixture {
         #expect(destination.placed.first?.url.pathExtension == "mp4")
     }
 
+    @MainActor
+    @Test func anImageSequenceIsAFolderOfNumberedFrames() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        let m = try await compiledModel(device)
+        m.setTimeline(Timeline(duration: 0.1, frameRate: 30, loops: true))     // 3 frames
+        await m.awaitIdle()
+        let destination = MemoryRecordingDestination()
+        defer { destination.cleanUp() }
+        let outcome = await m.record(.imageSequence, size: CGSize(width: 8, height: 8), device: device,
+                                     destination: destination) { _ in }
+        #expect(outcome == .saved)
+        let placed = try #require(destination.placed.first)
+        #expect(placed.kind == .imageSequence)
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: placed.url.path, isDirectory: &isDirectory))
+        #expect(isDirectory.boolValue, "an image sequence is placed as a folder")
+        let name = StitchableCodegen.sanitizedName(m.document.settings.exportName)
+        let files = try FileManager.default.contentsOfDirectory(atPath: placed.url.path).sorted()
+        #expect(files == (1...3).map { String(format: "%@_%04d.png", name, $0) })
+    }
+
     /// A compile failure keeps the last good pipeline live (spec §19.1), so a graph that has
     /// stopped generating still has a `preview.program`: the refusal has to come from `exportFiles()`.
     @MainActor
