@@ -48,8 +48,10 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
 
     public func write(_ frame: FrameBytes, index: Int) async throws {
         // `isReadyForMoreMediaData` is polled rather than awaited: offline writing at one frame
-        // at a time is never far ahead of the encoder.
-        while let input, !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+        // at a time is never far ahead of the encoder. Each poll reads `input` inside `queue.sync`.
+        while queue.sync(execute: { input?.isReadyForMoreMediaData == false }) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
         try queue.sync {
             guard let adaptor, let pool = adaptor.pixelBufferPool else { throw RecordingError.writerFailed("no pixel buffer pool") }
             var buffer: CVPixelBuffer?
@@ -72,14 +74,25 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
     }
 
     public func finish() async throws {
-        guard let writer, let input else { return }
-        input.markAsFinished()
-        await writer.finishWriting()
-        if writer.status != .completed { throw RecordingError.writerFailed(writer.error?.localizedDescription ?? "finishWriting") }
+        // `markAsFinished` happens inside `queue.sync`; the writer reference it hands back is
+        // then safe to await `finishWriting()` on outside the queue (per the ambiguity note),
+        // and `status`/`error` are read back inside `queue.sync` afterward.
+        let finishingWriter: AVAssetWriter? = queue.sync {
+            guard let writer, let input else { return nil }
+            input.markAsFinished()
+            return writer
+        }
+        guard let finishingWriter else { return }
+        await finishingWriter.finishWriting()
+        try queue.sync {
+            if finishingWriter.status != .completed {
+                throw RecordingError.writerFailed(finishingWriter.error?.localizedDescription ?? "finishWriting")
+            }
+        }
     }
 
     public func abandon() async {
-        writer?.cancelWriting()
+        queue.sync { writer?.cancelWriting() }
         try? FileManager.default.removeItem(at: url)
     }
 }
