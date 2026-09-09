@@ -1892,3 +1892,112 @@ and the mirror for `redo:`. The menu title still names the document step while a
 - `xcrun metal` compiles the loop-hardening matrix and the material exports through the shared helper.
 - Live, in the built app, after the milestone: item 8 (the Material Output node's labels on one line), item 9 (⌘Z in the formula field and in the code editor undoes typing; ⌘Z on the canvas undoes the document), item 7 (sliders span 0…1), item 4 (the hint reads correctly in the strip). These four go into handoff §16's checklist as the *only* items owed.
 - Four builds green under Xcode 26.6: `swift build` warning-free, `swift test`, `xcodebuild` for macOS and for `generic/platform=iOS` with zero warnings.
+
+---
+
+## 26. M10 addendum — timeline and recording (added 2026-09-08)
+
+M10 answers §17 Q4: the preview gains a **scrubable, fixed-rate timeline with a frame counter**, and the document's shader can be **recorded** — as an H.264 video, as a PNG image sequence, or as a single PNG snapshot — rendered offscreen frame by frame at a size the user chooses. Decisions taken with the user: recording serves **both** video sharing and frame sequences for other tools; the timeline is a **document property** (duration, frame rate, loop) rather than window state, and the long-dead `timeMode` setting finally does what its picker says; export renders the document's program at a size asked **per export** (the last choice remembered), never the viewer flag; the renderer is split into **one frame renderer with two front ends** (the live view and the exporter) so the two cannot diverge. Controller decisions: both platforms, macOS verified live; H.264 `.mp4` for video, PNG for sequences and snapshots.
+
+§26 wins for M10 wherever it and §10 (render loop) or §21 (persistence) differ in detail. The document format stays at version 2: the new settings are optional keys with defaults, and an older build ignores them.
+
+### 26.1 Scope and order
+
+1. The timeline in the document and its inspector block (§26.2).
+2. `TimelineClock` and the preview-pane controls (§26.3).
+3. `FrameRenderer`: the encode step extracted from `ShaderRenderer` (§26.4).
+4. `ExportSession` with the video, sequence and snapshot sinks, the export sheet and progress (§26.5).
+5. Testing and verification (§26.6).
+
+**Out of scope.** Keyframed parameters (a track editor) — the timeline carries time only; HEVC, ProRes, alpha video (PNG sequences keep alpha); audio; GIF; exporting the viewer flag's program; rendering at a size other than the export size (no supersampling).
+
+### 26.2 The timeline in the document
+
+```swift
+public struct Timeline: Sendable, Hashable, Codable {
+    public var duration: Double = 4          // seconds, > 0
+    public var frameRate: Int = 60           // 24, 30 or 60
+    public var loops: Bool = true
+    public var frameCount: Int { max(1, Int((duration * Double(frameRate)).rounded())) }
+}
+```
+
+`DocumentSettings` gains `public var timeline = Timeline()`, a `timeline` key in `Keys`, `decodeIfPresent … ?? Timeline()` on read and an unconditional encode on write — the same shape `liveParameters` took in M8. Nothing in codegen reads it: `FormatCorpusTests`' goldens and `decodes` cases pass untouched, and a new corpus-style test decodes a format-2 document that lacks the key and gets the defaults.
+
+`TimeMode` keeps its two cases and gains meaning: `.wallClock` is today's behaviour (elapsed real time, pausable, no jump on resume); `.fixedRate` advances exactly one frame per drawn frame, so the same sequence of draws always yields the same `time` values. Recording always uses fixed-rate stepping whatever the document says.
+
+**Inspector.** The Document section's "Time" row becomes a Timeline block: the Wall clock / Fixed rate picker as today, a Duration field (seconds, one decimal, refuses ≤ 0 with the existing notice mechanism), a Frame rate picker (24 / 30 / 60), a Loop toggle, and a read-only "N frames" caption derived from them. Each edit is one `DocumentChange.setSettings`, undoable as today.
+
+### 26.3 `TimelineClock` and the preview controls
+
+A pure value in `MetalNodesCore`, no Metal, fully unit-testable:
+
+```swift
+public struct TimelineClock: Sendable, Equatable {
+    public var timeline: Timeline
+    public var mode: TimeMode
+    public var frame: Int = 0                      // 0 ..< timeline.frameCount when looping
+    public var isPlaying = true
+    public var time: Float { Float(frame) / Float(timeline.frameRate) }
+
+    /// Fixed rate: one frame forward. At the end, wrap when `loops`, else stop playing and hold.
+    public mutating func step()
+    /// Wall clock: place the clock at `elapsed` seconds of play. Wraps modulo duration when
+    /// `loops`; past the end with loops off, `frame` keeps counting (time keeps running, as today).
+    public mutating func seek(elapsed: Double)
+    /// Scrubbing: sets `frame` (clamped), pauses.
+    public mutating func scrub(to frame: Int)
+    public mutating func reset()                   // frame 0, keeps isPlaying
+}
+```
+
+`PreviewState` replaces `timeOffset` / `resetRequested` with `clock: TimelineClock` plus the wall-clock bookkeeping the renderer needs (`playStartedAt`, `pausedElapsed`). `EditorModel` keeps `preview.clock.timeline` and `.mode` in step with the document (a settings change re-seeds them; the frame is clamped, not reset).
+
+**The renderer's time.** In `draw(in:)`, before encoding: in `.wallClock` mode, `clock.seek(elapsed:)` with the elapsed play time (pause freezes it; resume continues from the frozen value, as today); in `.fixedRate` mode, `clock.step()` when playing. `time` is then `clock.time` in both modes. The display link keeps running while paused so scrubbing repaints; nothing else changes about the loop.
+
+**Preview pane.** The control row becomes: Play/Pause · Reset · a `Slider` over `0…frameCount-1` bound to `clock.frame` (dragging calls `scrub(to:)`, which pauses; releasing does not resume) · `frame / frameCount` and `t.tt s` in monospaced digits · a Loop toggle bound to `timeline.loops` (a document change) · the existing `gen N`. In wall-clock mode the slider still tracks the loop position; with loops off and time past the end it pins at the last frame while the readout keeps counting seconds. Keyboard: Space toggles play, `,` / `.` step one frame back/forward (they pause), Home resets — gated on `canvasHasFocus` like every other bare-key shortcut (§18.6).
+
+### 26.4 `FrameRenderer`
+
+The encode half of `ShaderRenderer.draw(in:)` — uniform ring copy, pipeline and buffer binding, texture binding, the RealityKit mesh/camera branch, the fullscreen triangle branch — moves to:
+
+```swift
+public struct FrameSpec: Sendable {
+    public var time: Float
+    public var size: CGSize          // drawable pixels
+    public var mouse: SIMD2<Float>
+    public var orbit: OrbitCamera
+    public var mesh: PreviewMesh
+    public var viewerRange: ClosedRange<Float>
+}
+
+/// Encodes one frame of `program` into `pass`. Owns nothing: the caller supplies the command
+/// buffer, the uniform buffer to fill, and the mesh resources.
+public enum FrameRenderer {
+    public static func encode(program: PreviewProgram, uniforms image: UniformImage, spec: FrameSpec,
+                              into pass: MTLRenderPassDescriptor, uniformBuffer: MTLBuffer,
+                              meshes: MeshResources, command: MTLCommandBuffer) -> Bool
+}
+```
+
+`ShaderRenderer.draw(in:)` becomes: guard the program and drawable, advance the clock (§26.3), build `FrameSpec` from the view and state, take a ring buffer, call `FrameRenderer.encode`, present, commit. `PreviewDrawTests.encodesADrawForEveryPipelineKind` is rewritten to call `FrameRenderer.encode` with the offscreen pass it already builds, so the extraction is gated by the test that already draws exactly that pass; the RealityKit branch's `CameraUniforms` come from `spec.orbit.uniforms(aspect:)` in both front ends.
+
+### 26.5 Recording
+
+**`ExportSession`** (`MetalNodesRender`, an `actor`): created with a device, a `PreviewProgram`, a `UniformImage` (the live values captured at start), a `FrameSpec` template (size from the sheet, mouse at centre, orbit and mesh from the preview), the `Timeline`, and a sink. It owns a command queue, an offscreen `bgra8Unorm` colour texture and a `.depth32Float` depth texture at the export size, and a shared-storage readback buffer of `width × height × 4` bytes. `run(progress:)` loops k in `0..<frameCount`: `spec.time = Float(k) / Float(frameRate)`, encode via `FrameRenderer` into the offscreen pass, blit colour → buffer, `waitUntilCompleted`, hand `(bytes, k)` to the sink, report progress, check cancellation. One frame in flight; correctness over speed — a 4 s clip at 60 fps and 1080p is 240 frames and takes seconds, not minutes.
+
+**Sinks** (`protocol FrameSink { func begin(size:frameRate:) throws; func write(frame: FrameBytes, index: Int) throws; func finish() async throws }`):
+- `VideoSink`: `AVAssetWriter` to `.mp4`, `AVAssetWriterInput` H.264 at the export size, `AVAssetWriterInputPixelBufferAdaptor` with `kCVPixelFormatType_32BGRA`; presentation time `CMTime(value: k, timescale: frameRate)`; `finish()` marks the input finished and awaits `finishWriting`. Odd sizes are rounded up to even before encoding (H.264 requires it) and the sheet says so.
+- `ImageSequenceSink`: a directory; each frame becomes `<name>_<k+1, four digits>.png` through `CGImageDestination` from a `CGImage` over the BGRA bytes (alpha preserved).
+- A **snapshot** is `ImageSequenceSink` with a one-frame timeline at the clock's current time, writing `<name>.png` to a chosen file.
+
+**UI.** File menu gains Export Video…, Export Image Sequence…, Snapshot PNG… (macOS and the iPad's Files-based `fileExporter` path both route through `EditorModel.requestRecording(kind:)`, the same request/`Exporter` seam `Export Shader…` uses). The export sheet shows: width × height (integers, default the document's `previewSize`, remembered in `EditorViewState.lastExportSize`), and the timeline's duration, frame rate and frame count read-only ("change them in the Document section"); then the platform's save panel. A progress sheet shows "Frame k of N" with Cancel; a cancelled export deletes its partial output; a failed export surfaces the sink's error in the notice strip. The document is not modified by exporting.
+
+### 26.6 Testing and verification
+
+- **`TimelineClock`** (Core): stepping to the end wraps when looping and stops with `isPlaying == false` when not; `seek(elapsed:)` wraps modulo duration; `scrub(to:)` clamps and pauses; changing the timeline clamps `frame`; `time` is `frame / frameRate` exactly for the three rates.
+- **Persistence:** a settings round trip with a non-default timeline; a format-2 document without the key decodes to the defaults; `FormatCorpusTests` unchanged.
+- **Extraction gate:** `PreviewDrawTests.encodesADrawForEveryPipelineKind` through `FrameRenderer.encode`; the corpus preview MSL unchanged.
+- **Frame-exactness:** a fragment document whose colour is `float4(time, 0, 0, 1)` exported as an 8×8 image sequence of three frames at 60 fps; frame k's red channel equals `k / 60` within one 8-bit step. The same document through `VideoSink` for twelve frames; `AVAsset` reports twelve frames at 60 fps and a 0.2 s duration.
+- **Cancellation:** cancelling after frame 3 leaves no output file or directory.
+- **Live (macOS):** scrub with the slider and the `,` `.` keys, switch modes, set 2 s at 30 fps, record a video and open it in QuickTime Player, record a sequence and count the files, take a snapshot; both `xcodebuild`s warning-free; the four builds green as §25.6 defines them.
