@@ -80,10 +80,8 @@ import Metal
                 Issue.record("\(name): compile failed")
                 continue
             }
-            var image = UniformImage(layout: shader.layout)
-            image.setReserved(time: 0, resolution: SIMD2(64, 64), mouse: .zero)
+            let image = UniformImage(layout: shader.layout)
             let uniforms = device.makeBuffer(length: max(image.bytes.count, 16), options: .storageModeShared)!
-            image.bytes.withUnsafeBytes { uniforms.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
 
             // The same shape `MTKView.currentRenderPassDescriptor` produces for a view whose
             // `depthStencilPixelFormat` is set.
@@ -97,26 +95,16 @@ import Metal
             pass.depthAttachment.storeAction = .dontCare
 
             let cmd = queue.makeCommandBuffer()!
-            let enc = cmd.makeRenderCommandEncoder(descriptor: pass)!
-            enc.setRenderPipelineState(pipeline.state)          // where validation asserts
-            enc.setFragmentBuffer(uniforms, offset: 0, index: 0)
-            if shader.target == .realityKit {
-                let mesh = try #require(meshes.buffers(for: .sphere))
-                var camera = OrbitCamera.default.uniforms(aspect: 1)
-                if let ds = pipeline.depthStencilState { enc.setDepthStencilState(ds) }
-                enc.setCullMode(.back)
-                enc.setFrontFacing(.counterClockwise)
-                enc.setVertexBuffer(mesh.vertices, offset: 0, index: 0)
-                enc.setVertexBytes(&camera, length: MemoryLayout<CameraUniforms>.stride, index: 1)
-                enc.setVertexBuffer(uniforms, offset: 0, index: 2)
-                enc.setFragmentBytes(&camera, length: MemoryLayout<CameraUniforms>.stride, index: 1)
-                enc.drawIndexedPrimitives(type: .triangle, indexCount: mesh.indexCount, indexType: .uint16,
-                                          indexBuffer: mesh.indices, indexBufferOffset: 0)
-            } else {
+            let spec = FrameSpec(time: 0, size: CGSize(width: 64, height: 64), mouse: .zero,
+                                 orbit: .default, mesh: .sphere, viewerRange: 0...1)
+            // The same function `ShaderRenderer.draw(in:)` calls — one encode path (spec §26.4).
+            let encoded = FrameRenderer.encode(program: PreviewProgram(pipeline: pipeline, textures: [:]),
+                                               uniforms: image, spec: spec, into: pass,
+                                               uniformBuffer: uniforms, meshes: meshes, command: cmd)
+            #expect(encoded, "\(name): encode refused")
+            if shader.target != .realityKit {
                 #expect(pipeline.depthStencilState == nil, "\(name): a 2D program must not depth-test")
-                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             }
-            enc.endEncoding()
             // `MTLCommandBuffer` is not `Sendable`, so `completed()` is out of reach from here;
             // the completion handler is the same route `ShaderRenderer` takes.
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in

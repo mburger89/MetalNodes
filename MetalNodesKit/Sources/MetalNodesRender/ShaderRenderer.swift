@@ -27,7 +27,7 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
     }
 
     public func draw(in view: MTKView) {
-        guard let program = state.program, var image = state.uniforms,
+        guard let program = state.program, let image = state.uniforms,
               image.layout == program.pipeline.shader.layout,
               let drawable = view.currentDrawable,
               let pass = view.currentRenderPassDescriptor else { return }
@@ -57,43 +57,16 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         }
         let t = state.clock.time
 
-        image.setReserved(time: t,
-                          resolution: SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height)),
-                          mouse: state.mouse)
-        image.setViewerRange(state.viewerRange)
-
+        let spec = FrameSpec(time: t,
+                             size: view.drawableSize, mouse: state.mouse,
+                             orbit: state.orbit, mesh: state.mesh, viewerRange: state.viewerRange)
         inflight.wait()
         let buffer = ring!.next()
-        image.bytes.withUnsafeBytes { buffer.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
-
-        guard let cmd = queue.makeCommandBuffer(), let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else {
+        guard let cmd = queue.makeCommandBuffer() else { inflight.signal(); return }
+        guard FrameRenderer.encode(program: program, uniforms: image, spec: spec, into: pass,
+                                   uniformBuffer: buffer, meshes: meshes, command: cmd) else {
             inflight.signal(); return
         }
-        enc.setRenderPipelineState(program.pipeline.state)
-        enc.setFragmentBuffer(buffer, offset: 0, index: 0)
-        for (index, texture) in program.textures {
-            enc.setFragmentTexture(texture, index: index)
-        }
-
-        if program.pipeline.shader.target == .realityKit {
-            guard let mesh = meshes.buffers(for: state.mesh) else {
-                enc.endEncoding(); inflight.signal(); return
-            }
-            var camera = state.orbit.uniforms(aspect: Float(view.drawableSize.width / max(view.drawableSize.height, 1)))
-            if let depth = program.pipeline.depthStencilState { enc.setDepthStencilState(depth) }
-            enc.setCullMode(.back)
-            enc.setFrontFacing(.counterClockwise)
-            enc.setVertexBuffer(mesh.vertices, offset: 0, index: 0)
-            enc.setVertexBytes(&camera, length: MemoryLayout<CameraUniforms>.stride, index: 1)
-            enc.setVertexBuffer(buffer, offset: 0, index: 2)
-            enc.setFragmentBytes(&camera, length: MemoryLayout<CameraUniforms>.stride, index: 1)
-            for (index, texture) in program.textures { enc.setVertexTexture(texture, index: index) }
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: mesh.indexCount,
-                                      indexType: .uint16, indexBuffer: mesh.indices, indexBufferOffset: 0)
-        } else {
-            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        }
-        enc.endEncoding()
         let sem = inflight
         cmd.addCompletedHandler { _ in sem.signal() }
         cmd.present(drawable)
