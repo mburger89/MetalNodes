@@ -338,3 +338,148 @@ enum ExportSessionFixture {
         #expect(destination.placed.isEmpty)
     }
 }
+
+/// The gate `record` puts in front of every recording (spec §27.6): the document's *current*
+/// program or nothing. The two ways the live program can disagree with the document — a Metal
+/// compile that failed after one succeeded, and an edit still inside its debounce — each get a
+/// test, because each is closed by a different line of the gate.
+@MainActor
+@Suite struct RecordingGateTests {
+    /// The formula the fixture ships with, and a different one that still generates: swapping them
+    /// changes the generated source, so `compileNow` cannot take its same-source shortcut.
+    private static let editedFormula = ParamValue.text("float4(t, 0.0, 0.25, 1.0)")
+
+    private func expressionNode(_ m: EditorModel) throws -> NodeInstance {
+        try #require(m.document.root.nodes.values.first { $0.kind == .builtin("utility.expression") })
+    }
+
+    /// The stale-program case (editor finding 1, render finding 2). Generation still succeeds — a
+    /// bad Custom Code body is MSL the codegen never reads — so `exportFiles()` says yes and the
+    /// last-good pipeline is still live. Only `preview.lastError` knows the truth.
+    @Test func aGraphWhoseMetalCompileFailsIsRefusedEvenThoughItStillGenerates() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        let compiler = try SwitchableCompiler(device: device)
+        let m = EditorModel(document: ExportSessionFixture.timeDocument(), compiler: compiler)
+        m.debounceInterval = .milliseconds(5)
+        m.start()
+        await m.awaitIdle()
+        #expect(m.preview.program != nil)
+
+        await compiler.setFailing(true)
+        m.apply(.setParam(try expressionNode(m).id, "formula", Self.editedFormula))
+        await m.awaitIdle()
+        #expect(m.preview.program != nil, "the last good program is still live (spec §19.1)")
+        #expect((try? m.exportFiles()) != nil, "the graph still generates")
+        #expect(m.preview.lastError != nil)
+
+        let destination = MemoryRecordingDestination()
+        defer { destination.cleanUp() }
+        let outcome = await m.record(.snapshot, size: CGSize(width: 8, height: 8), device: device,
+                                     destination: destination) { _ in }
+        #expect(outcome == .failed("The graph has errors; fix them before recording."))
+        #expect(destination.placed.isEmpty)
+    }
+
+    /// The pending-compile window: the edit is still inside its debounce when Record is chosen, so
+    /// nothing about it has reached `preview` yet. `record` must settle it first and then judge —
+    /// without the `awaitIdle()` this records the pre-edit program and answers `.saved`.
+    @Test func recordingSettlesAnInFlightCompileBeforeItDecides() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        let compiler = try SwitchableCompiler(device: device)
+        let m = EditorModel(document: ExportSessionFixture.timeDocument(), compiler: compiler)
+        m.debounceInterval = .milliseconds(200)
+        m.start()
+        await m.awaitIdle()
+        #expect(m.preview.program != nil)
+
+        await compiler.setFailing(true)
+        m.apply(.setParam(try expressionNode(m).id, "formula", Self.editedFormula))
+        // Deliberately no `awaitIdle()` here: the debounce is still running, so `preview.lastError`
+        // is nil and `preview.program` is the pre-edit pipeline at the moment `record` is called.
+        #expect(m.preview.lastError == nil)
+        let destination = MemoryRecordingDestination()
+        defer { destination.cleanUp() }
+        let outcome = await m.record(.snapshot, size: CGSize(width: 8, height: 8), device: device,
+                                     destination: destination) { _ in }
+        #expect(outcome == .failed("The graph has errors; fix them before recording."))
+        #expect(destination.placed.isEmpty)
+        #expect(m.preview.lastError != nil, "record waited for the compile it triggered")
+    }
+
+    /// The other half of the same behaviour: settling a pending compile must not make a good
+    /// document unrecordable, and `awaitIdle()` must return rather than hang on the debounce.
+    @Test func aPendingEditThatCompilesStillRecords() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        let m = EditorModel(document: ExportSessionFixture.timeDocument(), compiler: try ShaderCompiler(device: device))
+        m.debounceInterval = .milliseconds(200)
+        m.start()
+        await m.awaitIdle()
+        m.apply(.setParam(try expressionNode(m).id, "formula", Self.editedFormula))
+        let destination = MemoryRecordingDestination()
+        defer { destination.cleanUp() }
+        let outcome = await m.record(.snapshot, size: CGSize(width: 8, height: 8), device: device,
+                                     destination: destination) { _ in }
+        #expect(outcome == .saved)
+        #expect(m.diagnostics.isEmpty)
+        #expect(destination.placed.count == 1)
+    }
+
+    /// A recording outlives neither its window nor its document (editor finding 3, spec §27.6).
+    @Test func reloadingCancelsARunningRecording() {
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler())
+        let task = Task<Void, Never> { try? await Task.sleep(for: .seconds(10)) }
+        m.recordingTask = task
+        #expect(m.isRecording)
+        m.reload(package: ShaderPackage(document: .sample()))
+        #expect(task.isCancelled)
+        #expect(!m.isRecording)
+        #expect(m.recordingTask == nil)
+    }
+
+    /// `isRecording` is the observed mirror the menus disable on; `recordingTask` itself is not
+    /// observed, so the two must never drift.
+    @Test func isRecordingMirrorsTheTask() {
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler())
+        #expect(!m.isRecording)
+        m.recordingTask = Task<Void, Never> {}
+        #expect(m.isRecording)
+        m.recordingTask = nil
+        #expect(!m.isRecording)
+    }
+}
+
+/// What the size sheet accepts (editor finding 7, spec §27.6): a video is bounded by H.264's own
+/// ceiling, an image by the export pixel budget — two different limits and two different messages.
+@MainActor
+@Suite struct RecordingSizeSheetBoundsTests {
+    @Test func videoAndImagesAreBoundedDifferently() {
+        // 16384 × 4096 is 67,108,864 pixels — exactly the image budget, and far past H.264's edge.
+        #expect(RecordingSizeSheet.isValid(kind: .snapshot, width: 16384, height: 4096))
+        #expect(!RecordingSizeSheet.isValid(kind: .video, width: 16384, height: 4096))
+        // 8K is inside level 6.2 (33.2 of 35.6 megapixels).
+        #expect(RecordingSizeSheet.isValid(kind: .video, width: 7680, height: 4320))
+        // One pixel column past the image budget, with both edges inside `maxDimension`.
+        #expect(!RecordingSizeSheet.isValid(kind: .imageSequence, width: 8193, height: 8192))
+        #expect(RecordingSizeSheet.isValid(kind: .imageSequence, width: 8192, height: 8192))
+        #expect(!RecordingSizeSheet.isValid(kind: .video, width: 0, height: 10))
+        #expect(!RecordingSizeSheet.isValid(kind: .snapshot, width: 10, height: 0))
+    }
+
+    /// The caption names the limit the user just hit, so the two kinds cannot share one string.
+    @Test func theLimitTextNamesEachKindsCeiling() {
+        #expect(RecordingSizeSheet.limitText(for: .video).contains("8192"))
+        #expect(RecordingSizeSheet.limitText(for: .video).contains("35.6"))
+        #expect(RecordingSizeSheet.limitText(for: .snapshot).contains("\(ExportSession.maxPixels)"))
+        #expect(RecordingSizeSheet.limitText(for: .snapshot) == RecordingSizeSheet.limitText(for: .imageSequence))
+        #expect(RecordingSizeSheet.limitText(for: .video) != RecordingSizeSheet.limitText(for: .snapshot))
+    }
+}

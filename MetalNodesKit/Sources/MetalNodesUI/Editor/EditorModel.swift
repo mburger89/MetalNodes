@@ -65,9 +65,14 @@ public final class EditorModel {
     /// the counter, so asking twice for the same kind still raises the sheet (spec §26.5).
     public internal(set) var recordingRequest: RecordingKind?
     public internal(set) var recordingRequestCount = 0
-    /// The running recording, so the progress sheet's Cancel can reach it. Not observed: only the
-    /// view that started it writes and cancels it.
-    @ObservationIgnored public var recordingTask: Task<Void, Never>?
+    /// The running recording, so the progress sheet's Cancel can reach it. Not observed itself;
+    /// `isRecording` is the observed mirror the menus disable on (spec §27.6).
+    @ObservationIgnored public var recordingTask: Task<Void, Never>? {
+        didSet { isRecording = recordingTask != nil }
+    }
+    /// Whether a recording is in flight. `recordingTask` is `@ObservationIgnored` — a command tree
+    /// re-evaluates on observed reads only, so the menu items need this flag to go grey.
+    public private(set) var isRecording = false
 
     // `internal`, not `private`: `EditorModel+Recording.record(...)` compiles the document's own
     // program for a recording and lives in another file.
@@ -191,6 +196,11 @@ public final class EditorModel {
     /// instead would register the revert as an undoable step, which would let ⌘Z resurrect the
     /// content the user just discarded.
     public func reload(package: ShaderPackage) {
+        // A recording belongs to the document it was started from (spec §27.6): a File ▸ Revert To
+        // Saved landing mid-recording would otherwise finish rendering the pre-revert program and
+        // then raise a save panel for it.
+        recordingTask?.cancel()
+        recordingTask = nil
         // A gesture that was open belongs to the document being replaced; its snapshot must not
         // survive to be committed against the new one.
         transactionSnapshot = nil

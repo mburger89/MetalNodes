@@ -16,11 +16,23 @@ struct RecordingSizeSheet: View {
     @State private var width: Int = 512
     @State private var height: Int = 512
 
-    /// What `ExportSession` will accept: past this the render targets cannot be allocated, so the
-    /// sheet refuses the size here rather than letting the recording fail after the sheet is gone.
-    private var isValid: Bool {
-        (1...ExportSession.maxDimension).contains(width) && (1...ExportSession.maxDimension).contains(height)
+    /// What each kind can be rendered at (spec §27.6): H.264 has its own ceiling, well below the
+    /// texture limit, and images a pixel budget — the sheet refuses the size here rather than
+    /// letting the recording fail after the sheet is gone.
+    static func isValid(kind: RecordingKind, width: Int, height: Int) -> Bool {
+        kind == .video ? VideoSink.isSizeSupported(width: width, height: height)
+                       : ExportSession.isSizeSupported(CGSize(width: width, height: height))
     }
+
+    /// The caption under a refused size: it names the ceiling the user has just hit, and the two
+    /// kinds do not share one.
+    static func limitText(for kind: RecordingKind) -> String {
+        kind == .video
+            ? "H.264 video is limited to 8192 × 8192 and 35.6 megapixels."
+            : "Width and height must be between 1 and \(ExportSession.maxDimension) px, and at most \(ExportSession.maxPixels) pixels together."
+    }
+
+    private var isValid: Bool { Self.isValid(kind: kind, width: width, height: height) }
 
     /// The remembered size arrives as a `CGFloat` and only ever seeds the fields, so it is clamped
     /// into range here — `Int(_:)` on its own traps on a non-finite value.
@@ -44,7 +56,7 @@ struct RecordingSizeSheet: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !isValid {
-                Text("Width and height must be between 1 and \(ExportSession.maxDimension) px.")
+                Text(Self.limitText(for: kind))
                     .font(.caption).foregroundStyle(.red)
             } else if kind == .video, width % 2 != 0 || height % 2 != 0 {
                 Text("H.264 needs even dimensions; the video will be \(width + width % 2) × \(height + height % 2).")
@@ -52,7 +64,10 @@ struct RecordingSizeSheet: View {
             }
             HStack {
                 Spacer()
+                // macOS binds Escape to `role: .cancel` only inside alerts and confirmation
+                // dialogs, never a sheet — so the shortcut is spelled out (spec §27.6).
                 Button("Cancel", role: .cancel, action: onCancel)
+                    .keyboardShortcut(.cancelAction)
                 Button("Record") { onRecord(CGSize(width: width, height: height)) }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!isValid)
@@ -90,9 +105,32 @@ struct RecordingProgressSheet: View {
             ProgressView(value: Self.fraction(progress))
                 .progressViewStyle(.linear)
             Text(progress.map { "Frame \($0.frame) of \($0.frameCount)" } ?? "Preparing…").font(.caption.monospacedDigit())
+            // Escape stops the recording; without the shortcut the mouse is the only way out.
             Button("Cancel", role: .cancel, action: onCancel)
+                .keyboardShortcut(.cancelAction)
         }
         .padding(20)
         .frame(width: 280)
+    }
+}
+
+/// An early failure — graph errors, a refused size, a writer that would not start — shown in the
+/// sheet that is already up (spec §27.6). Dismissing the sheet and raising an alert in the same
+/// update is exactly what SwiftUI drops, so the one sheet the flow owns carries the message.
+struct RecordingFailedSheet: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Export failed").font(.headline)
+            Text(message).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("OK", action: onDismiss).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
     }
 }

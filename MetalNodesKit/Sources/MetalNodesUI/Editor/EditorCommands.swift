@@ -63,11 +63,13 @@ public struct EditorCommands: Commands {
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(model == nil)
             // Recording (spec §26.5). No key equivalents: each opens a sheet that asks for a size,
-            // and none of them is frequent enough to earn a shortcut.
+            // and none of them is frequent enough to earn a shortcut. Disabled while one runs —
+            // `EditorView` drops the second request anyway, and a menu item that does nothing when
+            // clicked is worse than a grey one (spec §27.6).
             Divider()
             ForEach(RecordingKind.allCases, id: \.self) { kind in
                 Button("\(kind.title)…") { model?.requestRecording(kind) }
-                    .disabled(model == nil)
+                    .disabled(model == nil || model?.isRecording == true)
             }
         }
         // Delete and the View menu's bare-key shortcuts are gated on `canvasHasFocus` (rather than

@@ -64,8 +64,14 @@ public struct EditorView: View {
                         // The sheet is the only way to cancel, so swiping it away on the iPad must
                         // not leave a session running with nothing driving it.
                         .interactiveDismissDisabled()
+                case .failed(let message):
+                    RecordingFailedSheet(message: message) { recordingPhase = nil }
                 }
             }
+            // A recording dies with its window (spec §27.6): otherwise ⌘W mid-recording leaves the
+            // session rendering on the GPU and, minutes later, a save panel appears for a document
+            // that is no longer open.
+            .onDisappear { model.recordingTask?.cancel() }
             .alert("Export failed", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
                 Button("OK") { exportError = nil }
             } message: { Text(exportError ?? "") }
@@ -87,9 +93,17 @@ public struct EditorView: View {
                 // drops one raised while a sheet is still up.
                 if p.frame >= p.frameCount { recordingPhase = nil }
             }
-            recordingPhase = nil
             model.recordingTask = nil
-            if case .failed(let message) = outcome { exportError = message }
+            switch outcome {
+            case .failed(let message):
+                // An early failure arrives while the sheet is still up: swap its contents rather
+                // than dismissing it and raising an alert in the same update (spec §27.6). A
+                // failure from the destination itself lands after the last frame took the sheet
+                // down, and that one still uses the shared alert.
+                if recordingPhase != nil { recordingPhase = .failed(message) } else { exportError = message }
+            default:
+                recordingPhase = nil
+            }
         }
     }
 
@@ -338,5 +352,9 @@ private extension View {
 private enum RecordingPhase: Identifiable {
     case size(RecordingKind)
     case progress
+    /// An early failure — graph errors, a refused size, a writer that would not start — shown in
+    /// the sheet that is already up. Dismissing the sheet and raising an alert in one update is
+    /// exactly what SwiftUI drops (spec §27.6).
+    case failed(String)
     var id: Int { 0 }
 }

@@ -139,9 +139,11 @@ struct EditorViewPad<Inspector: View>: View {
     private var exportMenu: some View {
         Menu {
             Button("Export to Files…") { model.requestExport() }
-            // Recording (spec §26.5): the same three the Mac's File menu offers.
+            // Recording (spec §26.5): the same three the Mac's File menu offers, and disabled
+            // while one runs for the same reason (spec §27.6).
             ForEach(RecordingKind.allCases, id: \.self) { kind in
                 Button("\(kind.title)…") { model.requestRecording(kind) }
+                    .disabled(model.isRecording)
             }
             if canShare {
                 ShareLink("Share…",

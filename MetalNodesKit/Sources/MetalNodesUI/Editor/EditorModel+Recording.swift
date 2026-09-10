@@ -73,12 +73,19 @@ extension EditorModel {
     public func requestRecording(_ kind: RecordingKind) { recordingRequest = kind; recordingRequestCount += 1 }
 
     /// Renders the document's program at `size` and places the result (spec §26.5). Refuses a graph
-    /// that does not generate before any renderer is built. Runs the session off the main actor;
-    /// `progress` is delivered on it.
+    /// that does not generate, or does not compile, before any renderer is built. Runs the session
+    /// off the main actor; `progress` is delivered on it.
     public func record(_ kind: RecordingKind, size: CGSize, device: MTLDevice?,
                        destination: any RecordingDestination,
                        progress: @escaping @MainActor @Sendable (RecordingProgress) -> Void) async -> ExportOutcome {
-        guard (try? exportFiles()) != nil, preview.program != nil else {
+        // The last-good pipeline is never recorded in place of the document's program (spec §27.6).
+        // `exportFiles()` only proves the graph *generates*; a Metal compile that failed afterwards
+        // leaves `preview.program` at the pipeline from before the failing edit, and an edit still
+        // inside its debounce has not reached `preview` at all. So settle any pending compile
+        // first, then refuse on any error the editor is already showing.
+        await awaitIdle()
+        guard (try? exportFiles()) != nil, preview.lastError == nil,
+              !diagnostics.contains(where: { $0.severity == .error }), preview.program != nil else {
             return .failed("The graph has errors; fix them before recording.")
         }
         guard let device else { return .failed(RecordingError.noDevice.errorDescription ?? "No Metal device") }
