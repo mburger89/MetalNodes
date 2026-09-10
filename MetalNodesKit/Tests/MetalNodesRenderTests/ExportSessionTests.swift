@@ -137,6 +137,67 @@ private actor ProgressLog {
                 == "A 20000 × 8 recording is too large for this device")
     }
 
+    /// A frame is bounded by its edge *and* by its pixel count: 16384² would be a gibibyte each of
+    /// colour target, readback buffer and CPU copy. Non-finite and negative edges are refused here
+    /// too — `Int(_:)` traps on them, and the old guard let `-1e300` through to that trap.
+    @Test func sizesAreBoundedByEdgeAndByPixels() {
+        #expect(ExportSession.isSizeSupported(CGSize(width: 16384, height: 4096)))
+        #expect(ExportSession.isSizeSupported(CGSize(width: 8192, height: 8192)))
+        #expect(!ExportSession.isSizeSupported(CGSize(width: 8193, height: 8192)))
+        #expect(!ExportSession.isSizeSupported(CGSize(width: 16385, height: 1)))
+        #expect(!ExportSession.isSizeSupported(CGSize(width: -1, height: 8)))
+        #expect(!ExportSession.isSizeSupported(CGSize(width: 0.4, height: 8)))
+        #expect(!ExportSession.isSizeSupported(CGSize(width: CGFloat.infinity, height: 8)))
+        #expect(!ExportSession.isSizeSupported(CGSize(width: -1e300, height: 8)))
+    }
+
+    /// The pass clears depth and stores `.dontCare`, so the attachment never has to exist in
+    /// memory: at 16384² that is a gibibyte of the ~5 GiB a single frame used to cost.
+    @MainActor
+    @Test func theDepthAttachmentIsMemorylessWhereTheGPUAllows() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        guard let (shader, pipeline) = try await Self.compiled(device) else { return }
+        let spec = FrameSpec(time: 0, size: CGSize(width: 8, height: 8), mouse: .zero,
+                             orbit: .default, mesh: .sphere, viewerRange: 0...1)
+        let sink = ImageSequenceSink(directory: FileManager.default.temporaryDirectory, baseName: "never")
+        let session = try ExportSession(device: device, program: PreviewProgram(pipeline: pipeline, textures: [:]),
+                                        uniforms: UniformImage(layout: shader.layout), spec: spec,
+                                        timeline: Timeline(duration: 1, frameRate: 60, loops: false), sink: sink)
+        let modes = await session.attachmentStorageModes()
+        #expect(modes.depth == (device.supportsFamily(.apple1) ? .memoryless : .private))
+        #expect(modes.color == .private, "the colour target is blitted out, so it has to be real memory")
+    }
+
+    /// A GPU-side failure is not a writer failure: an image-sequence export has no video writer to
+    /// blame, and every `renderFrame` failure used to say "The video writer failed …".
+    @Test func aGPUFailureNamesTheFrame() {
+        #expect(RecordingError.encodeFailed("the frame could not be encoded").errorDescription
+                == "The frame could not be rendered: the frame could not be encoded")
+    }
+
+    /// The negative edge reaches `init`, not just the pure predicate: it used to trap in
+    /// `Int(spec.size.width.rounded())` before `max(1, …)` could clamp it.
+    @MainActor
+    @Test func aNegativeEdgeIsRefusedRatherThanTrapping() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            withKnownIssue("no Metal device") { Issue.record("skipped") }
+            return
+        }
+        guard let (shader, pipeline) = try await Self.compiled(device) else { return }
+        let size = CGSize(width: -1, height: 8)
+        let spec = FrameSpec(time: 0, size: size, mouse: .zero,
+                             orbit: .default, mesh: .sphere, viewerRange: 0...1)
+        let sink = ImageSequenceSink(directory: FileManager.default.temporaryDirectory, baseName: "never")
+        #expect(throws: RecordingError.sizeUnsupported(size)) {
+            _ = try ExportSession(device: device, program: PreviewProgram(pipeline: pipeline, textures: [:]),
+                                  uniforms: UniformImage(layout: shader.layout), spec: spec,
+                                  timeline: Timeline(duration: 1, frameRate: 60, loops: false), sink: sink)
+        }
+    }
+
     @MainActor
     @Test func cancellationAbandonsTheOutput() async throws {
         guard let device = MTLCreateSystemDefaultDevice() else {

@@ -37,6 +37,17 @@ public actor ExportSession {
     /// a size problem the caller can fix, so it is refused up front rather than surfacing as a
     /// nil texture — and long before a readback buffer of that size is attempted.
     public static let maxDimension = 16384
+    /// 8192 × 8192: past this the colour target, the readback and the encoder's copy together
+    /// exceed what a machine with 8 GB can give one frame (spec §27.6).
+    public static let maxPixels = 8192 * 8192
+
+    /// Finite, at least one pixel on each edge, within `maxDimension` per edge and `maxPixels` in all.
+    public static func isSizeSupported(_ size: CGSize) -> Bool {
+        guard size.width.isFinite, size.height.isFinite else { return false }
+        let w = size.width.rounded(), h = size.height.rounded()
+        guard w >= 1, h >= 1, w <= CGFloat(maxDimension), h <= CGFloat(maxDimension) else { return false }
+        return w * h <= CGFloat(maxPixels)
+    }
 
     public init(device: MTLDevice, program: PreviewProgram, uniforms: UniformImage, spec: FrameSpec,
                 timeline: Timeline, sink: any FrameSink) throws {
@@ -50,10 +61,7 @@ public actor ExportSession {
         self.meshes = MeshResources(device: device)
         // Refused before any allocation — and before the `Int` conversions below, which would
         // trap on a non-finite or astronomically large edge.
-        guard spec.size.width.isFinite, spec.size.height.isFinite,
-              spec.size.width.rounded() <= CGFloat(Self.maxDimension),
-              spec.size.height.rounded() <= CGFloat(Self.maxDimension)
-        else { throw RecordingError.sizeUnsupported(spec.size) }
+        guard Self.isSizeSupported(spec.size) else { throw RecordingError.sizeUnsupported(spec.size) }
         // Locals, not the stored properties: a nested function that read `self.width` would
         // capture a half-initialised `self`.
         let w = max(1, Int(spec.size.width.rounded()))
@@ -62,24 +70,33 @@ public actor ExportSession {
         width = w
         height = h
         bytesPerRow = stride
-        func target(_ format: MTLPixelFormat) -> MTLTexture? {
+        func target(_ format: MTLPixelFormat, memoryless: Bool) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: w,
                                                              height: h, mipmapped: false)
             d.usage = [.renderTarget]
-            d.storageMode = .private
+            // The depth attachment is cleared and never stored (`.dontCare`), so on a GPU that
+            // supports it the texture needs no memory at all (spec §27.6).
+            d.storageMode = memoryless && device.supportsFamily(.apple1) ? .memoryless : .private
             return device.makeTexture(descriptor: d)
         }
         guard let uniformBuffer = device.makeBuffer(length: max(uniforms.bytes.count, 16), options: .storageModeShared)
         else { throw RecordingError.noDevice }
         // Everything below is sized by the frame: this device refusing it is a size problem, and
         // saying "no Metal device" about a device that just handed out a command queue is a lie.
-        guard let color = target(.bgra8Unorm), let depth = target(ShaderCompiler.depthPixelFormat),
+        guard let color = target(.bgra8Unorm, memoryless: false),
+              let depth = target(ShaderCompiler.depthPixelFormat, memoryless: true),
               let readback = device.makeBuffer(length: stride * h, options: .storageModeShared)
         else { throw RecordingError.sizeUnsupported(spec.size) }
         self.color = color
         self.depth = depth
         self.uniformBuffer = uniformBuffer
         self.readback = readback
+    }
+
+    /// How the two attachments were allocated. Internal, for the test that the depth attachment is
+    /// memoryless where the GPU allows it: `MTLTexture` is not `Sendable`, the storage mode is.
+    func attachmentStorageModes() -> (color: MTLStorageMode, depth: MTLStorageMode) {
+        (color.storageMode, depth.storageMode)
     }
 
     /// Renders and writes every frame. Throws `RecordingError.cancelled` (after abandoning the
@@ -90,7 +107,7 @@ public actor ExportSession {
     /// in an unordered `Task`. The frame's own `waitUntilCompleted` stays on this actor.
     public func run(progress: @Sendable @escaping (RecordingProgress) async -> Void) async throws {
         let count = timeline.frameCount
-        try await sink.begin(width: width, height: height, frameRate: timeline.frameRate)
+        try await sink.begin(width: width, height: height, frameRate: timeline.frameRate, frameCount: count)
         do {
             for k in 0..<count {
                 if Task.isCancelled { throw RecordingError.cancelled }
@@ -122,7 +139,7 @@ public actor ExportSession {
         guard let cmd = queue.makeCommandBuffer() else { throw RecordingError.noDevice }
         guard FrameRenderer.encode(program: program, uniforms: uniforms, spec: spec, into: pass,
                                    uniformBuffer: uniformBuffer, meshes: meshes, command: cmd) else {
-            throw RecordingError.writerFailed("the frame could not be encoded")
+            throw RecordingError.encodeFailed("the frame could not be encoded")
         }
         guard let blit = cmd.makeBlitCommandEncoder() else { throw RecordingError.noDevice }
         blit.copy(from: color, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
@@ -132,7 +149,7 @@ public actor ExportSession {
         blit.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
-        if let error = cmd.error { throw RecordingError.writerFailed(error.localizedDescription) }
+        if let error = cmd.error { throw RecordingError.encodeFailed(error.localizedDescription) }
         return Array(UnsafeRawBufferPointer(start: readback.contents(), count: bytesPerRow * height))
     }
 }

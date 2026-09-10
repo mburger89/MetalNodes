@@ -25,7 +25,7 @@ import Testing
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-seq-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let sink = ImageSequenceSink(directory: dir, baseName: "clip")
-        try await sink.begin(width: 2, height: 2, frameRate: 30)
+        try await sink.begin(width: 2, height: 2, frameRate: 30, frameCount: 2)
         try await sink.write(frame(), index: 0)
         try await sink.write(frame(), index: 1)
         try await sink.finish()
@@ -42,16 +42,29 @@ import Testing
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-snap-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let sink = ImageSequenceSink(directory: dir, baseName: "x", singleFileName: "shot.png")
-        try await sink.begin(width: 2, height: 2, frameRate: 30)
+        try await sink.begin(width: 2, height: 2, frameRate: 30, frameCount: 1)
         try await sink.write(frame(), index: 0)
         try await sink.finish()
         #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("shot.png").path))
     }
 
+    /// `clip_10000.png` sorts before `clip_9999.png` lexically, which is what importers and Finder
+    /// use: the padding has to come from the sequence's length, not from a fixed `%04d`.
+    @Test func frameNamesPadToTheSequenceLength() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-pad-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sink = ImageSequenceSink(directory: dir, baseName: "clip")
+        try await sink.begin(width: 4, height: 4, frameRate: 60, frameCount: 10_000)
+        try await sink.write(FrameBytes(width: 4, height: 4, bytesPerRow: 16, bgra: [UInt8](repeating: 0, count: 64)), index: 0)
+        try await sink.write(FrameBytes(width: 4, height: 4, bytesPerRow: 16, bgra: [UInt8](repeating: 0, count: 64)), index: 9_999)
+        let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        #expect(names == ["clip_00001.png", "clip_10000.png"])
+    }
+
     @Test func abandonRemovesWhatWasWritten() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mn-abandon-\(UUID().uuidString)")
         let sink = ImageSequenceSink(directory: dir, baseName: "clip")
-        try await sink.begin(width: 2, height: 2, frameRate: 30)
+        try await sink.begin(width: 2, height: 2, frameRate: 30, frameCount: 1)
         try await sink.write(frame(), index: 0)
         await sink.abandon()
         #expect(!FileManager.default.fileExists(atPath: dir.path))
