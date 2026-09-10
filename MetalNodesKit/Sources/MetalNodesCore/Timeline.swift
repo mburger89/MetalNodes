@@ -101,12 +101,12 @@ public struct TimelineClock: Sendable, Equatable {
         if timeline.loops {
             elapsedSeconds = safe
             frame = ((raw % timeline.frameCount) + timeline.frameCount) % timeline.frameCount
-        } else if raw >= timeline.frameCount - 1 {
+        } else if raw >= timeline.frameCount {
             frame = timeline.frameCount - 1
             elapsedSeconds = timeline.duration
             isPlaying = false
         } else {
-            elapsedSeconds = safe
+            elapsedSeconds = max(safe, 0)
             frame = max(raw, 0)
         }
     }

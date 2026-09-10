@@ -124,6 +124,20 @@ extension TimelineTests {
         #expect(c.frame == 0)
     }
 
+    /// `seek` must stop only on the transition *past* the last frame, exactly as `step()` does —
+    /// not on reaching it, which would engage the end state up to 1/fps early.
+    @Test func seekingToExactlyTheLastFrameDoesNotYetStopTheClock() {
+        var c = TimelineClock(timeline: Timeline(duration: 1, frameRate: 60, loops: false), mode: .wallClock)
+        c.seek(elapsed: 0.99)
+        #expect(c.frame == 59)
+        #expect(c.isPlaying)
+        #expect(c.elapsedSeconds == 0.99)
+        c.seek(elapsed: 1.0)
+        #expect(c.frame == 59)
+        #expect(!c.isPlaying)
+        #expect(c.elapsedSeconds == 1)
+    }
+
     @Test func scrubbingClampsAndPauses() {
         var c = clock(1, fps: 30)
         c.scrub(to: 99)
