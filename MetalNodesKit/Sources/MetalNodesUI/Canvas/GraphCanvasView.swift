@@ -73,10 +73,13 @@ public struct GraphCanvasView: View {
     /// and Paste would then land at the centre instead of under the cursor.
     final class PointBox { var point: CGPoint = .zero }
     @State private var hover = PointBox()      // viewport coords, for ⇧A
-    /// What the pointer is over, for the macOS context menu's item set (the adopted node, the
-    /// viewer items, "New Custom Code Node"). That one *is* a value the body reads, so it must be
-    /// `@State` — but it is written only when the pointer crosses a node/socket/wire/comment
-    /// boundary, so the body re-evaluates a handful of times per traversal rather than per pixel.
+    /// Nothing reads this. Its only job is to invalidate the body when the pointer crosses a
+    /// node/socket/wire/comment boundary, so that the macOS context menu's content — which SwiftUI
+    /// builds during a body evaluation and reuses until the next one — is rebuilt against what the
+    /// pointer is now over. Written only on a boundary crossing, so a traversal costs a handful of
+    /// body evaluations rather than one per pixel; the menu's builder computes the hit itself, which
+    /// is what keeps it right when the *graph* moves under a stationary pointer (a wheel pan, a dive,
+    /// an undo, a delete — none of which sends a hover event, all of which invalidate the body).
     @State private var hoverHit: CanvasHit?
     /// Last background click (viewport coords), for synthesising double-click since
     /// `backgroundDrag` already claims single clicks — see its `onEnded` click branch.
@@ -152,16 +155,16 @@ public struct GraphCanvasView: View {
             #if os(macOS)
             // Parity with the iPad long-press (spec §22.3): Paste lands under the cursor like ⌘V
             // does, and the hit under it is what the menu's node items adopt
-            // (`CanvasContextMenu.adoptedNode`). SwiftUI builds this content once, when the menu
-            // opens, and since M11 a pointer move no longer invalidates the canvas body, so neither
-            // half can simply be read here. Instead: the point is passed as a closure the items call
-            // when one is chosen, and the hit comes from `hoverHit`, which `onContinuousHover`
-            // refreshes whenever the pointer crosses a boundary — `hit(at:)` covers the window
-            // before the first hover lands.
+            // (`CanvasContextMenu.adoptedNode`). SwiftUI builds this content during the canvas's
+            // body evaluation and reuses it until the body runs again — it is not rebuilt when the
+            // menu opens. So the hit is computed here, where it is as fresh as the body itself
+            // (`hoverHit` exists only to make a boundary crossing count as a body-invalidating
+            // event), while the point, which has to be right to the pixel, is passed as a closure
+            // the items call when one of them is chosen.
             .contextMenu {
                 CanvasContextMenu(model: model,
                                   canvasPoint: { transform.toCanvas(hover.point) },
-                                  hit: hoverHit ?? hit(at: transform.toCanvas(hover.point)))
+                                  hit: hit(at: transform.toCanvas(hover.point)))
             }
             #else
             // The long-press menu. A popover rather than SwiftUI's `.contextMenu`, because the
@@ -297,8 +300,12 @@ public struct GraphCanvasView: View {
             // resolves to bytes. Handling the responder selectors keeps our own write in place.
             .onCommand(#selector(NSText.cut(_:))) { model.cutSelection() }
             .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-            // At the pointer (spec §18.4). `hover.point` is the last position inside the viewport
-            // and falls back to its centre once the pointer leaves, so a menu paste lands centred.
+            // At the pointer (spec §18.4). `hover.point` is the last position the pointer was seen
+            // at inside the viewport and stays there once it leaves, so ⌘V from the menu bar pastes
+            // where the pointer last was rather than at the viewport centre — the point does not
+            // reset on hover `.ended`, because opening the context menu is itself such a departure
+            // and Paste there must land under the cursor. Only a document that has never been
+            // hovered pastes centred (`onAppear`'s initial value).
             .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste(at: transform.toCanvas(hover.point)) }
             #endif
         }

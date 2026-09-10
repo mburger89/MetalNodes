@@ -1,7 +1,6 @@
 import Testing
 import Foundation
-import CoreGraphics
-@testable import MetalNodesCore
+import MetalNodesCore
 @testable import MetalNodesUI
 
 /// The one rule the context menu adds on top of its Edit-menu twins (spec §22.3): a press on a node

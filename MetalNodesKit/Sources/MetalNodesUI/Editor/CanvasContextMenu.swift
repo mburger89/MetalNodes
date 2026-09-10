@@ -9,15 +9,16 @@ import MetalNodesCore
 struct CanvasContextMenu: View {
     let model: EditorModel
     /// Canvas coordinates: where Paste lands and where a new sticky note is centred. A closure, not
-    /// a value, because on macOS the menu's content is built once — when the menu opens — while the
-    /// point it should use is the one under the pointer at that moment, and since M11 a pointer move
-    /// no longer re-evaluates the canvas body (spec §27.9, H2), so a value captured at body time is
-    /// stale by a click. Every item therefore calls this *inside* its action, when the item is
-    /// chosen and the hover point is whatever the last move left behind.
+    /// a value, because on macOS SwiftUI builds this content during the canvas's body evaluation and
+    /// reuses it until the body runs again — and since M11 a pointer move no longer re-evaluates
+    /// that body (spec §27.9, H2), so a point read while the content was built is the one from
+    /// whenever the body last ran, a click ago. Every item therefore calls this *inside* its action,
+    /// when the item is chosen and the hover point is wherever the pointer actually is.
     let canvasPoint: () -> CGPoint
     /// What the press landed on — the viewer items read the socket, and a node outside the
-    /// selection becomes the selection (see `adoptedNode`). On macOS it is the hit under the
-    /// pointer when the menu opened.
+    /// selection becomes the selection (see `adoptedNode`). Which items exist has to be settled
+    /// while the content is built, so on macOS this is the hit as of the canvas's last body
+    /// evaluation; a boundary crossing under the pointer is made to be one of those (`hoverHit`).
     let hit: CanvasHit?
 
     /// The node a context-menu press makes the selection before any item acts: the pressed node
@@ -111,7 +112,7 @@ struct CanvasContextMenu: View {
 
     /// What Paste, "Add Sticky Note" and "New Custom Code Node" would use if chosen right now.
     /// A SwiftUI `Button`'s action is not reachable from a test, so this is the seam that lets one
-    /// assert the point is read at *choose* time rather than captured when the menu was built.
+    /// assert the point is read at *choose* time rather than when the content was built.
     func pastePoint() -> CGPoint { canvasPoint() }
 
     /// The socket the viewer items act on. A viewer is always an *output*, so pressing an input
