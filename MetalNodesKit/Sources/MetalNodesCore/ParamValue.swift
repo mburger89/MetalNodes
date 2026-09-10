@@ -29,10 +29,24 @@ public enum ParamValue: Codable, Sendable, Hashable {
 
     public var isUniformable: Bool { socketType != nil }
 
+    /// The same value with every NaN or infinite component replaced by 0 (spec §27.2): the JSON
+    /// encoder cannot write a non-finite float, and Metal has no literal for one.
+    public var finite: ParamValue {
+        func f(_ x: Float) -> Float { x.isFinite ? x : 0 }
+        switch self {
+        case .float(let x): return .float(f(x))
+        case .float2(let v): return .float2(SIMD2(f(v.x), f(v.y)))
+        case .float3(let v): return .float3(SIMD3(f(v.x), f(v.y), f(v.z)))
+        case .float4(let v): return .float4(SIMD4(f(v.x), f(v.y), f(v.z), f(v.w)))
+        case .int, .bool, .enumCase, .asset, .text: return self
+        }
+    }
+
     /// MSL source literal, used only in tests and for `.constant` folding in exports.
     public var mslLiteral: String {
         func f(_ x: Float) -> String {
-            x == x.rounded() && abs(x) < 1e7 ? String(format: "%.1f", x) : "\(x)"
+            guard x.isFinite else { return "0.0" }
+            return x == x.rounded() && abs(x) < 1e7 ? String(format: "%.1f", x) : "\(x)"
         }
         switch self {
         case .float(let x): return f(x)

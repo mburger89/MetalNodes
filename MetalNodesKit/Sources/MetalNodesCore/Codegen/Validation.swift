@@ -49,6 +49,16 @@ public enum GraphValidator {
             if GroupDependencies.transitive(d.id, in: doc).contains(d.id) || GroupDependencies.direct(d).contains(d.id) {
                 out.append(Diagnostic(.error, "Definition “\(d.name)” contains itself"))
             }
+            // Socket names are the function's parameter names (spec §20.4): two alike would trap the
+            // resolver's maps, and refuse here is what the user can act on (spec §27.2).
+            for (label, decls) in [("input", d.inputs), ("output", d.outputs)] {
+                var seen = Set<String>()
+                for decl in decls where !NodeShape.isPlus(decl) {
+                    if !seen.insert(decl.name).inserted {
+                        out.append(Diagnostic(.error, "Definition “\(d.name)” declares two \(label)s named “\(decl.name)”"))
+                    }
+                }
+            }
         }
         let reachable = reachableDefinitions(doc)
         return out + textureTargetDiagnostics(doc, target: target, reachable: reachable)
@@ -163,14 +173,15 @@ public enum GraphValidator {
             }
         }
 
-        // Cycles — iterative DFS with colouring.
+        // Cycles — iterative DFS with colouring. `sources` is the whole graph's reverse
+        // adjacency, built once (spec §27.4) instead of re-scanning every wire per node visited;
+        // it is sorted-uuid order, unlike the old inline closure's dictionary order, which only
+        // affects the order of "Wires form a cycle" diagnostics on a graph with several cycles.
         enum Mark { case visiting, done }
         var marks: [NodeID: Mark] = [:]
-        func sources(of n: NodeID) -> [NodeID] {
-            graph.inputs.filter { $0.key.node == n }.map(\.value.node).filter { graph.nodes[$0] != nil }
-        }
+        let sources = TopoSort.sourcesByNode(graph)
         for start in graph.nodes.keys.sorted(by: { $0.raw.uuidString < $1.raw.uuidString }) where marks[start] == nil {
-            var stack: [(NodeID, [NodeID])] = [(start, sources(of: start))]
+            var stack: [(NodeID, [NodeID])] = [(start, sources[start] ?? [])]
             marks[start] = .visiting
             while let top = stack.last {
                 let n = top.0
@@ -183,7 +194,7 @@ public enum GraphValidator {
                     case .done: break
                     case nil:
                         marks[next] = .visiting
-                        stack.append((next, sources(of: next)))
+                        stack.append((next, sources[next] ?? []))
                     }
                 } else {
                     marks[n] = .done

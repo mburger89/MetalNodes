@@ -52,13 +52,16 @@ struct CommentLayer: View {
     private var frames: [CommentFrame] {
         graph.frames.values
             .filter { shows(.frame($0.id), $0.frame) }
-            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+            // `FrameID.raw` is `UUID`, which is `Comparable` (Foundation, macOS 14 / iOS 17) and
+            // orders the same way the old `uuidString` comparison did (M2), without allocating one.
+            .sorted { $0.id.raw < $1.id.raw }
     }
 
     private var stickies: [StickyNote] {
         graph.stickies.values
             .filter { shows(.sticky($0.id), $0.frame) }
-            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+            // `StickyID.raw` is `UUID` — see `frames` above.
+            .sorted { $0.id.raw < $1.id.raw }
     }
 
     private func shows(_ id: CommentID, _ rect: CGRect) -> Bool {

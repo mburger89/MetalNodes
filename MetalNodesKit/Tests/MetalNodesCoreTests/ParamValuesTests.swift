@@ -60,6 +60,12 @@ import Testing
         #expect(ParamValues.mslLiteral(.float3(.init(0, 0, 0)), as: .float3) == "float3(0.0, 0.0, 0.0)")
     }
 
+    /// A non-finite float component has no MSL literal spelling; the literal path clamps it to
+    /// zero the same way `ParamValue.finite` does, rather than emitting `nan` or `inf`.
+    @Test func aNonFiniteFloatLiteralIsZero() {
+        #expect(ParamValues.mslLiteral(.float(.nan), as: .float) == "0.0")
+    }
+
     /// A value of the wrong shape for the declared type is coerced, not crashed on: a document
     /// hand-edited or migrated from an older schema must still export.
     @Test func aMismatchedValueCoercesToTheDeclaredType() {

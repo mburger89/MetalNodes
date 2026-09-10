@@ -23,3 +23,14 @@ import Foundation
         }
     }
 }
+
+@Suite struct ParamValueTests {
+    @Test func aNonFiniteComponentIsZero() {
+        #expect(ParamValue.float(.nan).finite == .float(0))
+        #expect(ParamValue.float2(SIMD2(.infinity, 1)).finite == .float2(SIMD2(0, 1)))
+        #expect(ParamValue.float4(SIMD4(1, -.infinity, .nan, 2)).finite == .float4(SIMD4(1, 0, 0, 2)))
+        #expect(ParamValue.int(3).finite == .int(3))
+        #expect(ParamValue.float(.nan).mslLiteral == "0.0")
+        #expect(ParamValue.float3(SIMD3(.infinity, 0, 0)).mslLiteral == "float3(0.0, 0.0, 0.0)")
+    }
+}

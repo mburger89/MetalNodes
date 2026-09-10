@@ -17,17 +17,27 @@ public struct FrameBytes: Sendable {
 /// Where `ExportSession` sends frames (spec §26.5). `begin` before the first `write`; `finish`
 /// after the last; `abandon` on cancel or failure removes whatever was written.
 public protocol FrameSink: Sendable {
-    func begin(width: Int, height: Int, frameRate: Int) async throws
+    /// `frameCount` is the number of `write`s to expect, so a sink can size what depends on it
+    /// (the sequence's zero padding, spec §27.6).
+    func begin(width: Int, height: Int, frameRate: Int, frameCount: Int) async throws
     func write(_ frame: FrameBytes, index: Int) async throws
     func finish() async throws
     func abandon() async
 }
 
 /// PNG per frame — `<baseName>_0001.png …` — or, with `singleFileName`, one file (the snapshot).
-public final class ImageSequenceSink: FrameSink, Sendable {
+///
+/// `@unchecked Sendable` for `padding` alone: it is written once in `begin`, read by every `write`
+/// afterwards, and a session never overlaps the two — `ExportSession.run` awaits `begin` before it
+/// renders the first frame.
+public final class ImageSequenceSink: FrameSink, @unchecked Sendable {
     private let directory: URL
     private let baseName: String
     private let singleFileName: String?
+    /// Digits in a frame number. After `begin`, wide enough for every index of the sequence it was
+    /// told about, so the names sort in frame order in any file browser; never narrower than the
+    /// four digits a short sequence has always used.
+    private var padding = 4
 
     public init(directory: URL, baseName: String, singleFileName: String? = nil) {
         self.directory = directory
@@ -35,13 +45,15 @@ public final class ImageSequenceSink: FrameSink, Sendable {
         self.singleFileName = singleFileName
     }
 
-    public func begin(width: Int, height: Int, frameRate: Int) async throws {
+    public func begin(width: Int, height: Int, frameRate: Int, frameCount: Int) async throws {
+        padding = max(4, String(frameCount).count)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
     public func write(_ frame: FrameBytes, index: Int) async throws {
         guard let image = Self.cgImage(from: frame) else { throw RecordingError.frameConversionFailed(index) }
-        let name = singleFileName ?? String(format: "%@_%04d.png", baseName, index + 1)
+        let number = String(index + 1)
+        let name = singleFileName ?? baseName + "_" + String(repeating: "0", count: max(0, padding - number.count)) + number + ".png"
         let url = directory.appendingPathComponent(name)
         guard let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
             throw RecordingError.frameWriteFailed(url)
@@ -71,10 +83,14 @@ public enum RecordingError: Error, LocalizedError, Sendable, Equatable {
     case frameConversionFailed(Int)
     case frameWriteFailed(URL)
     case writerFailed(String)
+    /// A GPU-side failure: the frame never got rendered. Distinct from `writerFailed`, so a PNG
+    /// export never blames a video writer that does not exist for it (spec §27.6).
+    case encodeFailed(String)
     case cancelled
     case noDevice
-    /// The size asked for is past `ExportSession.maxDimension`, or the GPU refused a target that
-    /// large: a size problem, not a missing device.
+    /// The size asked for is past `ExportSession.isSizeSupported` (edge or pixel budget) or past
+    /// `VideoSink.isSizeSupported` (H.264 level 6.2), or the GPU refused a target that large: a
+    /// size problem, not a missing device.
     case sizeUnsupported(CGSize)
 
     public var errorDescription: String? {
@@ -82,6 +98,7 @@ public enum RecordingError: Error, LocalizedError, Sendable, Equatable {
         case .frameConversionFailed(let i): "Frame \(i + 1) could not be converted to an image"
         case .frameWriteFailed(let url): "Could not write \(url.lastPathComponent)"
         case .writerFailed(let why): "The video writer failed: \(why)"
+        case .encodeFailed(let why): "The frame could not be rendered: \(why)"
         case .cancelled: "Recording cancelled"
         case .noDevice: "No Metal device is available"
         case .sizeUnsupported(let size):

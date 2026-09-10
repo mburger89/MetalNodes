@@ -26,6 +26,23 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         state.drawableSize = size
     }
 
+    /// The draw rate the clock wants (spec §27.7): in `.fixedRate` mode one draw is one frame, so
+    /// the view must draw at the timeline's rate for the preview to play at 1×; the wall clock is
+    /// placed by elapsed time and draws at the display's 60.
+    public static func preferredFrameRate(for clock: TimelineClock) -> Int {
+        clock.mode == .fixedRate ? clock.timeline.frameRate : 60
+    }
+
+    /// The wall clock's next value, or nil when nothing a reader can observe changed (spec §27.5).
+    /// `seek` rewrites `elapsedSeconds` on every call, so whole-value equality would never hold;
+    /// the readers — the frame counter, the scrubber, Play/Pause — see `frame` and `isPlaying`,
+    /// and the `elapsedSeconds` readout advancing once per frame is exactly the timeline's rate.
+    public static func wallClockAdvance(_ clock: TimelineClock, elapsed: Double) -> TimelineClock? {
+        var next = clock
+        next.seek(elapsed: elapsed)
+        return next.frame != clock.frame || next.isPlaying != clock.isPlaying ? next : nil
+    }
+
     public func draw(in view: MTKView) {
         guard let program = state.program, let image = state.uniforms,
               image.layout == program.pipeline.shader.layout,
@@ -36,6 +53,11 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
             ring = UniformRing(device: device, size: image.layout.totalSize)
         }
 
+        // Set from the draw, not from `updateNSView`: the representable would have to read `clock`
+        // to know, and `clock` is rewritten every wall-clock frame — the update would run at 60 Hz.
+        let wanted = Self.preferredFrameRate(for: state.clock)
+        if view.preferredFramesPerSecond != wanted { view.preferredFramesPerSecond = wanted }
+
         // Time comes from the clock (spec §26.3). Wall clock: elapsed play time places it —
         // pausing freezes `pausedElapsed`, resuming starts a new run from there, so there is no
         // jump. Fixed rate: exactly one frame per draw while playing, so the same draws always
@@ -44,9 +66,15 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         case .wallClock:
             if state.clock.isPlaying {
                 let now = CACurrentMediaTime()
-                let started = state.playStartedAt ?? now
-                state.playStartedAt = started
-                state.clock.seek(elapsed: state.pausedElapsed + (now - started))
+                let started: Double
+                if let s = state.playStartedAt { started = s } else { started = now; state.playStartedAt = now }
+                // `clock` is observable: `seek` rewrites `elapsedSeconds` on every call, so whole-
+                // value equality would never hold and every draw would re-evaluate the preview
+                // controls at the display's rate even for a 24 fps timeline. Write only when what a
+                // reader can see — `frame` or `isPlaying` — actually changed (spec §27.5).
+                if let next = Self.wallClockAdvance(state.clock, elapsed: state.pausedElapsed + (now - started)) {
+                    state.clock = next
+                }
             } else if let started = state.playStartedAt {
                 state.pausedElapsed += CACurrentMediaTime() - started
                 state.playStartedAt = nil

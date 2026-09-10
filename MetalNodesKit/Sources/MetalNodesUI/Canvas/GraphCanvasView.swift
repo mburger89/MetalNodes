@@ -42,7 +42,16 @@ public struct GraphCanvasView: View {
     /// cannot switch a live wire drag or marquee into a pan (and strand its transaction).
     @State private var dragMode: BackgroundDragMode?
     @State private var viewport: CGSize = .zero
+    /// The wheel's camera write, once per gesture (spec §27.9, H1): `viewState` is one observed
+    /// value, so writing it per tick re-evaluated the command tree, the inspector and the
+    /// breadcrumb at wheel rate. Drag, magnify and touch already write only on gesture end.
+    @State private var cameraWrite: Task<Void, Never>?
     @FocusState private var canvasFocused: Bool
+    #if os(macOS)
+    /// Whether this canvas's window is the key window — the only signal that an app switch
+    /// happened while a bare key was held (spec §27.9, M8). macOS-only in SwiftUI.
+    @Environment(\.controlActiveState) private var controlActiveState
+    #endif
     /// Why the chooser is open: where to place, and (for a wire drop) what to auto-wire.
     struct Chooser: Identifiable {
         let id = UUID()
@@ -51,7 +60,27 @@ public struct GraphCanvasView: View {
         var wire: (source: SocketRef, type: SocketType)?
     }
     @State private var chooser: Chooser?
-    @State private var hoverLocation: CGPoint = .zero      // viewport coords, for ⇧A
+    /// A reference type on purpose: the hover point is read lazily (⇧A, the context menu, Paste),
+    /// and a `@State` value written on every pointer move would re-evaluate the whole canvas body —
+    /// every visible `NodeView` — per mouse event. Mutating a field of a class held in `@State`
+    /// invalidates nothing (spec §27.9, H2).
+    ///
+    /// Everything that needs the point therefore reads it *when it acts*, never when a view body
+    /// was built: ⇧A in its key handler, and the context menu's items in their action closures
+    /// (`CanvasContextMenu.canvasPoint` is a closure for exactly this reason). Its initial value is
+    /// the viewport centre, set in `onAppear`; a pointer leaving the canvas must not reset it,
+    /// because opening the context menu is itself such a departure — the menu is its own window —
+    /// and Paste would then land at the centre instead of under the cursor.
+    final class PointBox { var point: CGPoint = .zero }
+    @State private var hover = PointBox()      // viewport coords, for ⇧A
+    /// Nothing reads this. Its only job is to invalidate the body when the pointer crosses a
+    /// node/socket/wire/comment boundary, so that the macOS context menu's content — which SwiftUI
+    /// builds during a body evaluation and reuses until the next one — is rebuilt against what the
+    /// pointer is now over. Written only on a boundary crossing, so a traversal costs a handful of
+    /// body evaluations rather than one per pixel; the menu's builder computes the hit itself, which
+    /// is what keeps it right when the *graph* moves under a stationary pointer (a wheel pan, a dive,
+    /// an undo, a delete — none of which sends a hover event, all of which invalidate the body).
+    @State private var hoverHit: CanvasHit?
     /// Last background click (viewport coords), for synthesising double-click since
     /// `backgroundDrag` already claims single clicks — see its `onEnded` click branch.
     @State private var lastClick: (time: Date, point: CGPoint)?
@@ -103,7 +132,7 @@ public struct GraphCanvasView: View {
                     } else {
                         transform.pan(by: delta)
                     }
-                    model.viewState.cameras[model.activePath] = transform.camera
+                    scheduleCameraWrite()
                 }
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 #else
@@ -112,7 +141,7 @@ public struct GraphCanvasView: View {
                     .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 #endif
             }
-            .onAppear { viewport = geo.size; hoverLocation = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2) }
+            .onAppear { viewport = geo.size; hover.point = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2) }
             .onChange(of: geo.size) { _, s in viewport = s }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
@@ -124,12 +153,18 @@ public struct GraphCanvasView: View {
             }
             .contentShape(Rectangle())
             #if os(macOS)
-            // Parity with the iPad long-press (spec §22.3). `hoverLocation` is where the pointer
-            // was when the menu opened, so Paste lands under the cursor like ⌘V does, and the hit
-            // under it is what the menu's node items adopt (`CanvasContextMenu.adoptedNode`).
+            // Parity with the iPad long-press (spec §22.3): Paste lands under the cursor like ⌘V
+            // does, and the hit under it is what the menu's node items adopt
+            // (`CanvasContextMenu.adoptedNode`). SwiftUI builds this content during the canvas's
+            // body evaluation and reuses it until the body runs again — it is not rebuilt when the
+            // menu opens. So the hit is computed here, where it is as fresh as the body itself
+            // (`hoverHit` exists only to make a boundary crossing count as a body-invalidating
+            // event), while the point, which has to be right to the pixel, is passed as a closure
+            // the items call when one of them is chosen.
             .contextMenu {
-                let p = transform.toCanvas(hoverLocation)
-                CanvasContextMenu(model: model, canvasPoint: p, hit: hit(at: p))
+                CanvasContextMenu(model: model,
+                                  canvasPoint: { transform.toCanvas(hover.point) },
+                                  hit: hit(at: transform.toCanvas(hover.point)))
             }
             #else
             // The long-press menu. A popover rather than SwiftUI's `.contextMenu`, because the
@@ -141,7 +176,7 @@ public struct GraphCanvasView: View {
                                                           size: CGSize(width: 1, height: 1)))),
                      arrowEdge: .top) { anchor in
                 VStack(alignment: .leading, spacing: 6) {
-                    CanvasContextMenu(model: model, canvasPoint: anchor.canvasPoint, hit: anchor.hit)
+                    CanvasContextMenu(model: model, canvasPoint: { anchor.canvasPoint }, hit: anchor.hit)
                         .buttonStyle(.borderless)
                 }
                 .padding(12)
@@ -159,8 +194,8 @@ public struct GraphCanvasView: View {
             .focusable()
             .focusEffectDisabled()
             .focused($canvasFocused)
-            .onKeyPress(.space, phases: [.down, .up]) { press in
-                spaceHeld = press.phase == .down
+            .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
+                spaceHeld = press.phase != .up          // `.repeat` is still held
                 return .handled
             }
             .onKeyPress(.delete) { model.deleteSelection(); return .handled }
@@ -186,15 +221,28 @@ public struct GraphCanvasView: View {
                 model.canvasHasFocus = focused
                 if !focused { spaceHeld = false }
             }
+            #if os(macOS)
+            // An app switch with Space down never delivers the `.up`, and focus is per window,
+            // not per activation, so `canvasFocused` does not change either (spec §27.9, M8).
+            .onChange(of: controlActiveState) { _, s in if s != .key { spaceHeld = false } }
+            #endif
             .onContinuousHover { phase in
                 switch phase {
-                case .active(let p): hoverLocation = p
-                case .ended: hoverLocation = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+                case .active(let p):
+                    hover.point = p
+                    let h = hit(at: transform.toCanvas(p))
+                    if h != hoverHit { hoverHit = h }
+                case .ended:
+                    // Deliberately nothing: the pointer also "leaves" when the context menu opens
+                    // over the canvas (the menu is its own window), and resetting the point there
+                    // would send Paste to the viewport centre. The stale point of wherever the
+                    // pointer last was is exactly what the menu wants.
+                    break
                 }
             }
             .onKeyPress(characters: .init(charactersIn: "aA")) { press in
                 guard press.modifiers == .shift else { return .ignored }
-                openChooser(atScreen: hoverLocation, wire: nil)
+                openChooser(atScreen: hover.point, wire: nil)
                 return .handled
             }
             .dropDestination(for: NodeDefTransfer.self) { items, location in
@@ -252,9 +300,13 @@ public struct GraphCanvasView: View {
             // resolves to bytes. Handling the responder selectors keeps our own write in place.
             .onCommand(#selector(NSText.cut(_:))) { model.cutSelection() }
             .onCommand(#selector(NSText.copy(_:))) { model.copySelection() }
-            // At the pointer (spec §18.4). `hoverLocation` is the last position inside the viewport
-            // and falls back to its centre once the pointer leaves, so a menu paste lands centred.
-            .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste(at: transform.toCanvas(hoverLocation)) }
+            // At the pointer (spec §18.4). `hover.point` is the last position the pointer was seen
+            // at inside the viewport and stays there once it leaves, so ⌘V from the menu bar pastes
+            // where the pointer last was rather than at the viewport centre — the point does not
+            // reset on hover `.ended`, because opening the context menu is itself such a departure
+            // and Paste there must land under the cursor. Only a document that has never been
+            // hovered pastes centred (`onAppear`'s initial value).
+            .onPasteCommand(of: [.metalNodesGraph]) { _ in model.paste(at: transform.toCanvas(hover.point)) }
             #endif
         }
         .onPreferenceChange(SocketAnchorKey.self) { anchors = $0 }
@@ -266,6 +318,10 @@ public struct GraphCanvasView: View {
         // One camera per graph (spec §20.3): diving in or out parks the camera on the graph being
         // left and restores the one the graph being entered was last seen at, unpanned if it is new.
         .onChange(of: model.activePath) { old, new in
+            // A wheel gesture's debounced write (`scheduleCameraWrite`) targets
+            // `model.activePath` at the time it fires, not the path it was scheduled under; left
+            // running across this change it would land on the camera just loaded for `new`.
+            cameraWrite?.cancel()
             model.viewState.cameras[old] = transform.camera
             transform = model.viewState.cameras[new].map { CanvasTransform(camera: $0) } ?? CanvasTransform()
         }
@@ -328,6 +384,12 @@ public struct GraphCanvasView: View {
         .onDisappear {
             model.canvasHasFocus = false
             model.canvasRequest = nil
+            // The pending debounced write (`scheduleCameraWrite`) must land, not be dropped: spec
+            // §27.9 writes the camera "after 150 ms of quiet (and on disappear)". Cancelling
+            // without first flushing would save the pre-flick camera for a wheel gesture that
+            // ended less than 150 ms before this teardown.
+            model.viewState.cameras[model.activePath] = transform.camera
+            cameraWrite?.cancel()
         }
     }
 
@@ -356,7 +418,10 @@ public struct GraphCanvasView: View {
                 return DraculaTheme.wireDefault.color
             }
             commentLayer(.stickies)
-            let compact = transform.zoom < Self.lodZoom
+            // Frozen while a wire is in flight (spec §27.9, H4): the socket that owns a live drag
+            // lives in the standard body; flipping to compact mid-drag tears it down and SwiftUI
+            // cancels the gesture without `onEnded`.
+            let compact = pendingWire == nil && transform.zoom < Self.lodZoom
             let errors = model.errorNodes
             // The selection draws last, so a node dragged over its neighbours stays on top —
             // `EditorModel.node(at:)` orders hit-testing to match (spec §19.6).
@@ -384,7 +449,7 @@ public struct GraphCanvasView: View {
                              onDragEnded: { endNodeDrag() },
                              onEditing: { editing in
                                  if editing {
-                                     if model.isInTransaction { model.endTransaction() }   // defensive reset
+                                     resetStrandedGesture()
                                      model.beginTransaction("Change Value")
                                  } else {
                                      model.endTransaction()
@@ -466,11 +531,23 @@ public struct GraphCanvasView: View {
         .allowsHitTesting(false)
     }
 
+    /// Before any gesture opens its own transaction (spec §27.9). A wire drag that was cancelled
+    /// without `onEnded` has applied a `.disconnect` it never resolved: that one is rolled back,
+    /// like Escape does. Any other stranded transaction is committed under its own name.
+    private func resetStrandedGesture() {
+        if pendingWire != nil {
+            pendingWire = nil
+            model.cancelAllTransactions()
+        } else {
+            model.endAllTransactions()
+        }
+    }
+
     // MARK: Node drag (whole selection, one transaction)
 
     private func beginNodeDrag() {
         canvasFocused = true
-        if model.isInTransaction { model.endTransaction() }   // defensive reset: an interrupted drag can leave one open
+        resetStrandedGesture()
         pendingDuplicate = InputModifiers.optionHeld && !model.selection.isEmpty
         model.beginTransaction(pendingDuplicate ? "Duplicate" : "Move")
         dragOrigins = [:]
@@ -527,7 +604,7 @@ public struct GraphCanvasView: View {
 
     private func beginCommentDrag(_ id: CommentID, resizing: Bool) {
         canvasFocused = true
-        if model.isInTransaction { model.endTransaction() }   // defensive reset, as node drags do
+        resetStrandedGesture()
         if resizing {
             guard let rect = model.graph[comment: id] else { return }
             model.beginTransaction("Resize")
@@ -576,18 +653,20 @@ public struct GraphCanvasView: View {
 
     private func beginWire(from ref: SocketRef, isInput: Bool) {
         canvasFocused = true
+        // Ahead of the guards, not inside each branch: a drag that bails — an input with no wire to
+        // detach, a socket whose type will not resolve — still has to unwind whatever the previous
+        // gesture stranded, or a leftover `pendingWire` keeps drawing with nothing driving it.
+        resetStrandedGesture()
         let g = model.graph
         if isInput {
             // Re-drag: detach the existing wire and continue from its source, as one undo step.
             guard let source = g.source(feeding: ref) else { return }
             guard let t = DropResolver.outputType(of: source, graph: model.graph, shapes: shapes, resolved: model.resolvedTypes) else { return }
-            if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Rewire")
             model.apply(.disconnect(ref))
             pendingWire = PendingWire(source: source, type: t, point: anchors[ref] ?? .zero)
         } else {
             guard let t = DropResolver.outputType(of: ref, graph: g, shapes: shapes, resolved: model.resolvedTypes) else { return }
-            if model.isInTransaction { model.endTransaction() }   // defensive reset
             model.beginTransaction("Connect")
             pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero,
                                       isWildcard: DropResolver.isPlusOutput(ref, in: g))
@@ -796,6 +875,25 @@ public struct GraphCanvasView: View {
 
     private func zoomFactor(for delta: CGSize, precise: Bool) -> CGFloat {
         exp(delta.height * (precise ? 0.01 : 0.1))
+    }
+
+    /// Debounces the wheel's camera persist (H1): each tick restarts a 150 ms timer instead of
+    /// writing `viewState.cameras` directly, so a flick's dozens of ticks collapse into one write
+    /// after the gesture settles. `transform` inside the task reads the current `@State` value —
+    /// the closure captures `self`, a value whose `@State` reads always go to the live storage —
+    /// so the write lands on wherever the camera is when the timer fires, not where it was when
+    /// scheduled. `.onChange(of: model.activePath)` cancels this so a stale write from the graph
+    /// being left cannot land on the camera just loaded for a new one — it writes the old graph's
+    /// camera itself instead. `.onDisappear` flushes synchronously before cancelling, so a pending
+    /// write still lands (spec §27.9: written "after 150 ms of quiet (and on disappear)").
+    private func scheduleCameraWrite() {
+        cameraWrite?.cancel()
+        cameraWrite = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            model.viewState.cameras[model.activePath] = transform.camera
+            cameraWrite = nil
+        }
     }
 
     private var magnifyGesture: some Gesture {

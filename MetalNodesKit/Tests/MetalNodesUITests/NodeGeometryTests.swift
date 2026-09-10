@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import CoreGraphics
 import MetalNodesCore
 @testable import MetalNodesUI
@@ -214,6 +215,19 @@ import MetalNodesCore
                                             margin: 200, onTop: [uv.id])
         #expect(vis.last?.id == uv.id)
         #expect(vis.count == doc.root.nodes.count)
+    }
+
+    /// M2: `drawOrder`'s key is a `UUID`, not a `uuidString` — `UUID` is byte-ordered the same way
+    /// its uppercase string is, so the two orders agree, but the UUID key allocates nothing.
+    @Test func drawOrderByUUIDMatchesTheOldStringOrder() {
+        let nodes = (0..<200).map { _ in NodeInstance(kind: .builtin("input.uv"), position: .zero) }
+        let onTop: Set<NodeID> = Set(nodes.prefix(20).map(\.id))
+        let byString = nodes.sorted {
+            (onTop.contains($0.id) ? 1 : 0, $0.id.raw.uuidString) < (onTop.contains($1.id) ? 1 : 0, $1.id.raw.uuidString)
+        }.map(\.id)
+        let byKey = nodes.sorted { NodeGeometry.drawOrder($0, onTop: onTop) < NodeGeometry.drawOrder($1, onTop: onTop) }.map(\.id)
+        #expect(byKey == byString)
+        #expect(type(of: NodeGeometry.drawOrder(nodes[0], onTop: [])) == (Int, UUID).self)
     }
 
     /// Spec §25.2 (handoff §15.5 item 8): the label column is derived per shape from its longest

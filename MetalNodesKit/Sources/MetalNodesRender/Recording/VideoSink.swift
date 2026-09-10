@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import CoreVideo
 import Foundation
 
@@ -15,8 +16,20 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
     private var input: AVAssetWriterInput?
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var frameRate = 60
+    /// The last index `write` appended, so `finish` can end the session one frame past it.
+    private var lastIndex = -1      // under `queue`, like the writer
 
     public init(url: URL) { self.url = url }
+
+    /// H.264 level 6.2: 8192 per edge and 139,264 macroblocks (35,651,584 pixels). VideoToolbox
+    /// accepts every `append` above this and only fails at `finishWriting`, after the whole render
+    /// (spec §27.6) — so the bound is stated here and checked before the first frame.
+    public static let maxEdge = 8192
+    public static let maxPixels = 35_651_584
+
+    public static func isSizeSupported(width: Int, height: Int) -> Bool {
+        width >= 1 && height >= 1 && width <= maxEdge && height <= maxEdge && width * height <= maxPixels
+    }
 
     /// H.264 refuses odd dimensions; round each up to the next even number.
     public static func evenSize(_ size: CGSize) -> CGSize {
@@ -24,7 +37,10 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
         return CGSize(width: even(size.width), height: even(size.height))
     }
 
-    public func begin(width: Int, height: Int, frameRate: Int) async throws {
+    public func begin(width: Int, height: Int, frameRate: Int, frameCount: Int) async throws {
+        guard Self.isSizeSupported(width: width, height: height) else {
+            throw RecordingError.sizeUnsupported(CGSize(width: width, height: height))
+        }
         try queue.sync {
             try? FileManager.default.removeItem(at: url)
             let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -32,6 +48,14 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,
                 AVVideoHeightKey: height,
+                // Without a `colr` atom each player guesses the matrix from the frame size; 709 is
+                // the conventional tag for sRGB-authored SDR video, and matches the PNG's tag and
+                // the preview layer's colour space (spec §27.6).
+                AVVideoColorPropertiesKey: [
+                    AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                    AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                    AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+                ],
             ]
             let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
             input.expectsMediaDataInRealTime = false
@@ -45,6 +69,7 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
             guard writer.startWriting() else { throw RecordingError.writerFailed(writer.error?.localizedDescription ?? "startWriting") }
             writer.startSession(atSourceTime: .zero)
             self.writer = writer; self.input = input; self.adaptor = adaptor; self.frameRate = frameRate
+            self.lastIndex = -1
         }
     }
 
@@ -82,6 +107,7 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
             guard adaptor.append(buffer, withPresentationTime: time) else {
                 throw RecordingError.writerFailed(writer?.error?.localizedDescription ?? "append")
             }
+            lastIndex = index
         }
     }
 
@@ -89,12 +115,23 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
         // `markAsFinished` happens inside `queue.sync`; the writer reference it hands back is
         // then safe to await `finishWriting()` on outside the queue (per the ambiguity note),
         // and `status`/`error` are read back inside `queue.sync` afterward.
-        let finishingWriter: AVAssetWriter? = queue.sync {
-            guard let writer, let input else { return nil }
+        // `endSession` makes the duration `frameCount / frameRate` by construction rather than by
+        // the writer's inference from the previous sample's delta — which for one sample is 1/15 s.
+        // A writer that is not `.writing` is never touched: `finishWriting` on a cancelled writer
+        // raises an NSException no `catch` can see.
+        let (finishingWriter, failure): (AVAssetWriter?, String?) = queue.sync {
+            guard let writer, let input else { return (nil, nil) }
+            guard writer.status == .writing else {
+                return (nil, writer.error?.localizedDescription ?? "the writer stopped")
+            }
+            if lastIndex >= 0 {
+                writer.endSession(atSourceTime: CMTime(value: CMTimeValue(lastIndex + 1), timescale: CMTimeScale(frameRate)))
+            }
             input.markAsFinished()
-            return writer
+            return (writer, nil)
         }
-        guard let finishingWriter else { return }
+        if let failure { throw RecordingError.writerFailed(failure) }
+        guard let finishingWriter else { throw RecordingError.writerFailed("no writer was begun") }
         await finishingWriter.finishWriting()
         try queue.sync {
             if finishingWriter.status != .completed {
@@ -103,8 +140,13 @@ public final class VideoSink: FrameSink, @unchecked Sendable {
         }
     }
 
+    /// Idempotent: a second `cancelWriting` on the same writer is the same uncatchable exception,
+    /// so the references are dropped once the first one has run.
     public func abandon() async {
-        queue.sync { writer?.cancelWriting() }
+        queue.sync {
+            if let writer, writer.status == .writing { writer.cancelWriting() }
+            writer = nil; input = nil; adaptor = nil
+        }
         try? FileManager.default.removeItem(at: url)
     }
 }

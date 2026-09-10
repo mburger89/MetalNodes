@@ -55,3 +55,22 @@ import CoreGraphics
         #expect(Set([uv, tex, out].map(GroupCodegen.hex8)) == Set(["00000101", "00000102", "00000103"]))
     }
 }
+
+extension ShaderDocumentTests {
+    @Test func aDuplicateDefinitionIdIsADecodingError() throws {
+        var doc = ShaderDocument()
+        let def = GroupDefinition(name: "Twice")
+        doc.definitions[def.id] = def
+        var json = String(decoding: try JSONEncoder().encode(doc), as: UTF8.self)
+        let defs = try #require(json.range(of: "\"definitions\":["))
+        var depth = 0
+        var end = defs.upperBound
+        for i in json[defs.upperBound...].indices {
+            if json[i] == "{" { depth += 1 }
+            if json[i] == "}" { depth -= 1; if depth == 0 { end = json.index(after: i); break } }
+        }
+        let element = String(json[defs.upperBound..<end])
+        json.insert(contentsOf: "," + element, at: end)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(ShaderDocument.self, from: Data(json.utf8)) }
+    }
+}

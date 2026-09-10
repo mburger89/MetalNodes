@@ -12,6 +12,12 @@ public struct InspectorView: View {
     /// The Duration field's text, committed on Return like the preview size's — never per keystroke.
     @State private var durationDraft = ""
     @FocusState private var exportNameFocused: Bool
+    /// Every draft field commits on Return, on focus loss *and* on disappear (spec §27.8) — a
+    /// field that shows a value the document does not hold is a lie the user acts on (the frame
+    /// count under it, the size sheet's summary, what File ▸ Export Video… actually records).
+    @FocusState private var durationFocused: Bool
+    @FocusState private var widthFocused: Bool
+    @FocusState private var heightFocused: Bool
 
     public init(model: EditorModel, services: EditorServices = .platform) {
         self.model = model
@@ -215,17 +221,25 @@ public struct InspectorView: View {
             Text("Document").font(.headline)
             HStack {
                 Text("Preview size").font(.caption)
+                // `commitPreviewSize` reads both drafts and applies one settings change, so either
+                // field losing focus is the right moment to call it.
                 TextField("W", text: $widthDraft)
                     .frame(width: 60)
+                    .focused($widthFocused)
                     .onAppear { widthDraft = "\(clampedDimension(s.previewSize.width))" }
                     .onChange(of: model.document.settings.previewSize) { _, size in widthDraft = "\(clampedDimension(size.width))" }
+                    .onChange(of: widthFocused) { _, focused in if !focused { commitPreviewSize() } }
                     .onSubmit { commitPreviewSize() }
+                    .onDisappear { commitPreviewSize() }
                 Text("×")
                 TextField("H", text: $heightDraft)
                     .frame(width: 60)
+                    .focused($heightFocused)
                     .onAppear { heightDraft = "\(clampedDimension(s.previewSize.height))" }
                     .onChange(of: model.document.settings.previewSize) { _, size in heightDraft = "\(clampedDimension(size.height))" }
+                    .onChange(of: heightFocused) { _, focused in if !focused { commitPreviewSize() } }
                     .onSubmit { commitPreviewSize() }
+                    .onDisappear { commitPreviewSize() }
             }
             Text("Timeline").font(.headline)
             Picker("Time", selection: Binding(get: { s.timeMode }, set: { m in var n = s; n.timeMode = m; model.apply(.setSettings(n)) })) {
@@ -240,9 +254,12 @@ public struct InspectorView: View {
                 // undo steps, three clock retargets — before refusing the number the user meant.
                 TextField("s", text: $durationDraft)
                     .frame(width: 60)
+                    .focused($durationFocused)
                     .onAppear { durationDraft = Self.durationText(s.timeline.duration) }
                     .onChange(of: model.document.settings.timeline.duration) { _, d in durationDraft = Self.durationText(d) }
+                    .onChange(of: durationFocused) { _, focused in if !focused { commitDuration() } }
                     .onSubmit { commitDuration() }
+                    .onDisappear { commitDuration() }
                 Text("s").font(.caption)
                 Picker("Frame rate", selection: Binding(get: { s.timeline.frameRate },
                                                         set: { r in var t = s.timeline; t.frameRate = r; model.setTimeline(t) })) {

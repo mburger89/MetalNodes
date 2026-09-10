@@ -310,3 +310,46 @@ import Testing
         #expect(computes == 5)
     }
 }
+
+/// The call rule and the widened reserved list (spec §27.3): a socket is never called, whatever
+/// its name, and the app's own stdlib constants/packed types don't leak through as sockets.
+@Suite struct MSLScannerCallAndReservedTests {
+    @Test func aCallIsNeverASocket() {
+        #expect(MSLScanner.identifiers(in: "fmod(a, 2.0)") == ["a"])
+        #expect(MSLScanner.identifiers(in: "mn_hash21(uv) * k") == ["uv", "k"])
+        #expect(MSLScanner.identifiers(in: "myHelper (x)") == ["x"])           // whitespace before the paren
+        #expect(MSLScanner.identifiers(in: "fwidth(x) + dfdx(y)") == ["x", "y"])
+    }
+
+    @Test func stdlibConstantsAndPackedTypesAreReserved() {
+        #expect(MSLScanner.identifiers(in: "a * M_PI_F + M_E_F") == ["a"])
+        #expect(MSLScanner.identifiers(in: "select(INFINITY, NAN, b)") == ["b"])
+        #expect(MSLScanner.identifiers(in: "packed_float3 p = q") == ["q"])
+    }
+
+    @Test func numericLiteralsScanAsMetalSpellsThem() {
+        #expect(MSLScanner.identifiers(in: "0xFF + 1u + 0.5h + 2.0f + 3l") == [])
+        #expect(MSLScanner.identifiers(in: "0x1p3 * a") == ["a"])
+        // The rewrite leaves every literal byte-for-byte.
+        let out = MSLScanner.rewritingIdentifiers(in: "0xFF * a + 1u") { "{in.\($0)}" }
+        #expect(out == "0xFF * {in.a} + 1u")
+    }
+
+    /// `x²`: `²` is a non-ASCII character between `x` and ` `, so `x` ends the identifier and `²`
+    /// is not itself an identifier — hence `["x", "y"]`.
+    @Test func identifiersAreASCII() {
+        #expect(MSLScanner.identifiers(in: "π * r") == ["r"])
+        #expect(MSLScanner.identifiers(in: "x² + y") == ["x", "y"])
+    }
+
+    @Test func tokenisingIsServedFromTheCache() {
+        // A random *numeric* discriminator keeps this body unseen by the shared cache without
+        // itself becoming a free identifier — unlike a UUID's hex prefix, which can start with a
+        // letter (`A`-`F`) and scan as one, making the assertion below flake on content, not logic.
+        let body = "float k = a * \(Int.random(in: 1..<1_000_000_000)); out = k;"
+        #expect(!MSLScanner.isTokeniseCached(body))
+        _ = MSLScanner.identifiers(in: body)
+        #expect(MSLScanner.isTokeniseCached(body))
+        #expect(MSLScanner.identifiers(in: body) == ["a", "out"])
+    }
+}

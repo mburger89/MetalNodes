@@ -14,7 +14,7 @@ import Testing
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: url) }
         let sink = VideoSink(url: url)
-        try await sink.begin(width: 64, height: 64, frameRate: 60)
+        try await sink.begin(width: 64, height: 64, frameRate: 60, frameCount: 12)
         for k in 0..<12 { try await sink.write(frame(k, width: 64, height: 64), index: k) }
         try await sink.finish()
 
@@ -30,6 +30,26 @@ import Testing
         #expect(size == CGSize(width: 64, height: 64))
     }
 
+    /// With no `colr` atom a player guesses the matrix from the frame size, so the same bytes come
+    /// out different in the video, the PNG and the preview. 709 is sRGB's primaries (spec §27.6).
+    @Test func theVideoCarriesITU709ColourTags() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sink = VideoSink(url: url)
+        try await sink.begin(width: 64, height: 64, frameRate: 30, frameCount: 2)
+        for k in 0..<2 { try await sink.write(frame(k, width: 64, height: 64), index: k) }
+        try await sink.finish()
+
+        let track = try #require(try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first)
+        let format = try #require(try await track.load(.formatDescriptions).first)
+        func tag(_ key: CFString) -> String? {
+            CMFormatDescriptionGetExtension(format, extensionKey: key) as? String
+        }
+        #expect(tag(kCMFormatDescriptionExtension_ColorPrimaries) == (kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String))
+        #expect(tag(kCMFormatDescriptionExtension_TransferFunction) == (kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String))
+        #expect(tag(kCMFormatDescriptionExtension_YCbCrMatrix) == (kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String))
+    }
+
     @Test func oddSizesAreRoundedUpToEven() {
         #expect(VideoSink.evenSize(CGSize(width: 63, height: 65)) == CGSize(width: 64, height: 66))
         #expect(VideoSink.evenSize(CGSize(width: 64, height: 64)) == CGSize(width: 64, height: 64))
@@ -43,7 +63,7 @@ import Testing
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: url) }
         let sink = VideoSink(url: url)
-        try await sink.begin(width: 64, height: 64, frameRate: 30)
+        try await sink.begin(width: 64, height: 64, frameRate: 30, frameCount: 2)
         try await sink.write(frame(0, width: 64, height: 64), index: 0)
         try await sink.finish()
         await #expect(throws: RecordingError.writerFailed("the writer stopped")) {
@@ -54,9 +74,54 @@ import Testing
     @Test func abandonRemovesThePartialFile() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
         let sink = VideoSink(url: url)
-        try await sink.begin(width: 64, height: 64, frameRate: 30)
+        try await sink.begin(width: 64, height: 64, frameRate: 30, frameCount: 1)
         try await sink.write(frame(0, width: 64, height: 64), index: 0)
         await sink.abandon()
         #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// H.264 level 6.2: 8192 per edge and 139,264 macroblocks — 35,651,584 pixels. VideoToolbox
+    /// accepts every `append` above that and fails only at `finishWriting`, so the bound has to be
+    /// stated rather than discovered.
+    @Test func theH264CeilingIsLevel6_2() {
+        #expect(VideoSink.isSizeSupported(width: 8192, height: 4352))       // 35,651,584 exactly
+        #expect(!VideoSink.isSizeSupported(width: 8192, height: 4354))
+        #expect(VideoSink.isSizeSupported(width: 8192, height: 8192) == false)
+        #expect(!VideoSink.isSizeSupported(width: 8194, height: 16))
+        #expect(!VideoSink.isSizeSupported(width: 0, height: 16))
+        #expect(VideoSink.isSizeSupported(width: 7680, height: 4320))
+    }
+
+    @Test func beginRefusesAnOversizedVideoBeforeAnyFrame() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
+        let sink = VideoSink(url: url)
+        await #expect(throws: RecordingError.sizeUnsupported(CGSize(width: 8192, height: 8192))) {
+            try await sink.begin(width: 8192, height: 8192, frameRate: 60, frameCount: 1)
+        }
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// Without `endSession` the writer infers the last sample's duration from the previous delta,
+    /// and one sample has none: the file comes out 1/15 s long whatever the frame rate.
+    @Test func aOneFrameVideoIsOneFrameLong() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let sink = VideoSink(url: url)
+        try await sink.begin(width: 64, height: 64, frameRate: 30, frameCount: 1)
+        try await sink.write(frame(0, width: 64, height: 64), index: 0)
+        try await sink.finish()
+        let duration = try await AVURLAsset(url: url).load(.duration)
+        #expect(abs(duration.seconds - 1.0 / 30.0) < 0.001)
+    }
+
+    /// `finishWriting` on a cancelled writer raises an NSException no `catch` can see, and a second
+    /// `cancelWriting` does the same: both act only on a writer that is still `.writing`.
+    @Test func finishAfterAbandonIsANoOpNotACrash() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mn-\(UUID().uuidString).mp4")
+        let sink = VideoSink(url: url)
+        try await sink.begin(width: 64, height: 64, frameRate: 30, frameCount: 2)
+        await sink.abandon()
+        await sink.abandon()                                    // idempotent
+        await #expect(throws: RecordingError.self) { try await sink.finish() }
     }
 }

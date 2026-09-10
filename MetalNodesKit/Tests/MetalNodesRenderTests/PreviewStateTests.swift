@@ -57,4 +57,27 @@ import MetalNodesCore
         #expect(s.clock.frame == 0)
         #expect(s.clock.isPlaying)
     }
+
+    @Test func theDrawRateFollowsAFixedRateTimeline() {
+        #expect(ShaderRenderer.preferredFrameRate(for: TimelineClock(timeline: Timeline(duration: 1, frameRate: 24), mode: .fixedRate)) == 24)
+        #expect(ShaderRenderer.preferredFrameRate(for: TimelineClock(timeline: Timeline(duration: 1, frameRate: 30), mode: .fixedRate)) == 30)
+        #expect(ShaderRenderer.preferredFrameRate(for: TimelineClock(timeline: Timeline(duration: 1, frameRate: 24), mode: .wallClock)) == 60)
+    }
+
+    @Test func wallClockAdvanceIsNilUntilTheFrameChanges() throws {
+        let c = TimelineClock(timeline: Timeline(duration: 1, frameRate: 24), mode: .wallClock)
+        #expect(c.frame == 0)
+        #expect(ShaderRenderer.wallClockAdvance(c, elapsed: 0.01) == nil)
+        let advanced = try #require(ShaderRenderer.wallClockAdvance(c, elapsed: 0.05))
+        #expect(advanced.frame == 1)
+        #expect(ShaderRenderer.wallClockAdvance(advanced, elapsed: 0.06) == nil)
+    }
+
+    @Test func wallClockAdvanceReportsAStopEvenWithoutAFrameChange() throws {
+        var c = TimelineClock(timeline: Timeline(duration: 1, frameRate: 60, loops: false), mode: .wallClock)
+        c.frame = 59
+        #expect(c.isPlaying)
+        let stopped = try #require(ShaderRenderer.wallClockAdvance(c, elapsed: 1.0))
+        #expect(stopped.isPlaying == false)
+    }
 }

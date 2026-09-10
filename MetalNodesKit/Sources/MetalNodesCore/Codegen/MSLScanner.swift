@@ -23,7 +23,7 @@ public enum MSLScanner {
         }
     }
 
-    struct Token: Equatable {
+    struct Token: Equatable, Sendable {
         enum Kind: Equatable { case identifier, number, punctuation }
         let kind: Kind
         let text: String
@@ -55,6 +55,14 @@ public enum MSLScanner {
         "length", "log", "log2", "max", "min", "mix", "mod", "modf", "normalize", "pow",
         "radians", "reflect", "refract", "round", "rsqrt", "saturate", "sign", "sin", "sinh",
         "smoothstep", "sqrt", "step", "tan", "tanh", "trunc", "isnan", "isinf", "select",
+        // stdlib functions a one-liner reaches for (spec §27.3)
+        "fmod", "fmin", "fmax", "fabs", "fwidth", "dfdx", "dfdy", "any", "all", "powr", "exp10",
+        "log10", "rint", "sincos", "mad", "transpose", "determinant", "as_type", "ldexp", "frexp",
+        "copysign", "nextafter", "fdim", "hypot", "precise", "fast",
+        // constants and packed types
+        "M_PI_F", "M_PI_2_F", "M_PI_4_F", "M_1_PI_F", "M_2_PI_F", "M_E_F", "M_LN2_F", "M_LN10_F",
+        "M_SQRT2_F", "INFINITY", "NAN", "MAXFLOAT", "packed_float2", "packed_float3", "packed_float4",
+        "packed_half2", "packed_half3", "packed_half4",
     ]
 
     /// `\r\n` and `\r` become `\n` before any scan. Swift folds `\r\n` into one `Character`, so a
@@ -70,21 +78,31 @@ public enum MSLScanner {
         return source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
-    /// A token is a free identifier — a socket, not a keyword/type/stdlib call, a swizzle/member,
-    /// or a name bound earlier in the same text — under exactly this rule. `identifiers(in:)` and
-    /// `rewritingIdentifiers(in:with:)` both call this so the two can never disagree about which
-    /// occurrences are free.
-    private static func isFreeIdentifier(_ t: Token, declared: Set<String>) -> Bool {
-        t.kind == .identifier && !t.afterDot && !reservedNames.contains(t.text) && !declared.contains(t.text)
+    /// A socket is never called: an identifier immediately followed by `(` is a function call,
+    /// whatever its name — a builtin the list does not know, an `mn_` helper, a user's own function
+    /// (spec §27.3). Comments and whitespace never produce tokens, so "immediately" is the next token.
+    private static func isCall(_ tokens: [Token], at i: Int) -> Bool {
+        i + 1 < tokens.count && tokens[i + 1].kind == .punctuation && tokens[i + 1].text == "("
     }
 
-    /// Free identifiers in first-appearance order: not reserved, not a member after `.`, and not
-    /// bound by a declaration earlier in the same text.
+    /// A token is a free identifier — a socket, not a keyword/type/stdlib call, a swizzle/member,
+    /// a name bound earlier in the same text, or itself a call — under exactly this rule.
+    /// `identifiers(in:)` and `rewritingIdentifiers(in:with:)` both call this so the two can never
+    /// disagree about which occurrences are free.
+    private static func isFreeIdentifier(_ tokens: [Token], at i: Int, declared: Set<String>) -> Bool {
+        let t = tokens[i]
+        return t.kind == .identifier && !t.afterDot && !reservedNames.contains(t.text)
+            && !declared.contains(t.text) && !isCall(tokens, at: i)
+    }
+
+    /// Free identifiers in first-appearance order: not reserved, not a member after `.`, not
+    /// bound by a declaration earlier in the same text, and not called.
     public static func identifiers(in source: String) -> [String] {
         let tokens = tokenise(source)
         let declared = declaredLocals(tokens)
         var seen = Set<String>(), out: [String] = []
-        for t in tokens where isFreeIdentifier(t, declared: declared) {
+        for i in tokens.indices where isFreeIdentifier(tokens, at: i, declared: declared) {
+            let t = tokens[i]
             if seen.insert(t.text).inserted { out.append(t.text) }
         }
         return out
@@ -97,8 +115,9 @@ public enum MSLScanner {
         let tokens = tokenise(source)
         let declared = declaredLocals(tokens)
         var out: [String: Int] = [:]
-        for t in tokens where isFreeIdentifier(t, declared: declared) && out[t.text] == nil {
-            out[t.text] = t.line
+        for i in tokens.indices where isFreeIdentifier(tokens, at: i, declared: declared) {
+            let t = tokens[i]
+            if out[t.text] == nil { out[t.text] = t.line }
         }
         return out
     }
@@ -120,7 +139,8 @@ public enum MSLScanner {
         let declared = declaredLocals(tokens)
         var out = ""
         var cursor = 0
-        for t in tokens where isFreeIdentifier(t, declared: declared) {
+        for i in tokens.indices where isFreeIdentifier(tokens, at: i, declared: declared) {
+            let t = tokens[i]
             if t.start > cursor { out += String(chars[cursor..<t.start]) }
             out += replacement(t.text)
             cursor = t.start + t.text.count
@@ -189,6 +209,7 @@ public enum MSLScanner {
         s == "void" || s.hasPrefix("float") || s.hasPrefix("half") || s.hasPrefix("int")
             || s.hasPrefix("uint") || s.hasPrefix("bool") || s == "auto" || s == "short"
             || s == "long" || s == "char" || s == "double"
+            || s.hasPrefix("packed_float") || s.hasPrefix("packed_half")
     }
 
     /// A bounded, insertion-ordered memo. Content-keyed, so a document reload needs no
@@ -404,7 +425,7 @@ public enum MSLScanner {
     ///
     /// MSL has no string literal type, so unlike `tokenise` this pass does not special-case quoted
     /// text — a `//` or `/*` inside a `"…"` cannot arise in a shader body.
-    private static func stripComments(_ source: String) -> String {
+    static func stripComments(_ source: String) -> String {
         var out = ""
         let chars = Array(normalisedLineEndings(source))
         var i = 0
@@ -421,9 +442,21 @@ public enum MSLScanner {
         return out
     }
 
+    /// `tokenise` memoised per source text (spec §27.3): every entry point over one body —
+    /// identifiers, lines, accessor call sites, scope breakers, loop sites — shares the one hit.
+    private static let tokenCache = Mutex(ScanCache<[Token]>(capacity: 64))
+
+    static func tokenise(_ source: String) -> [Token] {
+        tokenCache.withLock { $0.value(for: source) { uncachedTokenise(source) } }
+    }
+
+    static func isTokeniseCached(_ source: String) -> Bool {
+        tokenCache.withLock { $0.contains(source) }
+    }
+
     /// One pass: identifiers, numbers and punctuation, with `//` and `/* */` comments and string
     /// literals skipped so a brace inside either never counts.
-    static func tokenise(_ source: String) -> [Token] {
+    private static func uncachedTokenise(_ source: String) -> [Token] {
         var out: [Token] = []
         var line = 0, afterDot = false
         let chars = Array(normalisedLineEndings(source))
@@ -446,10 +479,10 @@ public enum MSLScanner {
                 continue
             }
             if c.isWhitespace { i += 1; continue }
-            if c.isLetter || c == "_" {
+            if (c.isASCII && c.isLetter) || c == "_" {
                 let start = i
                 var s = ""
-                while i < chars.count, chars[i].isLetter || chars[i].isNumber || chars[i] == "_" {
+                while i < chars.count, (chars[i].isASCII && (chars[i].isLetter || chars[i].isNumber)) || chars[i] == "_" {
                     s.append(chars[i]); i += 1
                 }
                 out.append(Token(kind: .identifier, text: s, line: line, afterDot: afterDot, start: start))
@@ -459,9 +492,21 @@ public enum MSLScanner {
             if c.isNumber {
                 let start = i
                 var s = ""
-                while i < chars.count, chars[i].isNumber || chars[i] == "." || chars[i] == "e"
-                    || chars[i] == "E" || chars[i] == "f" || chars[i] == "F"
-                    || (chars[i] == "-" && (s.last == "e" || s.last == "E")) {
+                let isHex = c == "0" && i + 1 < chars.count && (chars[i + 1] == "x" || chars[i + 1] == "X")
+                if isHex {
+                    s.append(chars[i]); s.append(chars[i + 1]); i += 2
+                    while i < chars.count, chars[i].isHexDigit || chars[i] == "." || chars[i] == "p" || chars[i] == "P"
+                        || ((chars[i] == "-" || chars[i] == "+") && (s.last == "p" || s.last == "P")) {
+                        s.append(chars[i]); i += 1
+                    }
+                } else {
+                    while i < chars.count, chars[i].isNumber || chars[i] == "." || chars[i] == "e" || chars[i] == "E"
+                        || ((chars[i] == "-" || chars[i] == "+") && (s.last == "e" || s.last == "E")) {
+                        s.append(chars[i]); i += 1
+                    }
+                }
+                // MSL's suffixes (`1u`, `0.5h`, `2.0f`, `3l`) belong to the literal, not to a following name.
+                while i < chars.count, "uUhHfFlL".contains(chars[i]) {
                     s.append(chars[i]); i += 1
                 }
                 out.append(Token(kind: .number, text: s, line: line, afterDot: false, start: start))

@@ -65,9 +65,14 @@ public final class EditorModel {
     /// the counter, so asking twice for the same kind still raises the sheet (spec §26.5).
     public internal(set) var recordingRequest: RecordingKind?
     public internal(set) var recordingRequestCount = 0
-    /// The running recording, so the progress sheet's Cancel can reach it. Not observed: only the
-    /// view that started it writes and cancels it.
-    @ObservationIgnored public var recordingTask: Task<Void, Never>?
+    /// The running recording, so the progress sheet's Cancel can reach it. Not observed itself;
+    /// `isRecording` is the observed mirror the menus disable on (spec §27.6).
+    @ObservationIgnored public var recordingTask: Task<Void, Never>? {
+        didSet { isRecording = recordingTask != nil }
+    }
+    /// Whether a recording is in flight. `recordingTask` is `@ObservationIgnored` — a command tree
+    /// re-evaluates on observed reads only, so the menu items need this flag to go grey.
+    public private(set) var isRecording = false
 
     // `internal`, not `private`: `EditorModel+Recording.record(...)` compiles the document's own
     // program for a recording and lives in another file.
@@ -81,7 +86,11 @@ public final class EditorModel {
     /// generate the same source and differ only in which asset a `tex<i>` slot names (a Texture
     /// Sample that has just been given an image), and that difference lives in the pipeline, not
     /// the text.
-    private var lastCompiled: (source: String, textures: [TextureSlot], fastMath: Bool, succeeded: Bool)?
+    /// `errors` is what that compile put in `diagnostics` on its own account — the mapped compile
+    /// lines, empty on success. Kept so the shortcut below can rebuild `diagnostics` from them plus
+    /// the *current* missing-texture warnings, rather than leaving a stale one standing (spec §27.8).
+    private var lastCompiled: (source: String, textures: [TextureSlot], fastMath: Bool,
+                               succeeded: Bool, errors: [Diagnostic])?
     /// Bumped by every `start()`/`scheduleCompile()` so `awaitIdle` can tell whether a
     /// new edit landed while it was suspended (`Task` is a struct — no identity to compare).
     private var scheduleCount = 0
@@ -191,6 +200,11 @@ public final class EditorModel {
     /// instead would register the revert as an undoable step, which would let ⌘Z resurrect the
     /// content the user just discarded.
     public func reload(package: ShaderPackage) {
+        // A recording belongs to the document it was started from (spec §27.6): a File ▸ Revert To
+        // Saved landing mid-recording would otherwise finish rendering the pre-revert program and
+        // then raise a save panel for it.
+        recordingTask?.cancel()
+        recordingTask = nil
         // A gesture that was open belongs to the document being replaced; its snapshot must not
         // survive to be committed against the new one.
         transactionSnapshot = nil
@@ -266,8 +280,8 @@ public final class EditorModel {
     /// instance) have no entry.
     ///
     /// Rebuilt lazily, because the canvas asks for a shape once per node per layout pass and
-    /// resolving one walks the document: the cache stands until the document changes (`shapesVersion`)
-    /// or the editor moves to another graph (the path). Reading `activePath` is also what registers
+    /// resolving one walks the document: the cache stands until a change that can alter a shape
+    /// bumps `shapesVersion` (spec §27.9) or the editor moves to another graph (the path). Reading `activePath` is also what registers
     /// this accessor's observation dependency on `viewState` and `document`, so a view laying out
     /// from the cache still updates on every edit.
     public var shapes: [NodeID: NodeShape] {
@@ -285,7 +299,9 @@ public final class EditorModel {
     /// The cached shapes and the document version + graph they were built for.
     @ObservationIgnored private var shapesCache: [NodeID: NodeShape] = [:]
     @ObservationIgnored private var shapesCacheKey: (version: Int, path: GraphPath)?
-    /// Bumped after every document mutation, which is what makes the cache stale. Not observed:
+    /// Bumped only for a change whose `changesShapes` is true — topology, `.setTitle`, a definition
+    /// accent, a non-uniformable `.setParam`, `.restore` (spec §27.9) — which is what makes the
+    /// cache stale; a node drag or a uniformable value leaves it standing. Not observed:
     /// `shapes` reads `document` anyway (through `activePath`), so views already track edits.
     @ObservationIgnored private var shapesVersion = 0
     /// How often `shapes` actually recomputed. Internal, for the tests that assert the cache holds.
@@ -353,6 +369,13 @@ public final class EditorModel {
     }
 
     private func perform(_ change: DocumentChange) {
+        // Spec §27.2: a NaN or infinite component is stored as 0. `.setParam` is the one funnel
+        // every editable value goes through, and a `TextField(value: .number)` parses "nan" quite
+        // happily — left in place it makes the document unsaveable (the JSON encoder cannot write
+        // one) and bakes as MSL that does not compile. Normalised here, before the graph write and
+        // before the uniform patch at the bottom, so both see the same value.
+        var change = change
+        if case .setParam(let id, let key, let value) = change { change = .setParam(id, key, value.finite) }
         // Set by a case that is topology for a reason `changeClass` cannot see on its own.
         var recompile = false
         let path = activePath
@@ -489,10 +512,15 @@ public final class EditorModel {
                 || (s.target.stitchableKind != nil && s.exportName != document.settings.exportName)
                 || (s.target == .realityKit && s.lightingModel != document.settings.lightingModel)
                 || (s.target == .realityKit && s.liveParameters != document.settings.liveParameters)
-            document.settings = s
             // The timeline and the time mode are document state; the clock that plays them is
-            // view state, so it has to be told (spec §26.3).
-            syncClock()
+            // view state, so it has to be told (spec §26.3) — but only when one of them actually
+            // moved (spec §27.5). `.setSettings` is also the vehicle for an image import, an asset
+            // relink, the export-name commit and every toggle in the inspector, and `syncClock`
+            // re-bases the wall-clock bookkeeping: doing that for an unrelated write drops
+            // sub-frame phase mid-playback and snaps a past-the-end readout back to the duration.
+            let clockMoved = s.timeline != document.settings.timeline || s.timeMode != document.settings.timeMode
+            document.settings = s
+            if clockMoved { syncClock() }
         case .addSticky(let note):
             document[path].stickies[note.id] = note
         case .updateSticky(let id, let text, let accent):
@@ -516,16 +544,21 @@ public final class EditorModel {
             document[path] = g
             pruneCommentSelection()
         case .restore(let doc):
+            // Undo/redo restores the settings along with everything else, so the timeline and the
+            // time mode can both have moved under the clock (spec §26.3) — and just as often have
+            // not, since every undoable edit comes back through here (spec §27.5).
+            let clockMoved = doc.settings.timeline != document.settings.timeline
+                || doc.settings.timeMode != document.settings.timeMode
             document = doc
             pruneAfterRemoval()
-            // Undo/redo restores the settings along with everything else, so the timeline and the
-            // time mode can both have moved under the clock (spec §26.3).
-            syncClock()
+            if clockMoved { syncClock() }
         }
-        // Every mutation above has landed, so anything cached off the old document is stale. Bumped
-        // here rather than before the switch because `.removeNodes` reads `shapes` while deciding
-        // what it may delete, and that read must not outlive its own edit (spec §21.8).
-        shapesVersion += 1
+        // Anything cached off the old document is stale — but only for a change that can actually
+        // reshape a node (spec §27.9): a drag applies `.moveNodes` per mouse event, and rebuilding
+        // every `NodeShape` of the active graph per frame re-tokenises every Expression formula.
+        // Bumped here rather than before the switch because `.removeNodes` reads `shapes` while
+        // deciding what it may delete, and that read must not outlive its own edit (spec §21.8).
+        if change.changesShapes { shapesVersion += 1 }
 
         if document.settings.assets != assetsBefore { refreshTextureBindings() }
 
@@ -654,8 +687,10 @@ public final class EditorModel {
             generatedSource = shader.source
             generatedLineMap = shader.lineMap
             resolvedTypes = shader.resolved
+            // Unconditional: the warnings are about the bytes on hand *now*, so a relinked texture
+            // has to lose its warning even when that settled compile failed (spec §27.8).
+            diagnostics = last.errors + missing
             if last.succeeded, let p = preview.pipeline {
-                diagnostics = missing
                 preview.uniforms = UniformImage.rebuild(layout: p.shader.layout, document: document, registry: registry)
                 refreshTextureBindings()
             }
@@ -672,7 +707,7 @@ public final class EditorModel {
             publish(pipeline)
             preview.uniforms = UniformImage.rebuild(layout: pipeline.shader.layout, document: document, registry: registry)
             preview.lastError = nil
-            lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, true)
+            lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, true, [])
         case .failure(let message, let lines, let g):
             guard g == generation else { return }
             preview.lastError = message
@@ -684,8 +719,9 @@ public final class EditorModel {
                 d.definition = shader.lineMap.definition(forLine: l.line)
                 mapped.append(d)
             }
-            diagnostics = (mapped.isEmpty ? [Diagnostic(.error, message)] : mapped) + missing
-            lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, false)
+            let errors = mapped.isEmpty ? [Diagnostic(.error, message)] : mapped
+            diagnostics = errors + missing
+            lastCompiled = (shader.source, shader.textures, doc.settings.fastMath, false, errors)
         case .superseded:
             break
         }

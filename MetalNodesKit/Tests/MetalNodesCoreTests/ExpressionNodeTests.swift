@@ -61,6 +61,11 @@ import Foundation
         doc.root.nodes[bare.id] = bare
         #expect(doc.shape(of: bare, in: .root, registry: .builtin)?.inputs.isEmpty == true)
     }
+
+    /// A hex literal is a number, not a socket named after its digits (spec §27.3, review finding 3).
+    @Test func aHexLiteralIsNotASocket() throws {
+        #expect(shape("0xFF * a").inputs.map(\.name) == ["a"])
+    }
 }
 
 @Suite struct ExpressionEmissionTests {
@@ -196,6 +201,22 @@ import Foundation
         let s = try ShaderGenerator.generate(document("   ")).source
         #expect(!s.contains("/* ?"))
         #expect(s.contains("v0 = 0.0;"))
+    }
+
+    /// A call is never a socket (spec §27.3, review finding 2): `fmod` produces no input, and the
+    /// call survives into the generated statement untouched.
+    @Test func aBuiltinCallProducesNoSocketAndCompilesToACall() throws {
+        #expect(ExpressionNode.sockets(forFormula: "fmod(a, 2.0)").map(\.name) == ["a"])
+        let src = try ShaderGenerator.generate(document("fmod(a, 2.0)"), registry: .builtin).source
+        #expect(emits(src, #"fmod\(u\.p\d+, 2\.0\)"#))
+    }
+
+    /// The defect review finding 7 named: a trailing `//` comment must not swallow the `;`
+    /// `template(for:)` appends after the formula.
+    @Test func aTrailingCommentDoesNotSwallowTheStatementsSemicolon() throws {
+        let src = try ShaderGenerator.generate(document("a * 2.0 // half")).source
+        #expect(emits(src, #"= u\.p\d+ \* 2\.0\s*;"#))
+        #expect(!src.contains("// half;"))
     }
 
     /// The highest-value regression for the swizzle Critical: an Expression with a real swizzle,

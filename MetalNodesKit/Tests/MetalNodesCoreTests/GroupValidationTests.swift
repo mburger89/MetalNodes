@@ -100,3 +100,22 @@ import CoreGraphics
         #expect(GraphValidator.isValidViewer(SocketRef(def.inputNode!, "x"), in: doc, registry: reg))
     }
 }
+
+extension GroupValidationTests {
+    @Test func duplicateSocketNamesOnADefinitionAreADiagnosticNotATrap() {
+        var doc = ShaderDocument.starter()
+        var def = GroupDefinition.make(name: "Dup")
+        def.inputs = [SocketDecl(name: "a", type: .concrete(.float)), SocketDecl(name: "a", type: .concrete(.float))]
+        def.outputs = [SocketDecl(name: "out", type: .concrete(.float))]
+        def.graph.connect(SocketRef(def.inputNode!, "a"), to: SocketRef(def.outputNode!, "out"))
+        doc.definitions[def.id] = def
+        let instance = NodeInstance(kind: .group(def.id), position: .zero)
+        doc.root.nodes[instance.id] = instance
+        let diags = GraphValidator.validate(document: doc, registry: reg, target: .fragment)
+        #expect(diags.contains { $0.message == "Definition “Dup” declares two inputs named “a”" })
+        // Generation must refuse through the diagnostic, never trap.
+        #expect(throws: GenerationError.self) {
+            try ShaderGenerator.generate(doc, target: .fragment, viewer: nil, viewerPath: [], viewerDefinition: nil, registry: reg)
+        }
+    }
+}

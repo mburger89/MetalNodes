@@ -81,7 +81,9 @@ enum DropResolver {
         }
         if let (ref, _) = best { return .socket(ref) }
 
-        for n in graph.nodes.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }).reversed()
+        // `NodeID.raw` is `UUID`, `Comparable` (Foundation, macOS 14 / iOS 17) in the same order as
+        // the old `uuidString` comparison (M2), without allocating a `String` per comparison.
+        for n in graph.nodes.values.sorted(by: { $0.id.raw < $1.id.raw }).reversed()
         where n.id != source.node {
             if let f = NodeGeometry.frame(for: n, shapes: shapes), f.contains(point) { return .node(n.id) }
         }

@@ -33,6 +33,34 @@ import Testing
     }
 }
 
+extension TimelineTests {
+    @Test func anAbsurdDurationDecodesToTheDefaultAndNeverTraps() throws {
+        for json in [#"{"duration":1e300,"frameRate":60,"loops":true}"#,
+                     #"{"duration":-1,"frameRate":60,"loops":true}"#,
+                     #"{"duration":0,"frameRate":60,"loops":true}"#,
+                     #"{"duration":4000,"frameRate":60,"loops":true}"#] {
+            let t = try JSONDecoder().decode(Timeline.self, from: Data(json.utf8))
+            #expect(t.duration == 4, "\(json)")
+            #expect(t.frameCount == 240, "\(json)")
+        }
+        let zero = try JSONDecoder().decode(Timeline.self, from: Data(#"{"duration":2,"frameRate":0,"loops":false}"#.utf8))
+        #expect(zero.frameRate == 60)
+        #expect(zero.duration == 2)
+        let missing = try JSONDecoder().decode(Timeline.self, from: Data("{}".utf8))
+        #expect(missing == Timeline())
+    }
+
+    @Test func frameCountIsBoundedBeforeTheIntConversion() {
+        #expect(Timeline.frameCount(duration: 1e300, frameRate: 60) == 1_000_000_000)
+        #expect(Timeline.frameCount(duration: .nan, frameRate: 60) == 1)
+        #expect(Timeline.frameCount(duration: 0.001, frameRate: 24) == 1)
+        #expect(Timeline.isValidDuration(3600))
+        #expect(!Timeline.isValidDuration(3600.5))
+        #expect(!Timeline.isValidDuration(0))
+        #expect(!Timeline.isValidDuration(.infinity))
+    }
+}
+
 @Suite struct TimelineClockTests {
     private func clock(_ duration: Double = 1, fps: Int = 30, loops: Bool = true, mode: TimeMode = .fixedRate) -> TimelineClock {
         TimelineClock(timeline: Timeline(duration: duration, frameRate: fps, loops: loops), mode: mode)
@@ -75,7 +103,39 @@ import Testing
         var c = clock(1, fps: 30, loops: false)
         c.seek(elapsed: 2.5)
         #expect(c.frame == 29)
-        #expect(c.elapsedSeconds == 2.5)                // the readout keeps counting
+        // The readout stops at the duration rather than counting past the end (spec §27.5).
+        #expect(c.elapsedSeconds == 1)
+        #expect(!c.isPlaying)
+    }
+
+    @Test func seekingPastTheEndStopsTheClockInWallClockMode() {
+        var c = TimelineClock(timeline: Timeline(duration: 1, frameRate: 60, loops: false), mode: .wallClock)
+        c.seek(elapsed: 0.5)
+        #expect(c.frame == 30)
+        #expect(c.isPlaying)
+        #expect(c.elapsedSeconds == 0.5)
+        c.seek(elapsed: 5)
+        #expect(c.frame == 59)
+        #expect(!c.isPlaying)
+        #expect(c.elapsedSeconds == 1)          // the readout stops at the duration
+        c.seek(elapsed: 1e300)                  // bounded before the Int conversion
+        #expect(c.frame == 59)
+        c.seek(elapsed: .nan)
+        #expect(c.frame == 0)
+    }
+
+    /// `seek` must stop only on the transition *past* the last frame, exactly as `step()` does —
+    /// not on reaching it, which would engage the end state up to 1/fps early.
+    @Test func seekingToExactlyTheLastFrameDoesNotYetStopTheClock() {
+        var c = TimelineClock(timeline: Timeline(duration: 1, frameRate: 60, loops: false), mode: .wallClock)
+        c.seek(elapsed: 0.99)
+        #expect(c.frame == 59)
+        #expect(c.isPlaying)
+        #expect(c.elapsedSeconds == 0.99)
+        c.seek(elapsed: 1.0)
+        #expect(c.frame == 59)
+        #expect(!c.isPlaying)
+        #expect(c.elapsedSeconds == 1)
     }
 
     @Test func scrubbingClampsAndPauses() {
@@ -103,5 +163,27 @@ import Testing
         #expect(c.frame == 59)
         #expect(!c.isPlaying)
         #expect(c.mode == .wallClock)
+    }
+
+    @Test func retargetingPreservesTimeNotTheFrameIndex() {
+        var c = TimelineClock(timeline: Timeline(duration: 4, frameRate: 60, loops: true), mode: .fixedRate)
+        c.frame = 100                            // 1.667 s
+        c.retarget(Timeline(duration: 4, frameRate: 24, loops: true), mode: .fixedRate)
+        #expect(c.frame == 40)                   // round(1.667 × 24)
+        c.retarget(Timeline(duration: 1, frameRate: 30, loops: false), mode: .fixedRate)
+        #expect(c.frame == 29)                   // 1.667 s is past a 1 s clip: clamped to the end
+    }
+
+    /// A zero frame rate is not a value any writer produces, but `Timeline` is a struct anyone can
+    /// build and `frameCount` already survives one — so `retarget` must too. Both halves of the
+    /// arithmetic are the trap: `t · 0` on the way in, and `0 / 0` on the way out again (spec §27.5).
+    @Test func retargetingThroughAZeroFrameRateClampsInsteadOfTrapping() {
+        var c = clock(1, fps: 30)
+        c.frame = 10
+        c.retarget(Timeline(duration: 1, frameRate: 0, loops: true), mode: .fixedRate)
+        #expect(c.frame == 0)                    // frameCount is 1 at a zero rate, so 0 is the end
+        // Now the clock's *own* rate is zero: `Double(0) / Double(0)` is NaN, and `Int(NaN)` traps.
+        c.retarget(Timeline(duration: 4, frameRate: 60, loops: true), mode: .fixedRate)
+        #expect(c.frame == 0)
     }
 }

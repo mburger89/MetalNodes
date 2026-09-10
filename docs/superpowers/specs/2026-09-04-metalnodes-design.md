@@ -2001,3 +2001,92 @@ public enum FrameRenderer {
 - **Frame-exactness:** a fragment document whose colour is `float4(time, 0, 0, 1)` exported as an 8×8 image sequence of three frames at 60 fps; frame k's red channel equals `k / 60` within one 8-bit step. The same document through `VideoSink` for twelve frames; `AVAsset` reports twelve frames at 60 fps and a 0.2 s duration.
 - **Cancellation:** cancelling after frame 3 leaves no output file or directory.
 - **Live (macOS):** scrub with the slider and the `,` `.` keys, switch modes, set 2 s at 30 fps, record a video and open it in QuickTime Player, record a sequence and count the files, take a snapshot; both `xcodebuild`s warning-free; the four builds green as §25.6 defines them.
+
+## 27. M11 addendum — review fixes (added 2026-09-09)
+
+M11 is a correctness and performance milestone. A four-reviewer pass over `main` at `75ed387` (reports in `docs/superpowers/reviews/2026-09-09-ultrareview-{core,render,editor,canvas}.md`) found 63 items: no critical, 9 high, 22 medium, 32 low. M11 fixes every confirmed bug that a user can reach, the hot-path performance defects the canvas and the editor pay on every event, and the decode paths that trap instead of failing. Structural refactors are parked (§27.10). Decisions taken with the user: fix, don't re-architect; each fix carries a regression test that fails against the pre-fix code.
+
+§27 wins for M11 wherever it and §24, §25 or §26 differ in detail. The document format stays at version 2: every decode change here is tolerance or refusal of input that no build has ever written, and `FormatCorpusTests` does not move.
+
+### 27.1 Scope and order
+
+1. Decode and validation hardening in Core (§27.2).
+2. The Expression scanner (§27.3).
+3. Graph traversal cost (§27.4).
+4. The clock's end state and retargeting (§27.5).
+5. Recording: the gate, the video ceiling, lifetime, failure reporting, colour (§27.6).
+6. Preview draw rate and colour (§27.7).
+7. Inspector fields and the recording menu (§27.8).
+8. Canvas hot paths and transaction ownership (§27.9).
+9. Parked items (§27.10) and verification (§27.11).
+
+### 27.2 Decode and validation hardening
+
+- **Duplicate ids never trap.** `Graph` and `ShaderDocument` decode their node, edge, sticky, frame and definition lists through a helper that throws `DecodingError.dataCorrupted` naming the first duplicate (`"duplicate node id <id>"`, `"two wires into <socket>"`), so `ShaderPackage` reports "The shader could not be read: …" with that text instead of the app crashing. The clipboard decoder inherits the same behaviour.
+- **Duplicate socket names on a definition are a diagnostic**, not a trap: `GraphValidator.validate(document:)` reports `Definition “X” declares two inputs named “a”` (and the same for outputs), and `TypeResolver` builds its socket maps with first-wins uniquing so no internal caller can ever trap on them.
+- **`Timeline` defends itself.** Decoding clamps `duration` to a finite value in `(0, 3600]` (default 4 when it is not) and `frameRate` to one of `frameRates` (default 60 when it is not); `frameCount` and `seek(elapsed:)` compute through a bounded `Double` before any `Int` conversion, so no timeline value can trap. The inspector's guard stays as the user-facing message.
+- **A non-finite float parameter is 0.** `ParamValue.finite` maps NaN and ±∞ components to 0; `EditorModel` applies it to every `.setParam`, and both MSL literal spellings (`ParamValue.mslLiteral`, `ParamValues`) spell a non-finite component as `0.0`. Save can no longer fail on a value the JSON encoder cannot write, and a baked literal is always valid MSL.
+- **`AssetInfo.fileExtension` is sanitised on decode** to alphanumerics only (empty → `"bin"`), so a hand-edited manifest cannot reach `FileWrapper` with a path separator.
+
+### 27.3 The Expression scanner
+
+- **A call is never a socket.** In an Expression formula an identifier immediately followed by `(` (ignoring whitespace) is a function call whatever its name, and is never a socket. This covers every MSL builtin, the app's own `mn_*` helpers, and user-typed helpers.
+- **The reserved list grows** to the `metal_stdlib` math, relational, geometric and derivative functions a one-liner reaches for (`fmod`, `fmin`, `fmax`, `fabs`, `fwidth`, `dfdx`, `dfdy`, `any`, `all`, `powr`, `exp10`, `log10`, `rint`, `sincos`, `mad`, `transpose`, `determinant`, `as_type`, `ldexp`, `frexp`, `copysign`, `nextafter`, `fdim`, `hypot`, `precise`, `fast`), the constants `M_PI_F`, `M_PI_2_F`, `M_PI_4_F`, `M_1_PI_F`, `M_2_PI_F`, `M_E_F`, `M_LN2_F`, `M_LN10_F`, `M_SQRT2_F`, `INFINITY`, `NAN`, `MAXFLOAT`, and the packed types `packed_float2/3/4`, `packed_half2/3/4`.
+- **Numbers scan as MSL spells them**: a `0x`/`0X` hex literal, and any trailing suffix letters (`u U h H f F l L`) belong to the number token. `0xFF`, `1u`, `0.5h` produce no socket.
+- **Identifiers are ASCII** (`[A-Za-z_][A-Za-z0-9_]*`), the same rule `NodeRegistry.placeholderPattern` and Metal use, so the scanner, the substitution grammar and the compiler agree on what a name is. `π` is a stray character, not a socket.
+- **A trailing `//` comment cannot swallow the template's `;`**: `ExpressionNode.template(for:)` strips comments before hardening.
+- **Tokenising is memoised** in the same bounded `ScanCache` the scope-breaker scan uses, keyed on the source text, so every scanner entry point over one body shares a hit; `ExpressionNode.shape` computes the identifier list once for both sockets and generics.
+
+### 27.4 Graph traversal cost
+
+`TopoSort.order`, `TopoSort.orderAll` and the validator's cycle walk build one reverse adjacency map (`[NodeID: [NodeID]]`, sources of each node in sorted-uuid order) per traversal and index into it, so a traversal is O(N + E) rather than O(N·E). `ShaderDocument.node(_:)` no longer sorts the definitions before probing them — ids are unique document-wide (ruling R12), so iteration order cannot change the answer. Every emitted program is byte-identical before and after. Diagnostics are not, in one case: the cycle walk's sources are deduplicated and sorted, so a cycle reached through parallel wires from one source is reported once rather than once per wire, and a document with several cycles reports them in sorted order.
+
+### 27.5 The clock's end state and retargeting
+
+- **Both modes stop at the end.** With `loops` off, `seek(elapsed:)` past the end pins the last frame and sets `isPlaying = false`, exactly as `step()` does; `elapsedSeconds` stops at the duration. `togglePlayback` on a clock parked on its last frame restarts from frame 0 in either mode. (Amends §26.3, which let the wall-clock readout count past the end.)
+- **A frame-rate change preserves time.** `retarget` maps the current frame through `time` into the new rate (`round(time · newRate)`, clamped), so switching 60 → 24 fps at 1.67 s stays at 1.67 s instead of leaping to the end.
+- **`syncClock` runs only for a timeline or time-mode change.** `.setSettings` and `.restore` compare the old and new `timeline`/`timeMode` and leave the wall-clock bookkeeping alone otherwise; an image import or an export-name edit mid-playback no longer drops phase.
+- **The renderer writes `clock` only when it changed** in wall-clock mode (the `Equatable` compare the fixed-rate branch already uses), so `PlaybackControls` re-evaluates at the timeline's rate, not the display's.
+
+### 27.6 Recording
+
+- **The gate is the compiled program.** `record` first awaits `awaitIdle()`, then refuses when generation fails, when `preview.lastError` is set, or when any diagnostic is an error — "The graph has errors; fix them before recording." A recording is always of the document's current program; the last-good pipeline is never recorded in its place.
+- **Video has a ceiling and it is checked first.** H.264 level 6.2 bounds a video at `width ≤ 8192`, `height ≤ 8192` and `width · height ≤ 35,651,584`; `VideoSink.isSizeSupported(width:height:)` states it, `VideoSink.begin` throws `RecordingError.sizeUnsupported` above it, and the size sheet — which judges the even-rounded size the video will actually be encoded at, since `record` rounds each edge up before the writer sees it — refuses it with "H.264 video is limited to 8192 × 8192 and 35.6 megapixels." Images and sequences are bounded by a pixel budget instead: `ExportSession.maxPixels = 8192 × 8192` (67,108,864), refused in `init` and in the sheet ("Width and height must be between 1 and 16384 px, and at most 67,108,864 pixels together." — the budget grouped, in a fixed locale, so the sheet and this sentence cannot drift). `maxDimension` stays 16384 as the per-edge bound.
+- **The depth attachment is memoryless** on GPUs that support it (`device.supportsFamily(.apple1)`), since the pass clears it and stores `.dontCare`.
+- **A recording dies with its window.** `EditorView` cancels `recordingTask` on disappear, and `reload(package:)` cancels it too; a placement panel can never appear for a document that is no longer open.
+- **An early failure is shown in the sheet.** `RecordingPhase` gains `.failed(String)`; a `.failed` outcome that arrives while the sheet is still up swaps its contents to the message with an OK button, never dismissing a sheet and raising an alert in one update. A failure after the sheet is already down (the destination's own) still uses the "Export failed" alert.
+- **The video's duration is exact by construction**: `VideoSink.finish` calls `endSession(atSourceTime:)` at `(lastIndex + 1) / frameRate` before `markAsFinished`, so a one-frame video is one frame long. `finish`/`abandon` act only on a writer whose status is `.writing`, and `abandon` is idempotent.
+- **Errors name their source.** `RecordingError.encodeFailed(String)` ("The frame could not be rendered: …") replaces `writerFailed` for GPU-side failures, so a PNG export never blames a video writer.
+- **Frame names pad to the sequence length**: `FrameSink.begin(width:height:frameRate:frameCount:)` carries the count, and `ImageSequenceSink` pads the index to `max(4, digits(frameCount))`.
+- **Colour is tagged consistently.** The preview layer's `colorspace` is sRGB on both platforms, the PNG stays tagged sRGB, and the video carries `AVVideoColorPropertiesKey` (ITU-R 709 primaries, transfer and matrix), so preview, PNG and MP4 show the same bytes the same way.
+- **The recording menu items are disabled while a recording runs** (an observed `EditorModel.isRecording`), and Escape cancels both recording sheets (`.keyboardShortcut(.cancelAction)` on their Cancel buttons).
+- `ExportSession.init` refuses a negative or non-finite edge before any `Int` conversion.
+
+### 27.7 Preview draw rate and colour
+
+In `.fixedRate` mode the renderer sets the view's `preferredFramesPerSecond` to the timeline's frame rate (60 otherwise), so "one frame per drawn frame" plays a 24 fps document at 1×. Colour space as in §27.6.
+
+### 27.8 Inspector fields and menus
+
+The Duration, preview Width and preview Height drafts commit on Return, on focus loss and on disappear — the pattern the export-name field already uses — so a value the field shows is always the value the document holds. `compileNow`'s same-source shortcut rebuilds `diagnostics` from the stored compile errors plus the current missing-texture warnings in both branches, so a relinked texture clears its warning even when the last compile failed.
+
+### 27.9 Canvas hot paths and transaction ownership
+
+- **The wheel writes the camera once per gesture.** Scroll-wheel pan and zoom update the local transform per tick and write `viewState.cameras` after 150 ms of quiet (and on disappear), as the drag, magnify and touch paths already write only on gesture end.
+- **Hover is not observed.** The ⇧A/paste hover point lives in a reference-type box held in `@State`; moving the mouse over a canvas at rest no longer re-evaluates its body — except that the hit under the pointer is tracked in a `@State` written only when it changes, so a boundary crossing re-evaluates the body; the context menu computes its hit in the builder and reads the point in its actions.
+- **The shape cache survives cosmetic edits.** `DocumentChange.changesShapes` is true for topology changes, `.setTitle`, `.setDefinitionAccent`, a non-uniformable `.setParam` and `.restore`; `perform` bumps `shapesVersion` only for those. A node drag rebuilds no shapes.
+- **Z-order sorts compare UUIDs, not strings.** `NodeGeometry.drawOrder`, the comment layers and `DropResolver` order by `UUID`'s `Comparable`, which for uppercase `uuidString` is the same order without the allocation.
+- **A text field holds no transaction.** `ParamControl`'s text field commits its draft on Return, focus loss and disappear as one ordinary `apply`, opening no transaction on focus; the canvas's defensive resets become `EditorModel.endAllTransactions()` (unwinds every level) plus clearing `pendingWire`. Sliders keep their drag transaction.
+- **A live wire drag freezes the level of detail**: `compact` is false while `pendingWire != nil`, so a ⌘-wheel zoom across the LOD threshold cannot tear down the socket that owns the gesture.
+- **Space cannot latch**: the hold-to-pan key handles `.repeat` as held and clears on focus loss and when the window stops being key.
+
+### 27.10 Parked to M12
+
+`NodeView` equatability and the anchor-preference second pass; splitting `GraphCanvasView` and routing mouse input through `CanvasIntent`; measured node frames; parallel PNG encoding, double-buffered readback and `CVMetalTextureCache` for video; grid dots as one path; the wire canvas's fixed 4000 pt bounds; asynchronous texture decode and vertex-library compile; model→file mirroring keyed on a version counter; merging `RecordingPanelMac` and `ExportPanelMac`; `ColorPicker`/`Stepper` per-tick undo steps; the progress sheet closing before `finish()`; nested loop guards declared once; click and snap thresholds in screen space; the minimap and chooser recomputations; the explicit snapshot enum; an `isRecording` re-entry guard inside `ExportSession.run`; and every unconfirmed item, with the ⇧A bare-key live check first (§27.11).
+
+### 27.11 Testing and verification
+
+- **Core:** duplicate node/edge/definition ids and duplicate socket names decode or validate to an error, never a trap; `Timeline` with `1e300`, `-1`, `0`, `4000` and `frameRate: 0` decodes to the defaults and `frameCount` never traps (`nan` is covered by the `frameCount` and `seek` tests instead: `JSONDecoder` rejects the bare literal, so it cannot reach the decoder from a file); `ParamValue.finite` and both literal spellings for NaN/∞; `fmod(a, 2.0)`, `a * M_PI_F`, `fwidth(x)`, `mn_hash21(uv)`, `0xFF + 1u + 0.5h`, `π * r` and `a * 2.0 // half` each produce exactly the sockets and the MSL statement the rules above say; tokenise served from the cache; a reverse-adjacency traversal produces the same order as the old walk on the sample documents; `retarget` preserves time; `seek` past the end stops the clock.
+- **Render:** `VideoSink.isSizeSupported` at the four corners of the level-6.2 bound; `begin` above it throws `sizeUnsupported` before any frame; a one-frame video is `1/fps` long; `endSession` leaves the 12-frame duration at 0.2 s; `ExportSession` refuses `8193 × 8192`, `-1 × 8` and accepts `16384 × 4096`; a 12-frame sequence at 10,000 frames pads to five digits; `preferredFrameRate(for:)` is 24 for a 24 fps fixed-rate clock and 60 for wall clock.
+- **UI:** a document whose Metal compile fails is refused for recording with the graph-errors message; `record` awaits an in-flight debounce; `reload` cancels a running recording; a `.setSettings` that changes only `exportName` leaves `pausedElapsed` and `playStartedAt` untouched; `togglePlayback` at the wall-clock end restarts from 0; `.moveNodes` does not bump `shapeCacheRebuilds`; `DocumentChange.changesShapes` per case; `endAllTransactions` from depth 3; `isRecording` mirrors `recordingTask`; `RecordingSizeSheet.isValid(kind:width:height:)` per kind.
+- **Live (macOS):** ⇧A then type `fp,.` — all four characters land in the chooser field with no zoom or playback change (if not, gate the bare-key items on the first responder not being an `NSText`, the test `EditorCommands` already uses for Undo); a formula `fmod(a, 2.0)` shows one socket and compiles; a 24 fps fixed-rate document plays in real time; the Duration field commits when clicking away; a Custom Code node with a bad body makes Export Video refuse in the sheet; wheel-panning shows no inspector flicker; both `xcodebuild`s warning-free; the four builds green.

@@ -78,6 +78,22 @@ public enum DocumentChange: Sendable {
         }
     }
 
+    /// Whether this change can alter any `NodeShape` (spec §27.9): a shape reads a node's kind, its
+    /// non-uniform params (an Expression's formula, a Math node's operator), its title, and its
+    /// definition's sockets and accent — never its position, the comments or the settings.
+    ///
+    /// `EditorModel.perform` bumps `shapesVersion` only for these, so a node drag (`.moveNodes` once
+    /// per mouse event) and a slider tick (a uniformable `.setParam`) no longer throw away the
+    /// whole-graph cache and re-tokenise every Expression formula on the next layout pass.
+    var changesShapes: Bool {
+        switch self {
+        case .moveNodes, .setSettings, .addSticky, .updateSticky, .addFrame, .updateFrame,
+             .moveComments, .resizeComment, .removeComments: false
+        case .setParam(_, _, let v): !v.isUniformable
+        default: true
+        }
+    }
+
     /// Whether this change writes into the *active graph*'s own content — nodes, wires, comments
     /// — as opposed to a document- or definition-scoped edit (renaming, sockets, settings) that
     /// never touches `path`. `GroupDefinition.graph`'s setter already drops a `.graph`-content

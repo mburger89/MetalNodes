@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import MetalNodesCore
 
 /// Node frames without measuring views: a fixed width and an estimated height from the
@@ -159,8 +160,12 @@ enum NodeGeometry {
             .sorted { drawOrder($0, onTop: onTop) < drawOrder($1, onTop: onTop) }
     }
 
-    /// The canvas's z-order key: `onTop` nodes last, then stable UUID order.
-    static func drawOrder(_ node: NodeInstance, onTop: Set<NodeID>) -> (Int, String) {
-        (onTop.contains(node.id) ? 1 : 0, node.id.raw.uuidString)
+    /// The canvas's z-order key: `onTop` nodes last, then stable UUID order. `UUID` is `Comparable`
+    /// (Foundation, macOS 14 / iOS 17) and orders by raw byte value, which for the canonical
+    /// uppercase `uuidString` representation this codebase uses agrees with the old string
+    /// ordering — so this reorders nothing, it just stops allocating a `String` per comparison
+    /// (M2: n log n allocations per canvas body otherwise).
+    static func drawOrder(_ node: NodeInstance, onTop: Set<NodeID>) -> (Int, UUID) {
+        (onTop.contains(node.id) ? 1 : 0, node.id.raw)
     }
 }

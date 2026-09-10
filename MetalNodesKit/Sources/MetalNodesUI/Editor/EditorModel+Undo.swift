@@ -40,6 +40,14 @@ extension EditorModel {
         apply(.restore(before))
     }
 
+    /// Closes every open level. The canvas's reset before a new gesture (spec §27.9): a stranded
+    /// transaction — a drag SwiftUI cancelled without `onEnded` — is committed as the step it was
+    /// named for, never silently nested under the gesture that found it.
+    public func endAllTransactions() { while transactionDepth > 0 { endTransaction() } }
+
+    /// Abandons every open level; the document goes back to the outermost snapshot.
+    public func cancelAllTransactions() { while transactionDepth > 0 { cancelTransaction() } }
+
     /// No-op while a gesture transaction is open (spec §18.3): undoing mid-gesture would race
     /// the transaction's eventual `commitUndo`.
     ///

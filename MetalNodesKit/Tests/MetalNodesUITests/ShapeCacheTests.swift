@@ -1,4 +1,5 @@
 import Testing
+import CoreGraphics
 import Foundation
 import MetalNodesCore
 @testable import MetalNodesUI
@@ -64,6 +65,38 @@ import MetalNodesCore
         let uv = m.document.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
         #expect(inner[uv.id] == nil)
         #expect(m.shape(of: uv.id)?.title == NodeRegistry.builtin["input.uv"]?.title)
+    }
+
+    /// A drag applies `.moveNodes` once per mouse event and a settings write lands on every image
+    /// import: neither can alter a `NodeShape`, so neither may cost a whole-graph rebuild
+    /// (spec §27.9). A title *is* part of the shape, so that one still rebuilds.
+    @Test func aCosmeticEditKeepsTheCache() {
+        let m = model()
+        _ = m.shapes
+        let rebuilds = m.shapeCacheRebuilds
+        let uv = m.document.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
+        m.apply(.moveNodes([uv.id: CGPoint(x: 10, y: 10)]))
+        _ = m.shapes
+        #expect(m.shapeCacheRebuilds == rebuilds)
+        var s = m.document.settings
+        s.exportName = "x"
+        m.apply(.setSettings(s))
+        _ = m.shapes
+        #expect(m.shapeCacheRebuilds == rebuilds)
+        m.apply(.setTitle(uv.id, "Renamed"))
+        _ = m.shapes
+        #expect(m.shapeCacheRebuilds == rebuilds + 1)
+    }
+
+    @Test func changesShapesPerCase() {
+        let id = NodeID()
+        #expect(!DocumentChange.moveNodes([id: .zero]).changesShapes)
+        #expect(!DocumentChange.setParam(id, "b", .float(2)).changesShapes)
+        #expect(DocumentChange.setParam(id, "formula", .text("a")).changesShapes)
+        #expect(DocumentChange.setParam(id, "op", .enumCase("add")).changesShapes)
+        #expect(DocumentChange.setTitle(id, "t").changesShapes)
+        #expect(DocumentChange.removeNodes([id]).changesShapes)
+        #expect(DocumentChange.restore(ShaderDocument()).changesShapes)
     }
 
     @Test func reloadingThePackageRebuildsTheCache() {

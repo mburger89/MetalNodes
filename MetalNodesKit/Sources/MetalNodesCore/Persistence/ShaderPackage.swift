@@ -63,6 +63,8 @@ public struct ShaderPackage: Sendable, Equatable {
         }
         do {
             document = try JSONDecoder().decode(ShaderDocument.self, from: docData)
+        } catch DecodingError.dataCorrupted(let context) {
+            throw .undecodable(context.debugDescription)
         } catch {
             throw .undecodable(String(describing: error))
         }
