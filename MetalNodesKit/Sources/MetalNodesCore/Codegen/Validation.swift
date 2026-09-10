@@ -173,14 +173,15 @@ public enum GraphValidator {
             }
         }
 
-        // Cycles — iterative DFS with colouring.
+        // Cycles — iterative DFS with colouring. `sources` is the whole graph's reverse
+        // adjacency, built once (spec §27.4) instead of re-scanning every wire per node visited;
+        // it is sorted-uuid order, unlike the old inline closure's dictionary order, which only
+        // affects the order of "Wires form a cycle" diagnostics on a graph with several cycles.
         enum Mark { case visiting, done }
         var marks: [NodeID: Mark] = [:]
-        func sources(of n: NodeID) -> [NodeID] {
-            graph.inputs.filter { $0.key.node == n }.map(\.value.node).filter { graph.nodes[$0] != nil }
-        }
+        let sources = TopoSort.sourcesByNode(graph)
         for start in graph.nodes.keys.sorted(by: { $0.raw.uuidString < $1.raw.uuidString }) where marks[start] == nil {
-            var stack: [(NodeID, [NodeID])] = [(start, sources(of: start))]
+            var stack: [(NodeID, [NodeID])] = [(start, sources[start] ?? [])]
             marks[start] = .visiting
             while let top = stack.last {
                 let n = top.0
@@ -193,7 +194,7 @@ public enum GraphValidator {
                     case .done: break
                     case nil:
                         marks[next] = .visiting
-                        stack.append((next, sources(of: next)))
+                        stack.append((next, sources[next] ?? []))
                     }
                 } else {
                     marks[n] = .done

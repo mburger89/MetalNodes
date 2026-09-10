@@ -309,10 +309,11 @@ public extension ShaderDocument {
         }
     }
 
-    /// Ids are unique document-wide: find an instance in any graph.
+    /// Ids are unique document-wide (ruling R12), so any hit is *the* hit — find an instance in
+    /// any graph without paying to sort `definitions` into a stable scan order first.
     func node(_ id: NodeID) -> (node: NodeInstance, path: GraphPath)? {
         if let n = root.nodes[id] { return (n, .root) }
-        for d in definitions.values.sorted(by: { $0.id.raw.uuidString < $1.id.raw.uuidString }) {
+        for d in definitions.values {
             if let n = d.graph.nodes[id] { return (n, .definition(d.id)) }
         }
         return nil
