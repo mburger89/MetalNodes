@@ -43,7 +43,9 @@ import MetalNodesRender
         m.undo()
         #expect(m.preview.clock.timeline == Timeline())
         #expect(m.preview.clock.mode == .wallClock)
-        #expect(m.preview.clock.frame == 29)          // still valid in the restored timeline
+        // retarget keeps the *time*, not the frame index (spec §27.5): frame 29 of the 1 s @ 30
+        // fps clip is 0.967 s, which is frame 58 of the restored 4 s @ 60 fps timeline.
+        #expect(m.preview.clock.frame == 58)
     }
 
     @Test func reloadingADocumentReseedsTheClock() {

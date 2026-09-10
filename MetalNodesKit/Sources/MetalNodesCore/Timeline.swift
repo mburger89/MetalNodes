@@ -92,14 +92,22 @@ public struct TimelineClock: Sendable, Equatable {
     }
 
     /// Wall clock: place the clock at `elapsed` seconds of play. Wraps modulo the loop's duration
-    /// when looping; with loops off the frame pins at the end while `elapsedSeconds` keeps counting.
+    /// when looping; with loops off the clock stops at the last frame, exactly as `step()` does, and
+    /// the readout stops at the duration (spec §27.5).
     public mutating func seek(elapsed: Double) {
-        elapsedSeconds = elapsed
-        let raw = Int((elapsed * Double(timeline.frameRate)).rounded(.down))
+        let safe = elapsed.isFinite ? elapsed : 0
+        let scaled = (safe * Double(timeline.frameRate)).rounded(.down)
+        let raw = Int(min(max(scaled, -1e9), 1e9))
         if timeline.loops {
+            elapsedSeconds = safe
             frame = ((raw % timeline.frameCount) + timeline.frameCount) % timeline.frameCount
+        } else if raw >= timeline.frameCount - 1 {
+            frame = timeline.frameCount - 1
+            elapsedSeconds = timeline.duration
+            isPlaying = false
         } else {
-            frame = min(max(raw, 0), timeline.frameCount - 1)
+            elapsedSeconds = safe
+            frame = max(raw, 0)
         }
     }
 
@@ -114,10 +122,12 @@ public struct TimelineClock: Sendable, Equatable {
         elapsedSeconds = 0
     }
 
-    /// A settings change: keep the position where it can be kept.
+    /// A settings change keeps the *time*, not the frame index: a new frame rate re-scales what an
+    /// index means, and a user changing 60 → 24 fps at 1.67 s expects to stay at 1.67 s (spec §27.5).
     public mutating func retarget(_ timeline: Timeline, mode: TimeMode) {
+        let t = Double(frame) / Double(self.timeline.frameRate)
         self.timeline = timeline
         self.mode = mode
-        frame = min(frame, timeline.frameCount - 1)
+        frame = min(max(Int((t * Double(timeline.frameRate)).rounded()), 0), timeline.frameCount - 1)
     }
 }

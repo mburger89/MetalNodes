@@ -103,7 +103,25 @@ extension TimelineTests {
         var c = clock(1, fps: 30, loops: false)
         c.seek(elapsed: 2.5)
         #expect(c.frame == 29)
-        #expect(c.elapsedSeconds == 2.5)                // the readout keeps counting
+        // The readout stops at the duration rather than counting past the end (spec §27.5).
+        #expect(c.elapsedSeconds == 1)
+        #expect(!c.isPlaying)
+    }
+
+    @Test func seekingPastTheEndStopsTheClockInWallClockMode() {
+        var c = TimelineClock(timeline: Timeline(duration: 1, frameRate: 60, loops: false), mode: .wallClock)
+        c.seek(elapsed: 0.5)
+        #expect(c.frame == 30)
+        #expect(c.isPlaying)
+        #expect(c.elapsedSeconds == 0.5)
+        c.seek(elapsed: 5)
+        #expect(c.frame == 59)
+        #expect(!c.isPlaying)
+        #expect(c.elapsedSeconds == 1)          // the readout stops at the duration
+        c.seek(elapsed: 1e300)                  // bounded before the Int conversion
+        #expect(c.frame == 59)
+        c.seek(elapsed: .nan)
+        #expect(c.frame == 0)
     }
 
     @Test func scrubbingClampsAndPauses() {
@@ -131,5 +149,14 @@ extension TimelineTests {
         #expect(c.frame == 59)
         #expect(!c.isPlaying)
         #expect(c.mode == .wallClock)
+    }
+
+    @Test func retargetingPreservesTimeNotTheFrameIndex() {
+        var c = TimelineClock(timeline: Timeline(duration: 4, frameRate: 60, loops: true), mode: .fixedRate)
+        c.frame = 100                            // 1.667 s
+        c.retarget(Timeline(duration: 4, frameRate: 24, loops: true), mode: .fixedRate)
+        #expect(c.frame == 40)                   // round(1.667 × 24)
+        c.retarget(Timeline(duration: 1, frameRate: 30, loops: false), mode: .fixedRate)
+        #expect(c.frame == 29)                   // 1.667 s is past a 1 s clip: clamped to the end
     }
 }
