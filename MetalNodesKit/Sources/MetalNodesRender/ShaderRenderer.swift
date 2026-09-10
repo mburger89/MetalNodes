@@ -33,6 +33,16 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         clock.mode == .fixedRate ? clock.timeline.frameRate : 60
     }
 
+    /// The wall clock's next value, or nil when nothing a reader can observe changed (spec §27.5).
+    /// `seek` rewrites `elapsedSeconds` on every call, so whole-value equality would never hold;
+    /// the readers — the frame counter, the scrubber, Play/Pause — see `frame` and `isPlaying`,
+    /// and the `elapsedSeconds` readout advancing once per frame is exactly the timeline's rate.
+    public static func wallClockAdvance(_ clock: TimelineClock, elapsed: Double) -> TimelineClock? {
+        var next = clock
+        next.seek(elapsed: elapsed)
+        return next.frame != clock.frame || next.isPlaying != clock.isPlaying ? next : nil
+    }
+
     public func draw(in view: MTKView) {
         guard let program = state.program, let image = state.uniforms,
               image.layout == program.pipeline.shader.layout,
@@ -58,11 +68,13 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
                 let now = CACurrentMediaTime()
                 let started: Double
                 if let s = state.playStartedAt { started = s } else { started = now; state.playStartedAt = now }
-                var next = state.clock
-                next.seek(elapsed: state.pausedElapsed + (now - started))
-                // `clock` is observable: an unchanged value written 60×/s would re-evaluate the
-                // preview controls at the display's rate even for a 24 fps timeline (spec §27.5).
-                if next != state.clock { state.clock = next }
+                // `clock` is observable: `seek` rewrites `elapsedSeconds` on every call, so whole-
+                // value equality would never hold and every draw would re-evaluate the preview
+                // controls at the display's rate even for a 24 fps timeline. Write only when what a
+                // reader can see — `frame` or `isPlaying` — actually changed (spec §27.5).
+                if let next = Self.wallClockAdvance(state.clock, elapsed: state.pausedElapsed + (now - started)) {
+                    state.clock = next
+                }
             } else if let started = state.playStartedAt {
                 state.pausedElapsed += CACurrentMediaTime() - started
                 state.playStartedAt = nil
