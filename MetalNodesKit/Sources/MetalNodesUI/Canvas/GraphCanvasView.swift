@@ -64,8 +64,20 @@ public struct GraphCanvasView: View {
     /// and a `@State` value written on every pointer move would re-evaluate the whole canvas body —
     /// every visible `NodeView` — per mouse event. Mutating a field of a class held in `@State`
     /// invalidates nothing (spec §27.9, H2).
+    ///
+    /// Everything that needs the point therefore reads it *when it acts*, never when a view body
+    /// was built: ⇧A in its key handler, and the context menu's items in their action closures
+    /// (`CanvasContextMenu.canvasPoint` is a closure for exactly this reason). Its initial value is
+    /// the viewport centre, set in `onAppear`; a pointer leaving the canvas must not reset it,
+    /// because opening the context menu is itself such a departure — the menu is its own window —
+    /// and Paste would then land at the centre instead of under the cursor.
     final class PointBox { var point: CGPoint = .zero }
     @State private var hover = PointBox()      // viewport coords, for ⇧A
+    /// What the pointer is over, for the macOS context menu's item set (the adopted node, the
+    /// viewer items, "New Custom Code Node"). That one *is* a value the body reads, so it must be
+    /// `@State` — but it is written only when the pointer crosses a node/socket/wire/comment
+    /// boundary, so the body re-evaluates a handful of times per traversal rather than per pixel.
+    @State private var hoverHit: CanvasHit?
     /// Last background click (viewport coords), for synthesising double-click since
     /// `backgroundDrag` already claims single clicks — see its `onEnded` click branch.
     @State private var lastClick: (time: Date, point: CGPoint)?
@@ -138,12 +150,18 @@ public struct GraphCanvasView: View {
             }
             .contentShape(Rectangle())
             #if os(macOS)
-            // Parity with the iPad long-press (spec §22.3). `hover.point` is where the pointer
-            // was when the menu opened, so Paste lands under the cursor like ⌘V does, and the hit
-            // under it is what the menu's node items adopt (`CanvasContextMenu.adoptedNode`).
+            // Parity with the iPad long-press (spec §22.3): Paste lands under the cursor like ⌘V
+            // does, and the hit under it is what the menu's node items adopt
+            // (`CanvasContextMenu.adoptedNode`). SwiftUI builds this content once, when the menu
+            // opens, and since M11 a pointer move no longer invalidates the canvas body, so neither
+            // half can simply be read here. Instead: the point is passed as a closure the items call
+            // when one is chosen, and the hit comes from `hoverHit`, which `onContinuousHover`
+            // refreshes whenever the pointer crosses a boundary — `hit(at:)` covers the window
+            // before the first hover lands.
             .contextMenu {
-                let p = transform.toCanvas(hover.point)
-                CanvasContextMenu(model: model, canvasPoint: p, hit: hit(at: p))
+                CanvasContextMenu(model: model,
+                                  canvasPoint: { transform.toCanvas(hover.point) },
+                                  hit: hoverHit ?? hit(at: transform.toCanvas(hover.point)))
             }
             #else
             // The long-press menu. A popover rather than SwiftUI's `.contextMenu`, because the
@@ -155,7 +173,7 @@ public struct GraphCanvasView: View {
                                                           size: CGSize(width: 1, height: 1)))),
                      arrowEdge: .top) { anchor in
                 VStack(alignment: .leading, spacing: 6) {
-                    CanvasContextMenu(model: model, canvasPoint: anchor.canvasPoint, hit: anchor.hit)
+                    CanvasContextMenu(model: model, canvasPoint: { anchor.canvasPoint }, hit: anchor.hit)
                         .buttonStyle(.borderless)
                 }
                 .padding(12)
@@ -207,8 +225,16 @@ public struct GraphCanvasView: View {
             #endif
             .onContinuousHover { phase in
                 switch phase {
-                case .active(let p): hover.point = p
-                case .ended: hover.point = CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+                case .active(let p):
+                    hover.point = p
+                    let h = hit(at: transform.toCanvas(p))
+                    if h != hoverHit { hoverHit = h }
+                case .ended:
+                    // Deliberately nothing: the pointer also "leaves" when the context menu opens
+                    // over the canvas (the menu is its own window), and resetting the point there
+                    // would send Paste to the viewport centre. The stale point of wherever the
+                    // pointer last was is exactly what the menu wants.
+                    break
                 }
             }
             .onKeyPress(characters: .init(charactersIn: "aA")) { press in

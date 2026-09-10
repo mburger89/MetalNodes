@@ -8,8 +8,13 @@ import MetalNodesCore
 /// enough that the canvas, not a text field, is what the gesture addressed.
 struct CanvasContextMenu: View {
     let model: EditorModel
-    /// Canvas coordinates: where Paste lands and where a new sticky note is centred.
-    let canvasPoint: CGPoint
+    /// Canvas coordinates: where Paste lands and where a new sticky note is centred. A closure, not
+    /// a value, because on macOS the menu's content is built once — when the menu opens — while the
+    /// point it should use is the one under the pointer at that moment, and since M11 a pointer move
+    /// no longer re-evaluates the canvas body (spec §27.9, H2), so a value captured at body time is
+    /// stale by a click. Every item therefore calls this *inside* its action, when the item is
+    /// chosen and the hover point is whatever the last move left behind.
+    let canvasPoint: () -> CGPoint
     /// What the press landed on — the viewer items read the socket, and a node outside the
     /// selection becomes the selection (see `adoptedNode`). On macOS it is the hit under the
     /// pointer when the menu opened.
@@ -74,7 +79,7 @@ struct CanvasContextMenu: View {
             .disabled(!canCopy)
         Button("Copy") { act { model.copySelection() } }
             .disabled(!canCopy)
-        Button("Paste") { act { model.paste(at: canvasPoint) } }
+        Button("Paste") { act { model.paste(at: canvasPoint()) } }
             .disabled(!model.canPaste)
         Button("Duplicate") { act { model.duplicateSelection() } }
             .disabled(!canCopy)
@@ -94,15 +99,20 @@ struct CanvasContextMenu: View {
         Divider()
         Button("Frame Selection") { act { model.frameSelection() } }
             .disabled(selection.isEmpty)
-        Button("Add Sticky Note") { act { model.addSticky(centredAt: canvasPoint) } }
+        Button("Add Sticky Note") { act { model.addSticky(centredAt: canvasPoint()) } }
         if Self.showsNewCustomCodeNode(hit: hit) {
-            Button("New Custom Code Node") { act { model.newCustomCodeDefinition(at: canvasPoint) } }
+            Button("New Custom Code Node") { act { model.newCustomCodeDefinition(at: canvasPoint()) } }
         }
         if let ref = viewerSocket {
             Divider()
             Button(model.viewer == ref ? "Clear Viewer" : "Set Viewer") { act { model.toggleViewer(ref) } }
         }
     }
+
+    /// What Paste, "Add Sticky Note" and "New Custom Code Node" would use if chosen right now.
+    /// A SwiftUI `Button`'s action is not reachable from a test, so this is the seam that lets one
+    /// assert the point is read at *choose* time rather than captured when the menu was built.
+    func pastePoint() -> CGPoint { canvasPoint() }
 
     /// The socket the viewer items act on. A viewer is always an *output*, so pressing an input
     /// socket — or a node body — views that node's first output, exactly what the ◉ badge and ⌘⇧V
