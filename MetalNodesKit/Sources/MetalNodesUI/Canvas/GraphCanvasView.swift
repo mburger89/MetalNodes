@@ -351,6 +351,11 @@ public struct GraphCanvasView: View {
         .onDisappear {
             model.canvasHasFocus = false
             model.canvasRequest = nil
+            // The pending debounced write (`scheduleCameraWrite`) must land, not be dropped: spec
+            // §27.9 writes the camera "after 150 ms of quiet (and on disappear)". Cancelling
+            // without first flushing would save the pre-flick camera for a wheel gesture that
+            // ended less than 150 ms before this teardown.
+            model.viewState.cameras[model.activePath] = transform.camera
             cameraWrite?.cancel()
         }
     }
@@ -842,14 +847,17 @@ public struct GraphCanvasView: View {
     /// after the gesture settles. `transform` inside the task reads the current `@State` value —
     /// the closure captures `self`, a value whose `@State` reads always go to the live storage —
     /// so the write lands on wherever the camera is when the timer fires, not where it was when
-    /// scheduled. `.onChange(of: model.activePath)` and `.onDisappear` cancel this so a stale
-    /// write from the graph being left cannot land on the camera just loaded for a new one.
+    /// scheduled. `.onChange(of: model.activePath)` cancels this so a stale write from the graph
+    /// being left cannot land on the camera just loaded for a new one — it writes the old graph's
+    /// camera itself instead. `.onDisappear` flushes synchronously before cancelling, so a pending
+    /// write still lands (spec §27.9: written "after 150 ms of quiet (and on disappear)").
     private func scheduleCameraWrite() {
         cameraWrite?.cancel()
         cameraWrite = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             model.viewState.cameras[model.activePath] = transform.camera
+            cameraWrite = nil
         }
     }
 
