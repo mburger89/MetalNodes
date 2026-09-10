@@ -934,3 +934,50 @@ Not a defect, but cost an hour: `cliclick`'s text-typing path stopped matching t
 6. Parked minors: `ExportSession.run` re-entry guard and explicit `snapshotTime:`; cancel during the last frame reports success; a Duration draft string so a rejected value is not displayed; `recordingRequest` never cleared.
 7. From the live checks: texture sampling inside a recorded material was not exercised; `Unlit` renders only Emissive by design (§23.7 rule 5), which surprises with a Base Color-only graph — a caption in the Lighting row would help.
 8. Carried from §16.5: off-centre palette placement, the T14 line-owner assertion, `.asset` in the label filter, `ScanCache` CRLF/LF twins, the §15.5 items.
+
+## 18. M11 execution record — review fixes (2026-09-09)
+
+Branch `m11-review-fixes` off `75ed387`, ten tasks run subagent-driven from `docs/superpowers/plans/2026-09-09-metalnodes-m11-review-fixes.md` against spec §27; the four review reports the milestone argues from are committed under `docs/superpowers/reviews/`. Every task had a review; three needed one fix round (Tasks 1, 4, 6, 9 — all plan-text defects, see 18.4); the final whole-branch review found no Critical, two Important, and one fix wave closed everything. Branch head `90caf03`: 1080 package tests (UI 363 / Render 102 / Core 615), warning-free; both `xcodebuild`s clean.
+
+### 18.1 What shipped
+
+| Task | Commit(s) | Item |
+|---|---|---|
+| 1 | `05aafa3`, `b8ca6bd` | Decoders throw `DecodingError.dataCorrupted` on a duplicate node/edge/sticky/frame/definition id (`Dictionary.uniqueOrThrow`); `ShaderPackage` reports the reason; duplicate socket names on a definition are a diagnostic and `TypeResolver` uniques first-wins; `Timeline` decodes to defaults outside (0, 3600] / `frameRates` and `frameCount` is bounded before the `Int`; `ParamValue.finite` and both MSL literal spellings write `0.0` for NaN/∞; `AssetInfo.fileExtension` sanitised on decode |
+| 2 | `f258860` | Expression scanner: an identifier followed by `(` is never a socket; the reserved list gains the `metal_stdlib` set and the `M_*_F`/`INFINITY`/`NAN`/packed types; hex and suffixed literals are one token; identifiers are ASCII; a trailing `//` comment is stripped before the template's `;`; `tokenise` memoised (`ScanCache`, 64) |
+| 3 | `248e185` | `TopoSort` and the validator's cycle walk index one reverse adjacency per traversal (O(N+E)); `ShaderDocument.node(_:)` no longer sorts definitions; the pre-M11 walk kept in `TopoSortTests` as the order oracle |
+| 4 | `6a1c8e9`, `423883d` | `TimelineClock.seek` past the end (loops off) pins the last frame, stops the clock and holds `elapsedSeconds` at the duration; `retarget` preserves time (60 → 24 fps at 1.67 s stays at 1.67 s); bounded before every `Int` |
+| 5 | `db33402` | `VideoSink.isSizeSupported` states H.264 level 6.2 (8192 per edge, 35,651,584 px) and `begin` refuses above it before any file; `endSession` makes the duration exact; `finish`/`abandon` act only on a `.writing` writer, `abandon` idempotent; ITU-R 709 colour tags; `ExportSession.maxPixels` (8192²), `isSizeSupported(_:)`, memoryless depth on Apple GPUs; `RecordingError.encodeFailed`; `FrameSink.begin(…frameCount:)` and zero-padded frame names |
+| 6 | `f1f452d`, `573adc7` | Fixed-rate preview draws at the timeline's rate (`ShaderRenderer.preferredFrameRate(for:)`); sRGB layer colour space on both platforms; `wallClockAdvance` writes `clock` only when `frame`/`isPlaying` changed |
+| 7 | `07cd4a2` | `record` awaits `awaitIdle()` and refuses on `lastError`/error diagnostics (the last-good pipeline is never recorded); `RecordingPhase.failed` shows an early failure in the sheet; a recording is cancelled on `.onDisappear` and on `reload`; observed `isRecording` disables the menu items; Escape cancels both sheets; the sheet bounds video and images separately |
+| 8 | `32b52a8` | `syncClock` only when timeline/timeMode moved (`.setSettings` and `.restore`); `togglePlayback` restarts from 0 at a non-looping end in either mode; `setTimeline` shares `Timeline.isValidDuration`; `DocumentChange.changesShapes` gates the shape-cache bump; `.setParam` stored through `.finite`; the same-source compile shortcut rebuilds diagnostics from the stored errors + current missing-texture warnings; Duration/W/H drafts commit on focus loss and disappear |
+| 9 | `fbd47f1`, `6c78a50` | Wheel pan/zoom writes `viewState.cameras` after 150 ms of quiet (flushed on path change and disappear); the hover point lives in an unobserved `PointBox`; z-order sorts compare `UUID`s |
+| 10 | `1ca6ac8` | `ParamControl`'s text field holds no transaction; `endAllTransactions`/`cancelAllTransactions`; `resetStrandedGesture()` at every gesture start (rolls back a stranded wire drag); `compact` frozen while a wire is dragged; Space handles `.repeat` and clears when the window stops being key |
+| fix wave | `90caf03` | Spec §27 amended to what shipped (caption, dedup note, `nan` note); the sheet validates the even-rounded video size; cancel honoured during the pre-flight settle; `retarget` clamp; `resetStrandedGesture` hoisted above `beginWire`'s guards; a generation counter guards the recording task's tail; stale comments |
+
+### 18.2 Rulings
+
+1. **Seek end threshold** (Task 4 review): the plan's `raw >= frameCount - 1` stopped the clock on *reaching* the last frame; spec says *past* — `raw >= frameCount`, matching `step()`.
+2. **Parallel-wire dedup** (Task 3): `sourcesByNode` dedups, so a cycle through two parallel wires reports once; accepted and written into §27.4.
+3. **Undo test 29 → 58** (Task 4): time-preserving retarget maps 29/30 s back into 4 s @ 60 fps as frame 58; the test's expectation follows §27.5.
+4. **Image caption** (Task 7): the brief's fuller sentence (both bounds) over the spec's short quote; spec amended; number grouped with a fixed `en_US` locale so code and spec agree byte for byte.
+5. **`wallClockAdvance`** (Task 6 review): the plan's whole-value guard was inert (`seek` rewrites `elapsedSeconds` every draw); the guard compares `frame` and `isPlaying`, the fields readers observe.
+6. **Camera flush on disappear** (Task 9 review): the brief said cancel-only; spec says "and on disappear" — write then cancel.
+7. **`.setTitle` stays `changesShapes == true`** (Task 8 report concern struck): an Expression's shape carries `customTitle`.
+8. **Task 2's "full package" evidence** was one bundle's summary; the controller ran the whole package (green) rather than a fix round.
+9. **Residual parked**: the progress closure in `EditorView.startRecording` is not generation-guarded (needs Revert To Saved plus a new recording inside one frame render) — M12.
+
+### 18.3 Live checks (spec §27.11)
+
+Pending — the screen was locked for the whole execution, so none of the §27.11 live items has run yet. To run against the `dd-m11` build: ⇧A then `fp,.`; `fmod(a, 2.0)` in an Expression; 24 fps fixed-rate real-time playback; Duration commits on click-away; a bad Custom Code body makes Export Video refuse *in the sheet*; wheel pan without inspector flicker and the camera restored after ⌘W/reopen; 8192 × 8192 video refused, 8192 × 4352 records; plus the reviewers' additions: greyed recording menu items during a recording, Escape on both sheets, right-click → Paste lands under the cursor after moving the pointer without a body pass, sRGB preview vs the PNG in Preview.app, an iPad-style concurrent gesture is not applicable on the Mac.
+
+### 18.4 What the reviews caught that the tests did not
+
+- Four plan-text defects, each caught by the task review and ruled for the reviewer (18.2 items 1, 5, 6, and Task 1's JSON-splice test that passed by producing invalid JSON — the implementer's own mutation check found that one).
+- Two vacuous plan tests replaced by implementers (Task 1's splice; Task 7's in-flight-compile test that passed with or without `awaitIdle()`); one brief test whose UUID prefix could scan as an identifier (Task 2).
+- The two-task seam the final review found: the sheet validated the typed size while the sink got `evenSize` — odd edges within ~500 px of the H.264 ceiling passed the sheet and failed `begin`.
+- Compatibility caveat: an existing document whose Expression used `all`, `any`, `mad`, `fast`, `precise`, `rint`, … as a *socket name* loses that socket (the wire dangles with a "No input socket named …" diagnostic). Spec-mandated; no migration.
+
+### 18.5 M12 list
+
+From spec §27.10 (parked by design) plus the ledger's deferred minors: `nodesInFlight` omits a re-drag's input-socket owner, so culling can still strand a re-drag (H4 sibling); the progress-closure generation guard (18.2 item 9); `.insert`/`.addNode` admit non-finite params programmatically; multi-line formula opening with a comment shifts `userLines` by one; the tokenise cache probe's parallel-eviction window; `AssetInfo` sanitised on decode only; `ExportSession.init` allocates before `VideoSink.begin` refuses; the video caption hardcodes 8192/35.6 MP; `RecordingSizeSheet.clamp` seeds against `maxDimension` for video; the export-name field lacks `.onDisappear`; W/H hooks as one row `.onDisappear`; a `Task` per wheel tick; M2 residue in `EditorModel+Comments`/`+Selection` sorts; `controlActiveState` → `appearsActive` when the deployment target moves; `TypeResolver` first-wins untested directly; nested loop guards declared once; the structural refactors (`NodeView` equatability, canvas split, `CanvasIntent` for the mouse path, measured node frames, parallel PNG encode / `CVMetalTextureCache`).
