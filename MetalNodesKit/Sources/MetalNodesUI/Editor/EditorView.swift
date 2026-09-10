@@ -14,6 +14,10 @@ public struct EditorView: View {
     @State private var recordingPhase: RecordingPhase?
     /// The last frame the progress sheet was told about.
     @State private var recordingProgress: RecordingProgress?
+    /// Which recording the view is showing. Bumped for every `startRecording`, so a task that was
+    /// cancelled (by `reload`, or by ⌘W) and is only now unwinding cannot tear down the sheet or
+    /// the `recordingTask` of a recording the user has since started (spec §27.6).
+    @State private var recordingGeneration = 0
     @State private var lastOrbitTranslation: CGSize = .zero
     /// The previous `MagnifyGesture` factor, so a pinch dollies by its step rather than its total.
     @State private var lastMagnification: CGFloat?
@@ -84,6 +88,8 @@ public struct EditorView: View {
         guard model.recordingTask == nil else { return }
         recordingProgress = nil
         recordingPhase = .progress
+        recordingGeneration += 1
+        let gen = recordingGeneration
         model.recordingTask = Task { @MainActor in
             let outcome = await model.record(kind, size: size, device: device,
                                              destination: services.recordingDestination) { p in
@@ -93,6 +99,10 @@ public struct EditorView: View {
                 // drops one raised while a sheet is still up.
                 if p.frame >= p.frameCount { recordingPhase = nil }
             }
+            // Only the newest recording owns the sheet and the task slot: `reload` cancels the
+            // running task and clears `recordingTask`, and the cancelled task resumes *after*
+            // whatever started next — clearing that recording's task and dismissing its sheet.
+            guard gen == recordingGeneration else { return }
             model.recordingTask = nil
             switch outcome {
             case .failed(let message):

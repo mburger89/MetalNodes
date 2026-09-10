@@ -128,6 +128,11 @@ public struct TimelineClock: Sendable, Equatable {
         let t = Double(frame) / Double(self.timeline.frameRate)
         self.timeline = timeline
         self.mode = mode
-        frame = min(max(Int((t * Double(timeline.frameRate)).rounded()), 0), timeline.frameCount - 1)
+        // Bounded in `Double` before the conversion, exactly as `seek` is (spec §27.2): a
+        // hand-built or decoded timeline can carry a zero frame rate, and `0/0` or `inf · 0` is a
+        // NaN that `Int(_:)` traps on rather than clamps.
+        let scaled = (t * Double(timeline.frameRate)).rounded()
+        let raw = scaled.isFinite ? Int(min(max(scaled, -1e9), 1e9)) : 0
+        frame = min(max(raw, 0), timeline.frameCount - 1)
     }
 }

@@ -83,6 +83,9 @@ extension EditorModel {
         // inside its debounce has not reached `preview` at all. So settle any pending compile
         // first, then refuse on any error the editor is already showing.
         await awaitIdle()
+        // The progress sheet is already up, and its Cancel cancels this very task — so a click
+        // during the settle must stop here rather than go on to render the whole clip (spec §27.6).
+        if Task.isCancelled { return .cancelled }
         guard (try? exportFiles()) != nil, preview.lastError == nil,
               !diagnostics.contains(where: { $0.severity == .error }), preview.program != nil else {
             return .failed("The graph has errors; fix them before recording.")

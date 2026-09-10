@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreGraphics
+import Foundation
 import MetalNodesCore
 import MetalNodesRender
 
@@ -20,8 +21,16 @@ struct RecordingSizeSheet: View {
     /// texture limit, and images a pixel budget — the sheet refuses the size here rather than
     /// letting the recording fail after the sheet is gone.
     static func isValid(kind: RecordingKind, width: Int, height: Int) -> Bool {
-        kind == .video ? VideoSink.isSizeSupported(width: width, height: height)
-                       : ExportSession.isSizeSupported(CGSize(width: width, height: height))
+        guard kind == .video else { return ExportSession.isSizeSupported(CGSize(width: width, height: height)) }
+        // A video is rendered at the even-rounded size — `record` rounds through the same
+        // `evenSize` before it hands the size to the writer — so that is the size the H.264
+        // ceiling has to be judged against. 4353 × 8190 fits the bound; the 4354 × 8190 actually
+        // encoded does not, and the sheet must say so rather than let `begin` throw afterwards.
+        // The per-edge bound comes first so the rounding never converts an absurd typed number.
+        guard width >= 1, height >= 1,
+              width <= ExportSession.maxDimension, height <= ExportSession.maxDimension else { return false }
+        let even = VideoSink.evenSize(CGSize(width: width, height: height))
+        return VideoSink.isSizeSupported(width: Int(even.width), height: Int(even.height))
     }
 
     /// The caption under a refused size: it names the ceiling the user has just hit, and the two
@@ -29,8 +38,16 @@ struct RecordingSizeSheet: View {
     static func limitText(for kind: RecordingKind) -> String {
         kind == .video
             ? "H.264 video is limited to 8192 × 8192 and 35.6 megapixels."
-            : "Width and height must be between 1 and \(ExportSession.maxDimension) px, and at most \(ExportSession.maxPixels) pixels together."
+            : "Width and height must be between 1 and \(ExportSession.maxDimension) px, and at most \(Self.maxPixelsText) pixels together."
     }
+
+    /// The image budget as the caption spells it: 67,108,864. Grouped, and in a fixed locale — the
+    /// number names a constant of the format, so the spec (§27.6), the test and the sheet must all
+    /// read the same whatever separator the user's region would otherwise impose. `en_US` rather
+    /// than `en_US_POSIX`: the POSIX locale groups nothing at all, and the digits are what is
+    /// being pinned here.
+    static let maxPixelsText = ExportSession.maxPixels.formatted(
+        .number.grouping(.automatic).locale(Locale(identifier: "en_US")))
 
     private var isValid: Bool { Self.isValid(kind: kind, width: width, height: height) }
 

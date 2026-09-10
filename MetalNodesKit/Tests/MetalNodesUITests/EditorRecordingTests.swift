@@ -486,6 +486,31 @@ enum ExportSessionFixture {
         #expect(m.recordingTask == nil)
     }
 
+    /// The progress sheet is up — and its Cancel live — while `record` is still settling a pending
+    /// compile, so a cancel that lands inside `awaitIdle()` must stop the recording there rather
+    /// than render the whole clip and place a file the user has already said no to (spec §27.6).
+    @Test func cancellingDuringThePreFlightSettlePlacesNothing() async {
+        let m = EditorModel(document: .sample(), compiler: RecordingCompiler())
+        m.debounceInterval = .milliseconds(200)
+        m.start()
+        await m.awaitIdle()
+        // An edit right before Record, so `awaitIdle()` has a debounce to wait out and the cancel
+        // lands inside the settle rather than after it.
+        var settings = m.document.settings
+        settings.exportName = "cancelled"
+        m.apply(.setSettings(settings))
+
+        let destination = MemoryRecordingDestination()
+        defer { destination.cleanUp() }
+        let task = Task { @MainActor in
+            await m.record(.snapshot, size: CGSize(width: 8, height: 8), device: MTLCreateSystemDefaultDevice(),
+                           destination: destination) { _ in }
+        }
+        task.cancel()
+        #expect(await task.value == .cancelled)
+        #expect(destination.placed.isEmpty)
+    }
+
     /// `isRecording` is the observed mirror the menus disable on; `recordingTask` itself is not
     /// observed, so the two must never drift.
     @Test func isRecordingMirrorsTheTask() {
@@ -515,11 +540,25 @@ enum ExportSessionFixture {
         #expect(!RecordingSizeSheet.isValid(kind: .snapshot, width: 10, height: 0))
     }
 
+    /// A video is judged at the size it will actually be encoded at: `record` rounds each edge up
+    /// to even before the writer sees it, so an odd size just inside the bound is over it once
+    /// rounded. 4353 × 8190 is 35,651,070 pixels — legal — but encodes as 4354 × 8190, which is
+    /// 35,659,260 and is not; 4351 × 8190 rounds to 4352 × 8190 and stays inside.
+    @Test func aVideoIsBoundedAtTheEvenSizeItWillBeEncodedAt() {
+        #expect(!RecordingSizeSheet.isValid(kind: .video, width: 4353, height: 8190))
+        #expect(RecordingSizeSheet.isValid(kind: .video, width: 4351, height: 8190))
+        // The rounding is the video's alone: an image is recorded at exactly the size asked for.
+        #expect(RecordingSizeSheet.isValid(kind: .imageSequence, width: 4353, height: 8190))
+    }
+
     /// The caption names the limit the user just hit, so the two kinds cannot share one string.
     @Test func theLimitTextNamesEachKindsCeiling() {
         #expect(RecordingSizeSheet.limitText(for: .video).contains("8192"))
         #expect(RecordingSizeSheet.limitText(for: .video).contains("35.6"))
-        #expect(RecordingSizeSheet.limitText(for: .snapshot).contains("\(ExportSession.maxPixels)"))
+        // Pinned whole, because the spec (§27.6) quotes this sentence: the budget is grouped, and
+        // in a fixed locale, so the number reads the same here, in the sheet and in the spec.
+        #expect(RecordingSizeSheet.limitText(for: .snapshot)
+                == "Width and height must be between 1 and 16384 px, and at most 67,108,864 pixels together.")
         #expect(RecordingSizeSheet.limitText(for: .snapshot) == RecordingSizeSheet.limitText(for: .imageSequence))
         #expect(RecordingSizeSheet.limitText(for: .video) != RecordingSizeSheet.limitText(for: .snapshot))
     }

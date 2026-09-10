@@ -173,4 +173,17 @@ extension TimelineTests {
         c.retarget(Timeline(duration: 1, frameRate: 30, loops: false), mode: .fixedRate)
         #expect(c.frame == 29)                   // 1.667 s is past a 1 s clip: clamped to the end
     }
+
+    /// A zero frame rate is not a value any writer produces, but `Timeline` is a struct anyone can
+    /// build and `frameCount` already survives one — so `retarget` must too. Both halves of the
+    /// arithmetic are the trap: `t · 0` on the way in, and `0 / 0` on the way out again (spec §27.5).
+    @Test func retargetingThroughAZeroFrameRateClampsInsteadOfTrapping() {
+        var c = clock(1, fps: 30)
+        c.frame = 10
+        c.retarget(Timeline(duration: 1, frameRate: 0, loops: true), mode: .fixedRate)
+        #expect(c.frame == 0)                    // frameCount is 1 at a zero rate, so 0 is the end
+        // Now the clock's *own* rate is zero: `Double(0) / Double(0)` is NaN, and `Int(NaN)` traps.
+        c.retarget(Timeline(duration: 4, frameRate: 60, loops: true), mode: .fixedRate)
+        #expect(c.frame == 0)
+    }
 }

@@ -620,18 +620,20 @@ public struct GraphCanvasView: View {
 
     private func beginWire(from ref: SocketRef, isInput: Bool) {
         canvasFocused = true
+        // Ahead of the guards, not inside each branch: a drag that bails — an input with no wire to
+        // detach, a socket whose type will not resolve — still has to unwind whatever the previous
+        // gesture stranded, or a leftover `pendingWire` keeps drawing with nothing driving it.
+        resetStrandedGesture()
         let g = model.graph
         if isInput {
             // Re-drag: detach the existing wire and continue from its source, as one undo step.
             guard let source = g.source(feeding: ref) else { return }
             guard let t = DropResolver.outputType(of: source, graph: model.graph, shapes: shapes, resolved: model.resolvedTypes) else { return }
-            resetStrandedGesture()
             model.beginTransaction("Rewire")
             model.apply(.disconnect(ref))
             pendingWire = PendingWire(source: source, type: t, point: anchors[ref] ?? .zero)
         } else {
             guard let t = DropResolver.outputType(of: ref, graph: g, shapes: shapes, resolved: model.resolvedTypes) else { return }
-            resetStrandedGesture()
             model.beginTransaction("Connect")
             pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero,
                                       isWildcard: DropResolver.isPlusOutput(ref, in: g))

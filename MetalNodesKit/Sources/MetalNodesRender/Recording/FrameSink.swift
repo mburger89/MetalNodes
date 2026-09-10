@@ -34,7 +34,9 @@ public final class ImageSequenceSink: FrameSink, @unchecked Sendable {
     private let directory: URL
     private let baseName: String
     private let singleFileName: String?
-    /// Digits in a frame number: wide enough that `clip_10000.png` still sorts after `clip_09999`.
+    /// Digits in a frame number. After `begin`, wide enough for every index of the sequence it was
+    /// told about, so the names sort in frame order in any file browser; never narrower than the
+    /// four digits a short sequence has always used.
     private var padding = 4
 
     public init(directory: URL, baseName: String, singleFileName: String? = nil) {
