@@ -47,6 +47,11 @@ public struct GraphCanvasView: View {
     /// breadcrumb at wheel rate. Drag, magnify and touch already write only on gesture end.
     @State private var cameraWrite: Task<Void, Never>?
     @FocusState private var canvasFocused: Bool
+    #if os(macOS)
+    /// Whether this canvas's window is the key window — the only signal that an app switch
+    /// happened while a bare key was held (spec §27.9, M8). macOS-only in SwiftUI.
+    @Environment(\.controlActiveState) private var controlActiveState
+    #endif
     /// Why the chooser is open: where to place, and (for a wire drop) what to auto-wire.
     struct Chooser: Identifiable {
         let id = UUID()
@@ -168,8 +173,8 @@ public struct GraphCanvasView: View {
             .focusable()
             .focusEffectDisabled()
             .focused($canvasFocused)
-            .onKeyPress(.space, phases: [.down, .up]) { press in
-                spaceHeld = press.phase == .down
+            .onKeyPress(.space, phases: [.down, .repeat, .up]) { press in
+                spaceHeld = press.phase != .up          // `.repeat` is still held
                 return .handled
             }
             .onKeyPress(.delete) { model.deleteSelection(); return .handled }
@@ -195,6 +200,11 @@ public struct GraphCanvasView: View {
                 model.canvasHasFocus = focused
                 if !focused { spaceHeld = false }
             }
+            #if os(macOS)
+            // An app switch with Space down never delivers the `.up`, and focus is per window,
+            // not per activation, so `canvasFocused` does not change either (spec §27.9, M8).
+            .onChange(of: controlActiveState) { _, s in if s != .key { spaceHeld = false } }
+            #endif
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p): hover.point = p
@@ -370,7 +380,10 @@ public struct GraphCanvasView: View {
                 return DraculaTheme.wireDefault.color
             }
             commentLayer(.stickies)
-            let compact = transform.zoom < Self.lodZoom
+            // Frozen while a wire is in flight (spec §27.9, H4): the socket that owns a live drag
+            // lives in the standard body; flipping to compact mid-drag tears it down and SwiftUI
+            // cancels the gesture without `onEnded`.
+            let compact = pendingWire == nil && transform.zoom < Self.lodZoom
             let errors = model.errorNodes
             // The selection draws last, so a node dragged over its neighbours stays on top —
             // `EditorModel.node(at:)` orders hit-testing to match (spec §19.6).
@@ -398,7 +411,7 @@ public struct GraphCanvasView: View {
                              onDragEnded: { endNodeDrag() },
                              onEditing: { editing in
                                  if editing {
-                                     if model.isInTransaction { model.endTransaction() }   // defensive reset
+                                     resetStrandedGesture()
                                      model.beginTransaction("Change Value")
                                  } else {
                                      model.endTransaction()
@@ -480,11 +493,23 @@ public struct GraphCanvasView: View {
         .allowsHitTesting(false)
     }
 
+    /// Before any gesture opens its own transaction (spec §27.9). A wire drag that was cancelled
+    /// without `onEnded` has applied a `.disconnect` it never resolved: that one is rolled back,
+    /// like Escape does. Any other stranded transaction is committed under its own name.
+    private func resetStrandedGesture() {
+        if pendingWire != nil {
+            pendingWire = nil
+            model.cancelAllTransactions()
+        } else {
+            model.endAllTransactions()
+        }
+    }
+
     // MARK: Node drag (whole selection, one transaction)
 
     private func beginNodeDrag() {
         canvasFocused = true
-        if model.isInTransaction { model.endTransaction() }   // defensive reset: an interrupted drag can leave one open
+        resetStrandedGesture()
         pendingDuplicate = InputModifiers.optionHeld && !model.selection.isEmpty
         model.beginTransaction(pendingDuplicate ? "Duplicate" : "Move")
         dragOrigins = [:]
@@ -541,7 +566,7 @@ public struct GraphCanvasView: View {
 
     private func beginCommentDrag(_ id: CommentID, resizing: Bool) {
         canvasFocused = true
-        if model.isInTransaction { model.endTransaction() }   // defensive reset, as node drags do
+        resetStrandedGesture()
         if resizing {
             guard let rect = model.graph[comment: id] else { return }
             model.beginTransaction("Resize")
@@ -595,13 +620,13 @@ public struct GraphCanvasView: View {
             // Re-drag: detach the existing wire and continue from its source, as one undo step.
             guard let source = g.source(feeding: ref) else { return }
             guard let t = DropResolver.outputType(of: source, graph: model.graph, shapes: shapes, resolved: model.resolvedTypes) else { return }
-            if model.isInTransaction { model.endTransaction() }   // defensive reset
+            resetStrandedGesture()
             model.beginTransaction("Rewire")
             model.apply(.disconnect(ref))
             pendingWire = PendingWire(source: source, type: t, point: anchors[ref] ?? .zero)
         } else {
             guard let t = DropResolver.outputType(of: ref, graph: g, shapes: shapes, resolved: model.resolvedTypes) else { return }
-            if model.isInTransaction { model.endTransaction() }   // defensive reset
+            resetStrandedGesture()
             model.beginTransaction("Connect")
             pendingWire = PendingWire(source: ref, type: t, point: anchors[ref] ?? .zero,
                                       isWildcard: DropResolver.isPlusOutput(ref, in: g))

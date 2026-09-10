@@ -166,6 +166,34 @@ import MetalNodesRender
         #expect(m.document == original)
     }
 
+    @Test func endAllTransactionsUnwindsEveryLevelIntoOneStep() {
+        let m = model()
+        let uv = m.document.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
+        m.beginTransaction("Move")
+        m.beginTransaction("Move")
+        m.beginTransaction("Move")
+        m.apply(.moveNodes([uv.id: CGPoint(x: 5, y: 5)]))
+        m.endAllTransactions()
+        #expect(!m.isInTransaction)
+        #expect(m.canUndo)
+        #expect(m.undoManager.undoActionName == "Move")
+        m.undo()
+        #expect(m.document.root.nodes[uv.id]?.position == uv.position)
+        #expect(!m.canUndo)                                 // exactly one step was registered
+    }
+
+    @Test func cancelAllTransactionsRestoresTheSnapshotFromAnyDepth() {
+        let m = model()
+        let uv = m.document.root.nodes.values.first { $0.kind == .builtin("input.uv") }!
+        m.beginTransaction("Rewire")
+        m.beginTransaction("Rewire")
+        m.apply(.moveNodes([uv.id: CGPoint(x: 5, y: 5)]))
+        m.cancelAllTransactions()
+        #expect(!m.isInTransaction)
+        #expect(m.document.root.nodes[uv.id]?.position == uv.position)
+        #expect(!m.canUndo)
+    }
+
     @Test func restoreNeverRegistersAnUndoStep() {
         let m = model()
         var doc = m.document

@@ -20,10 +20,6 @@ struct ParamControl: View {
     var labelWidth: CGFloat = NodeGeometry.minLabelColumn
 
     @State private var draft = ""
-    /// True between `onEditing?(true)` and `onEditing?(false)`, so a teardown can tell whether
-    /// it still owes the close. Tracked separately from `focused` because `@FocusState` is
-    /// reset by SwiftUI when the field leaves the hierarchy, without `onChange` observing it.
-    @State private var editingSession = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -71,33 +67,12 @@ struct ParamControl: View {
             #if !os(macOS)
             .textInputAutocapitalization(.never)
             #endif
+            // A text field holds no transaction — its single `apply` is its own undo step, so
+            // nothing can be stranded by a teardown and nothing unrelated can be absorbed while
+            // it is focused (spec §27.9).
             .onSubmit { commitDraft() }
-            .onChange(of: focused) { _, now in
-                // The commit must land *inside* the transaction `onEditing?(true)` opened on
-                // focus gain, so the whole edit — not just its snapshot — closes as one undo
-                // step when `onEditing?(false)` below ends it. Committing after would leave the
-                // transaction's snapshot equal to the still-uncommitted document, so
-                // `endTransaction`'s own `commitUndo` would register nothing, and the actual
-                // write would land as its own separate, untransacted step instead (Task 15 fix
-                // round 1, MUST-FIX 7).
-                if !now { commitDraft() }
-                editingSession = now
-                onEditing?(now)
-            }
-            .onDisappear {
-                // A focused field torn down with its row — the node was deselected, deleted,
-                // or the inspector switched to something else — loses focus without
-                // `onChange(of: focused)` ever firing, so the transaction opened on focus gain
-                // would stay open for the rest of the document's life: `EditorModel.undo()` is
-                // a no-op while one is open, and every later edit performs without registering,
-                // so ⌘Z is silently dead until a canvas drag's defensive reset happens to close
-                // it (in-app checklist item 29, found 2026-09-08). Close it here, committing the
-                // draft first, exactly as focus loss would have.
-                guard editingSession else { return }
-                editingSession = false
-                commitDraft()
-                onEditing?(false)
-            }
+            .onChange(of: focused) { _, now in if !now { commitDraft() } }
+            .onDisappear { commitDraft() }
             .focused($focused)
             .onAppear { draft = current }
             .onChange(of: current) { _, new in if !focused { draft = new } }
