@@ -26,6 +26,13 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         state.drawableSize = size
     }
 
+    /// The draw rate the clock wants (spec §27.7): in `.fixedRate` mode one draw is one frame, so
+    /// the view must draw at the timeline's rate for the preview to play at 1×; the wall clock is
+    /// placed by elapsed time and draws at the display's 60.
+    public static func preferredFrameRate(for clock: TimelineClock) -> Int {
+        clock.mode == .fixedRate ? clock.timeline.frameRate : 60
+    }
+
     public func draw(in view: MTKView) {
         guard let program = state.program, let image = state.uniforms,
               image.layout == program.pipeline.shader.layout,
@@ -36,6 +43,11 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
             ring = UniformRing(device: device, size: image.layout.totalSize)
         }
 
+        // Set from the draw, not from `updateNSView`: the representable would have to read `clock`
+        // to know, and `clock` is rewritten every wall-clock frame — the update would run at 60 Hz.
+        let wanted = Self.preferredFrameRate(for: state.clock)
+        if view.preferredFramesPerSecond != wanted { view.preferredFramesPerSecond = wanted }
+
         // Time comes from the clock (spec §26.3). Wall clock: elapsed play time places it —
         // pausing freezes `pausedElapsed`, resuming starts a new run from there, so there is no
         // jump. Fixed rate: exactly one frame per draw while playing, so the same draws always
@@ -44,9 +56,13 @@ public final class ShaderRenderer: NSObject, MTKViewDelegate {
         case .wallClock:
             if state.clock.isPlaying {
                 let now = CACurrentMediaTime()
-                let started = state.playStartedAt ?? now
-                state.playStartedAt = started
-                state.clock.seek(elapsed: state.pausedElapsed + (now - started))
+                let started: Double
+                if let s = state.playStartedAt { started = s } else { started = now; state.playStartedAt = now }
+                var next = state.clock
+                next.seek(elapsed: state.pausedElapsed + (now - started))
+                // `clock` is observable: an unchanged value written 60×/s would re-evaluate the
+                // preview controls at the display's rate even for a 24 fps timeline (spec §27.5).
+                if next != state.clock { state.clock = next }
             } else if let started = state.playStartedAt {
                 state.pausedElapsed += CACurrentMediaTime() - started
                 state.playStartedAt = nil

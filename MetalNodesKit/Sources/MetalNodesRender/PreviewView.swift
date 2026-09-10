@@ -1,5 +1,6 @@
 import SwiftUI
 import MetalKit
+import QuartzCore
 
 /// SwiftUI wrapper around an `MTKView` driven by `ShaderRenderer`.
 public struct PreviewView {
@@ -29,6 +30,14 @@ public struct PreviewView {
         v.enableSetNeedsDisplay = false
         v.framebufferOnly = true
         v.delegate = renderer
+        // Without a colour space the layer does no colour matching and the shader's bytes are
+        // shown in the display's native primaries — P3 on every current Mac and iPad — while the
+        // PNG and the video are tagged sRGB. One tag for all three (spec §27.6).
+        #if os(macOS)
+        v.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        #else
+        (v.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        #endif
         return v
     }
 }

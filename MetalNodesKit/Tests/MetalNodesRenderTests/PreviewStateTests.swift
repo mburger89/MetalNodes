@@ -57,4 +57,10 @@ import MetalNodesCore
         #expect(s.clock.frame == 0)
         #expect(s.clock.isPlaying)
     }
+
+    @Test func theDrawRateFollowsAFixedRateTimeline() {
+        #expect(ShaderRenderer.preferredFrameRate(for: TimelineClock(timeline: Timeline(duration: 1, frameRate: 24), mode: .fixedRate)) == 24)
+        #expect(ShaderRenderer.preferredFrameRate(for: TimelineClock(timeline: Timeline(duration: 1, frameRate: 30), mode: .fixedRate)) == 30)
+        #expect(ShaderRenderer.preferredFrameRate(for: TimelineClock(timeline: Timeline(duration: 1, frameRate: 24), mode: .wallClock)) == 60)
+    }
 }
