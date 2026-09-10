@@ -937,7 +937,7 @@ Not a defect, but cost an hour: `cliclick`'s text-typing path stopped matching t
 
 ## 18. M11 execution record — review fixes (2026-09-09)
 
-Branch `m11-review-fixes` off `75ed387`, ten tasks run subagent-driven from `docs/superpowers/plans/2026-09-09-metalnodes-m11-review-fixes.md` against spec §27; the four review reports the milestone argues from are committed under `docs/superpowers/reviews/`. Every task had a review; three needed one fix round (Tasks 1, 4, 6, 9 — all plan-text defects, see 18.4); the final whole-branch review found no Critical, two Important, and one fix wave closed everything. Branch head `90caf03`: 1080 package tests (UI 363 / Render 102 / Core 615), warning-free; both `xcodebuild`s clean.
+Branch `m11-review-fixes` off `75ed387`, ten tasks run subagent-driven from `docs/superpowers/plans/2026-09-09-metalnodes-m11-review-fixes.md` against spec §27; the four review reports the milestone argues from are committed under `docs/superpowers/reviews/`. Every task had a review; three needed one fix round (Tasks 1, 4, 6, 9 — all plan-text defects, see 18.4); the final whole-branch review found no Critical, two Important, and one fix wave closed everything. Branch head `e8f015d`: 1081 package tests (UI 364 / Render 102 / Core 615), warning-free; both `xcodebuild`s clean.
 
 ### 18.1 What shipped
 
@@ -953,6 +953,7 @@ Branch `m11-review-fixes` off `75ed387`, ten tasks run subagent-driven from `doc
 | 8 | `32b52a8` | `syncClock` only when timeline/timeMode moved (`.setSettings` and `.restore`); `togglePlayback` restarts from 0 at a non-looping end in either mode; `setTimeline` shares `Timeline.isValidDuration`; `DocumentChange.changesShapes` gates the shape-cache bump; `.setParam` stored through `.finite`; the same-source compile shortcut rebuilds diagnostics from the stored errors + current missing-texture warnings; Duration/W/H drafts commit on focus loss and disappear |
 | 9 | `fbd47f1`, `6c78a50` | Wheel pan/zoom writes `viewState.cameras` after 150 ms of quiet (flushed on path change and disappear); the hover point lives in an unobserved `PointBox`; z-order sorts compare `UUID`s |
 | 10 | `1ca6ac8` | `ParamControl`'s text field holds no transaction; `endAllTransactions`/`cancelAllTransactions`; `resetStrandedGesture()` at every gesture start (rolls back a stranded wire drag); `compact` frozen while a wire is dragged; Space handles `.repeat` and clears when the window stops being key |
+| live fix | `e8f015d` | Live check 12: the macOS context menu reads the hover point lazily (`CanvasContextMenu.canvasPoint` is a closure the items call) and its hit comes from a `@State` written only on a boundary crossing; the hover's `.ended` no longer resets the point (opening the menu is itself a departure from the view) |
 | fix wave | `90caf03` | Spec §27 amended to what shipped (caption, dedup note, `nan` note); the sheet validates the even-rounded video size; cancel honoured during the pre-flight settle; `retarget` clamp; `resetStrandedGesture` hoisted above `beginWire`'s guards; a generation counter guards the recording task's tail; stale comments |
 
 ### 18.2 Rulings
@@ -967,9 +968,27 @@ Branch `m11-review-fixes` off `75ed387`, ten tasks run subagent-driven from `doc
 8. **Task 2's "full package" evidence** was one bundle's summary; the controller ran the whole package (green) rather than a fix round.
 9. **Residual parked**: the progress closure in `EditorView.startRecording` is not generation-guarded (needs Revert To Saved plus a new recording inside one frame render) — M12.
 
-### 18.3 Live checks (spec §27.11)
+### 18.3 Live checks (spec §27.11, run 2026-09-09 against the `dd-m11` Debug build, screen unlocked)
 
-Pending — the screen was locked for the whole execution, so none of the §27.11 live items has run yet. To run against the `dd-m11` build: ⇧A then `fp,.`; `fmod(a, 2.0)` in an Expression; 24 fps fixed-rate real-time playback; Duration commits on click-away; a bad Custom Code body makes Export Video refuse *in the sheet*; wheel pan without inspector flicker and the camera restored after ⌘W/reopen; 8192 × 8192 video refused, 8192 × 4352 records; plus the reviewers' additions: greyed recording menu items during a recording, Escape on both sheets, right-click → Paste lands under the cursor after moving the pointer without a body pass, sRGB preview vs the PNG in Preview.app, an iPad-style concurrent gesture is not applicable on the Mac.
+Driven from the terminal (screencapture + cliclick + System Events keystrokes + a `CGEvent` scroll helper).
+
+| # | Check | Result |
+|---|---|---|
+| 1 | ⇧A then type `fp,.` | Pass — all four characters in the chooser field; no zoom or playback change (the H5 hypothesis does not reproduce) |
+| 2 | Expression `fmod(a, 2.0)` | Pass — one socket `a`, wired to the output compiles, preview black (`fmod(0, 2)`), No problems |
+| 3 | Fixed rate, 24 fps, 2.5 s | Pass — 26 → 76 frames in 2.08 s, wrapping 76 → 31 after 2 s more; retarget kept the time (1.17 s → 26/96) |
+| 4 | Duration `2.5`, click the canvas | Pass — field 2.5, caption "60 frames per loop", Export sheet says 2.5 s |
+| 5 | Custom Code `out = nosuch(in_a);`, File ▸ Export Video… ▸ Record | Pass — "Export failed — The graph has errors; fix them before recording." shown *in the sheet* with OK |
+| 6 | Escape on the size sheet | Pass — sheet dismissed |
+| 7 | 8192 × 8192 video | Pass — red H.264 caption, Record disabled |
+| 8 | 8192 × 4352 video, 60 frames | Pass — recorded in ~4 s; `AVAsset`: 2.5 s, 24 fps, 8192 × 4352, avc1; scratch directory removed |
+| 9 | File menu during the recording | Pass — Export Video / Image Sequence / Snapshot PNG greyed |
+| 10 | Escape on the progress sheet | Pass — cancelled at frame 27; no file, no scratch, no panel |
+| 11 | Wheel pan, ⌘-wheel zoom | Pass — canvas pans and zooms, minimap follows; no inspector redraw visible |
+| 12 | Right-click → Paste under the cursor | **Fail, then fixed** — the copy landed at the hover position of the last body evaluation (the last click), not under the cursor; ⇧A at the same pointer position placed correctly. Cause: Task 9 moved the hover point out of `@State`, and the `.contextMenu` builder's `let p = …` is captured at body time. Fix: the menu reads the point lazily when an item is chosen and its hit refreshes through a `@State` that changes only on a boundary crossing (18.1 "live fix") |
+| 13 | sRGB preview vs the PNG in Preview.app | Pass — display-space samples of the shader's centre: app preview (119, 127, 37), Preview.app (128, 129, 38); the blue lift from the sRGB → display conversion is identical, the red difference is gradient position |
+
+Not run: camera restore after ⌘W/reopen (untitled document); the iPad items.
 
 ### 18.4 What the reviews caught that the tests did not
 
