@@ -989,6 +989,8 @@ Driven from the terminal (screencapture + cliclick + System Events keystrokes + 
 | 12 | Right-click → Paste under the cursor | **Fail, then fixed** — the copy landed at the hover position of the last body evaluation (the last click), not under the cursor; ⇧A at the same pointer position placed correctly. Cause: Task 9 moved the hover point out of `@State`, and the `.contextMenu` builder's `let p = …` is captured at body time. Fix: the menu reads the point lazily when an item is chosen and its hit refreshes through a `@State` that changes only on a boundary crossing (18.1 "live fix") |
 | 13 | sRGB preview vs the PNG in Preview.app | Pass — display-space samples of the shader's centre: app preview (119, 127, 37), Preview.app (128, 129, 38); the blue lift from the sRGB → display conversion is identical, the red difference is gradient position |
 
+| 14 | Wheel-pan a node under a stationary pointer, then right-click without moving | Pass (after `aa5adb5`) — the canvas menu opened with the node adopted into the selection (Group enabled), i.e. the hit was computed fresh in the builder rather than from the last hover boundary |
+
 Not run: camera restore after ⌘W/reopen (untitled document); the iPad items.
 
 ### 18.4 What the reviews caught that the tests did not
