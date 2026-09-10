@@ -495,4 +495,45 @@ actor SwitchableCompiler: ShaderCompiling {
         m.canvasRequest = nil
         #expect(m.canvasRequest == nil)
     }
+
+    /// Spec §27.2: the JSON encoder cannot write a non-finite float, so a document holding one
+    /// cannot be saved at all. `.setParam` is the one funnel every editable value goes through —
+    /// a `TextField(value: .number)` parses "nan" quite happily — so it sanitises there.
+    @Test func aNonFiniteParameterIsStoredAsZero() throws {
+        let m = model(RecordingCompiler())
+        let node = m.document.root.nodes.values.first { $0.kind == .builtin("math.math") }!
+        m.apply(.setParam(node.id, "b", .float(.nan)))
+        #expect(m.document.root.nodes[node.id]?.params["b"] == .float(0))
+        #expect(throws: Never.self) { try JSONEncoder().encode(m.document) }
+    }
+
+    /// Spec §27.8: the same-source shortcut rebuilds `diagnostics` from the stored compile errors
+    /// plus the *current* missing-texture warnings in both branches. Before, the failing branch
+    /// left `diagnostics` untouched, so a relinked texture kept its stale warning until the source
+    /// itself changed.
+    @Test func theSameSourceShortcutKeepsTheErrorsAndDropsAClearedWarning() async {
+        var doc = ShaderDocument.starter()
+        let asset = AssetID()
+        doc.settings.assets[asset] = AssetInfo(name: "clouds.png", pixelSize: CGSize(width: 8, height: 8), fileExtension: "png")
+        let sample = NodeInstance(kind: .builtin("texture.sample"), params: ["asset": .asset(asset)])
+        doc.root.nodes[sample.id] = sample
+        let out = doc.root.nodes.values.first { $0.kind == .builtin("output.fragment") }!
+        doc.root.connect(SocketRef(sample.id, "color"), to: SocketRef(out.id, "color"))
+
+        let compiler = CountingFailingCompiler()
+        let m = EditorModel(document: doc, compiler: compiler)
+        m.debounceInterval = .milliseconds(5)
+        m.missingTextures = [asset]
+        m.start()
+        await m.awaitIdle()
+        #expect(m.diagnostics.map(\.message) == ["nowhere", "Texture “clouds.png” is missing"])
+
+        // The bytes arrived (a Relink…). The source did not change, so the next compile takes the
+        // shortcut — and must still drop the warning while keeping the error.
+        m.missingTextures = []
+        m.scheduleCompile()
+        await m.awaitIdle()
+        #expect(m.diagnostics.map(\.message) == ["nowhere"])
+        #expect(await compiler.calls == 1)                 // the shortcut really was taken
+    }
 }

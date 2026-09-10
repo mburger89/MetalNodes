@@ -96,6 +96,47 @@ import MetalNodesRender
         #expect(m.preview.clock.frame == 1)
         #expect(m.preview.clock.isPlaying)
     }
+
+    /// `.setSettings` is the vehicle for an image import, an export-name commit, a fast-math
+    /// toggle and every `.restore` — none of which moves the clock. Re-basing the wall-clock
+    /// bookkeeping for those drops sub-frame phase mid-playback (spec §27.5).
+    @Test func aSettingsChangeThatLeavesTheClockAloneDoesNotRebaseIt() {
+        let m = model()
+        m.preview.clock.frame = 10
+        m.preview.pausedElapsed = 0.123
+        m.preview.playStartedAt = 42
+        var s = m.document.settings
+        s.exportName = "renamed"
+        m.apply(.setSettings(s))
+        #expect(m.preview.pausedElapsed == 0.123)
+        #expect(m.preview.playStartedAt == 42)
+        s.timeline.loops = false
+        m.apply(.setSettings(s))
+        #expect(m.preview.playStartedAt == nil)          // the timeline moved: re-based
+    }
+
+    /// The wall clock stops itself at the end of a non-looping clip (spec §27.5), so Play there
+    /// means the same thing it means in fixed rate: play the clip again from the top.
+    @Test func playAtTheWallClockEndRestartsFromTheTop() {
+        let m = model()
+        var s = m.document.settings
+        s.timeline = Timeline(duration: 1, frameRate: 60, loops: false)
+        m.apply(.setSettings(s))
+        m.preview.clock.seek(elapsed: 5)
+        #expect(!m.preview.clock.isPlaying)
+        m.togglePlayback()
+        #expect(m.preview.clock.frame == 0)
+        #expect(m.preview.clock.isPlaying)
+        #expect(m.preview.pausedElapsed == 0)
+    }
+
+    /// One bound, in `Timeline` — the inspector's guard and the decoder's clamp agree (spec §27.2).
+    @Test func setTimelineUsesTheSharedBound() {
+        let m = model()
+        m.setTimeline(Timeline(duration: 3600.5, frameRate: 60))
+        #expect(m.document.settings.timeline.duration == 4)
+        #expect(m.notice == "Duration must be between 0 and 3600 seconds")
+    }
 }
 
 @Suite struct TimelineEditingTests {

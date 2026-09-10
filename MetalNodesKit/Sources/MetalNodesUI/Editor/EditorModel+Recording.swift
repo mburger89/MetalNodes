@@ -31,14 +31,13 @@ extension EditorModel {
     }
 
     /// Play/Pause. A non-looping clock parked on its last frame is the one case where flipping
-    /// `isPlaying` alone does nothing: `TimelineClock.step()` would see the end again on the very
-    /// next draw and stop straight away, so Play there means play the clip again from the top.
-    /// Only `.fixedRate` needs it — the wall clock re-seeks from `pausedElapsed` instead.
+    /// `isPlaying` alone does nothing: `step()` would see the end again on the very next draw and
+    /// stop straight away, and `seek(elapsed:)` re-pins from a `pausedElapsed` that is already past
+    /// the end. Both modes stop at the end now (spec §27.5), so in both of them Play there means
+    /// play the clip again from the top.
     public func togglePlayback() {
-        if !preview.clock.isPlaying, preview.clock.mode == .fixedRate,
-           !preview.clock.timeline.loops, preview.clock.frame == preview.clock.timeline.frameCount - 1 {
-            resetPlayback()
-        }
+        let c = preview.clock
+        if !c.isPlaying, !c.timeline.loops, c.frame == c.timeline.frameCount - 1 { resetPlayback() }
         preview.clock.isPlaying.toggle()
     }
 
@@ -54,11 +53,11 @@ extension EditorModel {
     }
 
     /// The Timeline block's edits (spec §26.2): one settings change, undoable as "Change Value".
-    /// A duration that is not a sane number of seconds is refused outright: `Timeline.frameCount`
-    /// multiplies by the frame rate and converts to `Int`, which traps on a non-finite or
-    /// astronomical duration, so the guard has to be an upper bound and not just `> 0`.
+    /// A duration that is not a sane number of seconds is refused outright, through the one bound
+    /// `Timeline` owns (spec §27.2) — the same predicate the decoder clamps with, so a hand-edited
+    /// file and a typed field can never disagree about what is legal.
     public func setTimeline(_ timeline: Timeline) {
-        guard timeline.duration > 0, timeline.duration.isFinite, timeline.duration <= 3600 else {
+        guard Timeline.isValidDuration(timeline.duration) else {
             showNotice("Duration must be between 0 and 3600 seconds")
             return
         }
